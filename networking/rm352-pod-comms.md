@@ -1,31 +1,39 @@
-# rm352 nodes have broken intra-pod networking
+# rm352 nodes have broken intra-pod networking (hairpin / livez fails)
 
 ## Symptom
-- New workloads scheduled on `rm352-1` or `rm352-2` cannot reach other pods
-  in the same cluster (DNS lookups time out, service ClusterIPs unreachable).
-- The same workload deployed elsewhere works fine.
-- Existing long-running pods on `rm352-*` appear fine; only **newly created**
-  pods exhibit the issue.
+- Pods scheduled on `rm352-1` or `rm352-2` fail webhook-style health probes
+  that depend on **pod talking to itself or back through its own Service**
+  (hairpin traffic), e.g. cert-manager / Kyverno admission webhook
+  startup `livez` checks.
+- Affected controllers crash-loop or never become Ready on those nodes;
+  the same workload moved elsewhere works fine.
+- DNS / outbound from those pods may still appear partially functional —
+  the failure is specific to the hairpin / loopback-through-Service path.
 
 ## Diagnosis
 ```bash
-# From a pod on rm352-* try reaching CoreDNS / another pod
-kubectl exec -it <pod-on-rm352> -- nslookup kubernetes.default
-kubectl exec -it <pod-on-rm352> -- curl -v <other-pod-IP>:<port>
+# Where is the misbehaving pod scheduled
+kubectl -n <ns> get pods -o wide | grep <controller>
 
-# Compare with the same probe from a pod on a healthy node
+# From a debug pod on rm352-*, try hairpin
+kubectl debug node/rm352-1 -it --image=nicolaka/netshoot
+# inside:
+curl -kv https://<self-service>.<ns>.svc:<port>/livez
+
+# Compare the same probe from a pod on a healthy node — it should succeed.
 ```
-Outbound to the internet may still work; only **pod-to-pod** is broken,
-which points at the CNI datapath on those nodes specifically.
 
 ## Root cause
-A node-local CNI/kernel issue on the `rm352-*` machines that we have not
-fully root-caused. The symptom is consistent and reproducible on those
-two nodes only.
+Hairpin / self-Service traffic on `rm352-1` and `rm352-2` does not
+complete reliably. The exact CNI / kernel interaction has not been fully
+root-caused, but the symptom is consistent and node-specific: any
+workload whose readiness depends on calling itself through a Service
+(notably webhook controllers running their own `livez`) will fail
+exclusively on these two nodes.
 
-## Fix — avoid scheduling new workloads onto rm352-* via nodeAffinity
-Until the underlying issue is fixed, exclude `rm352-1` and `rm352-2` from
-new deployments:
+## Fix — exclude rm352-* via nodeAffinity for affected workloads
+Apply this affinity (already in use in TwinX `argocd/twinx-infra/apps/*`
+for cert-manager and Kyverno controllers):
 
 ```yaml
 spec:
@@ -43,13 +51,18 @@ spec:
                       - rm352-2
 ```
 
-Or label the nodes with a taint and tolerate it only for known-safe workloads.
+Confirmed deployments using this pattern in this cluster:
+- cert-manager: controller, cainjector, startupapicheck
+- Kyverno: admissionController, reportsController
 
 ## Prevention
-- New chart values / Kustomize overlays in this cluster should default to
-  the affinity rule above until the rm352 issue is resolved.
-- Re-test pod-to-pod connectivity from rm352-* after every Cilium / kernel
-  upgrade — the issue may resolve incidentally.
+- Any new workload that runs an in-pod webhook / hairpin `livez` should
+  inherit the same `NotIn rm352-*` affinity until the root cause is
+  resolved.
+- Re-test hairpin from rm352-* after every Cilium / kernel upgrade — the
+  issue may resolve incidentally and the affinity can be relaxed.
 
 ## References
 - Lab memory: `project_twinx_node_issues`
+- TwinX values: `argocd/twinx-infra/apps/cert-manager/values.yaml`,
+  `argocd/twinx-infra/apps/kyverno/values.yaml`
