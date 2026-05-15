@@ -3,17 +3,17 @@
 ## Symptom
 - After enabling cert-manager integration in the Kyverno Helm chart, the
   admission controller pods restart every few minutes with `SIGTERM`.
-- Admission requests flap; validation/mutation policies become unreliable.
+- Admission requests flap; validation/mutation policies become
+  unreliable.
 - The webhook TLS secret keeps changing owners: at one moment it carries
   cert-manager–issued material, at the next it has Kyverno's self-signed.
 
 ## Diagnosis
 ```bash
 kubectl -n kyverno get pods -w
-kubectl -n kyverno get secret kyverno-svc.kyverno.svc.kyverno-tls-pair -o yaml | grep -E 'owner|managed-by'
+kubectl -n kyverno get secret kyverno-svc.kyverno.svc.kyverno-tls-pair -o yaml | grep -E 'owner|managed-by|annotations'
 kubectl -n kyverno logs deploy/kyverno-admission-controller | grep -i cert
 ```
-
 You'll see the secret's annotations alternate between cert-manager and
 Kyverno, with frequent admission controller restarts.
 
@@ -27,21 +27,21 @@ partially implemented:
   reconciliation loop, expecting to fully own the webhook secret.
 - When it sees a secret it didn't generate (the cert-manager–issued one),
   it overwrites it with self-signed material and restarts.
-- cert-manager's controller observes drift and reconciles the secret back
-  to its issued cert.
-- Loop continues indefinitely.
+- cert-manager observes drift and reconciles the secret back to its
+  issued cert.
+- The loop continues indefinitely.
 
 There is no flag in v3.7.x that fully disables Kyverno's internal cert
 loop while keeping the webhooks functional — the two managers cannot
 coexist in this chart version.
 
 ## Fix — let Kyverno manage its own certs
+This is the configuration currently in use in TwinX
+(`argocd/twinx-infra/apps/kyverno/values.yaml`):
+
 ```yaml
-# values.yaml
 certManager:
-  create: false
-admissionController:
-  # remove any cert-manager–specific extraArgs
+  enabled: false
 ```
 
 Clean up leftovers after redeploying:
@@ -65,11 +65,12 @@ flapping.
   meaningful security gain from cert-manager involvement here.
 
 ## Prevention
-- Pin `certManager.create: false` in the values file so a future operator
-  doesn't re-enable it.
-- Alert on admission controller restart count; a sustained increase often
-  re-surfaces this issue.
+- Pin `certManager.enabled: false` in the values file so a future
+  operator doesn't re-enable it thinking it's a free upgrade.
+- Alert on admission controller restart count; a sustained increase
+  often re-surfaces this issue.
 
 ## References
 - Lab memory: `feedback_kyverno_certmanager_chart_bug`
+- TwinX values: `argocd/twinx-infra/apps/kyverno/values.yaml`
 - Discussion: [#2](https://github.com/mj006648/netai-devsecops-runbook/discussions/2)
