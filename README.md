@@ -1,42 +1,23 @@
-# rook-ceph-runbook
+# NetAI DevSecOps Runbook
 
-Battle-tested operational runbook for running [Rook-Ceph](https://rook.io/) on production Kubernetes clusters.
-Written from real incidents at [GIST NetAI Lab](https://netai.smartx.kr/) while operating the **Trident** data lakehouse.
+Operational runbook for the **Trident** data lakehouse at [GIST NetAI Lab](https://netai.smartx.kr/).
+Covers networking, storage, policy, observability, and incident notes accumulated while running the cluster in production.
 
-## Who this is for
-- SREs running Rook-Ceph in production
-- Researchers building data platforms on Kubernetes
-- Anyone who hit a Ceph error message at 3 AM
+> Primary audience is the lab itself — this is a working notebook, not a polished guide.
+> It's public so that anyone hitting the same problems can benefit too.
 
-## Recipe index
+## Sections
 
-### 01 — Installation
-- LV preparation after node reboot
-- Node affinity quirks (avoiding problematic nodes)
-- Fresh install checklist
+- **[networking/](networking/)** — netplan, Cilium, MTU, secondary IPs, node-level routing
+- **[storage/](storage/)** — Rook-Ceph install, recovery, tuning, LVM prep
+- **[policy/](policy/)** — Kyverno, cert-manager, webhook lifecycle
+- **[observability/](observability/)** — Prometheus, Grafana, OpenTelemetry
+- **[apps/](apps/)** — Trident Portal, catalog services, query engines
+- **[incidents/](incidents/)** — timestamped incident write-ups
 
-### 02 — Networking
-- MTU mismatch symptoms and recovery
-- Cilium interop pitfalls
-- Secondary IP routing (netplan `/32 from`-route fix)
+## Note format
 
-### 03 — Recovery
-- Full reinstall runbook
-- OSD down / mon quorum lost
-- PG stuck states
-
-### 04 — Tuning
-- CRUSH rules for NVMe-only pools
-- BlueStore cache sizing
-- RGW throughput
-
-### 05 — Integration
-- cert-manager + webhook controller pitfalls
-- Kyverno policy interactions
-- Prometheus / Grafana dashboards
-
-## Recipe format
-Every recipe in this repo follows the same structure so you can scan fast at 3 AM:
+Each note is written so it can be scanned at 3 AM:
 
 - **Symptom** — what you observe
 - **Diagnosis** — exact commands to confirm
@@ -44,9 +25,9 @@ Every recipe in this repo follows the same structure so you can scan fast at 3 A
 - **Fix** — step-by-step recovery
 - **Prevention** — how to avoid it next time
 
-## Contributing
-Found a new failure mode? [Open a discussion](https://github.com/mj006648/rook-ceph-runbook/discussions) or send a PR.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the recipe template.
+## Discussions
+
+[Discussions](https://github.com/mj006648/netai-devsecops-runbook/discussions) hold Q&A-style write-ups before they're promoted to full notes in this repo. Outside contributors welcome.
 
 ## License
 MIT
