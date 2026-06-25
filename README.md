@@ -39,7 +39,7 @@
 
 ## Note format
 
-각 노트는 새벽 3시에 봐도 바로 따라갈 수 있도록 아래 흐름으로 작성합니다.
+각 노트는 아래 형식을 기준으로 작성합니다.
 
 - **Symptom** — 실제로 관측되는 현상
 - **Diagnosis** — 확인에 사용한 정확한 명령
@@ -53,4 +53,4 @@
 
 ## License
 
-MIT
+This repository is licensed under the [MIT License](LICENSE).
