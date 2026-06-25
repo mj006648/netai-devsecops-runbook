@@ -73,7 +73,7 @@ kubectl -n <ns> rollout status deploy/<name>
 - 재활성화한 앱이 각각 smoke test를 통과한다.
 - RGW와 RBD에 대해 controlled write/read가 성공한다.
 
-## 재발 방지
+## Prevention
 - 위 단계적 순서를 이 저장소에 유지하고, 재설치 후에는 실제 결과를 반영해 업데이트한다.
 - 모든 의존 앱을 동시에 올리지 않는다. 단계적 복구가 문제를 더 빨리 드러내고 cascade 재발을 줄인다.
 

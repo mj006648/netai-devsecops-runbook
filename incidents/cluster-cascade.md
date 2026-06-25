@@ -1,6 +1,6 @@
 # 클러스터 연쇄 장애 — OTel → Cilium hostNetwork → Rook-Ceph 재구축
 
-## 요약
+## Summary
 3일 동안 관측(OpenTelemetry), CNI/host networking(Cilium), 스토리지(Rook-Ceph) 문제가
 연쇄적으로 이어졌고, 최종적으로 Rook-Ceph 전체 재설치까지 진행한 장애 대응 기록이다.
 
@@ -57,7 +57,7 @@ kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration
 kubectl -n kube-system exec ds/cilium -- cilium status --brief
 ```
 
-## 재발 방지
+## Prevention
 - 이 저장소에 클러스터 bring-up / bring-down 순서를 하나의 authoritative 문서로 유지한다.
   장애 후에는 반드시 업데이트한다.
 - API server p99 latency, webhook call count, OSD restart rate, Cilium identity churn 같은

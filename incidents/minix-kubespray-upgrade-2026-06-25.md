@@ -1,6 +1,6 @@
 # MiniX Kubespray 업그레이드 트러블슈팅 (2026-06-25)
 
-## 요약
+## Summary
 MiniX 클러스터를 Kubespray로 Kubernetes `v1.33.7`까지 올리는 과정에서
 Cilium, CoreDNS, NodeLocalDNS, Rook-Ceph PDB, GPU 노드의 pod → API 서버
 통신 문제가 연쇄적으로 드러났다.
@@ -8,7 +8,7 @@ Cilium, CoreDNS, NodeLocalDNS, Rook-Ceph PDB, GPU 노드의 pod → API 서버
 최종적으로 업그레이드는 완료됐고, Karmada 실험을 진행해도 되는 상태까지
 안정화했다.
 
-## 최종 결과
+## Final result
 - Kubespray 작업 경로: `/home/chang/kubespray`
 - Kubespray 버전: `v2.29.1`
 - Inventory 경로: `/home/chang/kubespray/inventory/minix/inventory.ini`
@@ -39,7 +39,7 @@ postgre/postgresql-0                Init:ImagePullBackOff
 
 ## 이슈 1 — Cilium init container가 `/hostbin/cilium-mount`를 못 씀
 
-### 증상
+### Symptom
 Cilium DaemonSet이 `3/5`에서 멈췄고, `master`, `com3`의 Cilium pod가
 `Init:CrashLoopBackOff` 상태였다.
 
@@ -53,7 +53,7 @@ cp: cannot create regular file '/hostbin/cilium-mount': Permission denied
 node.cilium.io/agent-not-ready
 ```
 
-### 진단
+### Diagnosis
 Kubespray preinstall 단계에서 `/opt/cni/bin`이 `kube:root`, `0755`로
 만들어져 있었다.
 
@@ -62,7 +62,7 @@ host의 `/opt/cni/bin`으로 복사해야 한다. 그런데 init container가
 `CAP_DAC_OVERRIDE`를 drop한 상태라서 container 안의 root라도 `kube`
 소유 디렉터리에 쓸 수 없었다.
 
-### 해결
+### Fix
 즉시 복구는 모든 노드에서 CNI bin 디렉터리 소유자를 `root:root`로 되돌리고,
 깨진 Cilium pod를 재생성했다.
 
@@ -76,7 +76,7 @@ kubectl -n kube-system delete pod cilium-rjb8c cilium-df2sp --ignore-not-found=t
 kubectl -n kube-system rollout status ds/cilium --timeout=180s
 ```
 
-### 재발 방지
+### Prevention
 Kubespray 쪽에도 재발 방지 패치를 넣었다.
 
 ```yaml
@@ -89,7 +89,7 @@ owner: "{{ 'root' if item == '/opt/cni/bin' else kube_owner }}"
 
 ## 이슈 2 — kubeadm upgrade health-check job timeout
 
-### 증상
+### Symptom
 업그레이드 재실행 중 첫 control-plane upgrade 단계에서 kubeadm health check job이
 15초 안에 완료되지 않아 실패했다.
 
@@ -97,11 +97,11 @@ owner: "{{ 'root' if item == '/opt/cni/bin' else kube_owner }}"
 [ERROR CreateJob]: Job "upgrade-health-check-..." in namespace "kube-system" did not complete in 15s
 ```
 
-### 원인
+### Root cause
 kubeadm 자체 문제가 아니라, 위의 Cilium 장애 때문에 control-plane health check job이
 정상적으로 완료되지 못한 것이었다.
 
-### 해결
+### Fix
 먼저 Cilium을 `5/5 Ready`로 복구한 뒤 다시 실행하니 control-plane upgrade 단계는
 정상 통과했다.
 
@@ -111,7 +111,7 @@ Kubeadm | Upgrade first control plane node to 1.33.7 changed: [master]
 
 ## 이슈 3 — Rook-Ceph PDB 때문에 worker drain이 막힘
 
-### 증상
+### Symptom
 Cilium 문제 해결 후에는 worker drain 단계에서 `com2`가 막혔다.
 Rook-Ceph PDB가 disruption을 허용하지 않는 상태였다.
 
@@ -120,7 +120,7 @@ rook-ceph-mon-pdb allowed disruptions: 0
 rook-ceph-osd     allowed disruptions: 0
 ```
 
-### 원인
+### Root cause
 업그레이드 중 Kubespray가 노드를 drain하려 했지만, Rook-Ceph mon/osd pod가
 PDB 때문에 eviction되지 않았다.
 
@@ -133,7 +133,7 @@ ansible-playbook -i inventory/minix/inventory.ini upgrade-cluster.yml -b \
   -e drain_nodes=false
 ```
 
-### 해결
+### Fix
 JSON boolean으로 넘겨서 drain을 실제로 끄고, cordon/uncordon은 유지했다.
 
 ```bash
@@ -150,14 +150,14 @@ duration: 18m04s
 
 ## 이슈 4 — CoreDNS `plugin/loop` CrashLoopBackOff
 
-### 증상
+### Symptom
 CoreDNS pod 하나가 `CrashLoopBackOff`였고, log에는 loop detection이 찍혔다.
 
 ```text
 [FATAL] plugin/loop: Loop (...) detected for zone "."
 ```
 
-### 진단
+### Diagnosis
 CoreDNS ConfigMap이 node의 resolver를 그대로 참조하고 있었다.
 
 ```coredns
@@ -168,7 +168,7 @@ GPU 노드와 systemd-resolved/NodeLocalDNS 조합에서 node resolver 안에
 `169.254.25.10` 같은 local/stub resolver가 들어가면서 CoreDNS ↔ NodeLocalDNS
 forward loop가 만들어졌다.
 
-### 해결
+### Fix
 Kubespray inventory에 upstream DNS를 명시했다.
 
 ```yaml
@@ -196,7 +196,7 @@ nodelocaldns: forward . 8.8.8.8 8.8.4.4
 
 ## 이슈 5 — GPU 노드 pod가 Kubernetes API 서버에 timeout
 
-### 증상
+### Symptom
 DNS loop를 고친 뒤 CoreDNS pod는 `Running`이 되었지만, GPU 노드 위 pod의
 readiness check가 실패했다.
 
@@ -212,7 +212,7 @@ api_backend:fail
 api_service:fail
 ```
 
-### 진단
+### Diagnosis
 Cilium inventory에 아래 값이 들어가 있었다.
 
 ```yaml
@@ -237,7 +237,7 @@ api_backend:ok
 api_service:ok
 ```
 
-### 해결
+### Fix
 터널 모드에서는 pod → node/API 트래픽이 SNAT되도록
 `cilium_native_routing_cidr`를 비웠다.
 
