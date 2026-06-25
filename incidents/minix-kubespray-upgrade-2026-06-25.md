@@ -9,9 +9,9 @@ Cilium, CoreDNS, NodeLocalDNS, Rook-Ceph PDB, GPU 노드의 pod → API 서버
 안정화했다.
 
 ## 최종 결과
-- Kubespray checkout: `/home/chang/kubespray`
+- Kubespray 작업 경로: `/home/chang/kubespray`
 - Kubespray 버전: `v2.29.1`
-- Inventory: `/home/chang/kubespray/inventory/minix/inventory.ini`
+- Inventory 경로: `/home/chang/kubespray/inventory/minix/inventory.ini`
 - 목표 Kubernetes 버전: `v1.33.7`
 - 모든 노드 `Ready`
 - Cilium DaemonSet `5/5 Ready`
@@ -21,7 +21,7 @@ Cilium, CoreDNS, NodeLocalDNS, Rook-Ceph PDB, GPU 노드의 pod → API 서버
 
 최종 노드 상태:
 
-| Node | Role | IP | OS | Kubernetes | Runtime |
+| 노드 | 역할 | IP | OS | Kubernetes | Runtime |
 | --- | --- | --- | --- | --- | --- |
 | `master` | control-plane | `10.34.48.103` | Ubuntu 24.04.2 | `v1.33.7` | `containerd://2.1.5` |
 | `com1` | worker | `10.34.48.100` | Ubuntu 24.04.2 | `v1.33.7` | `containerd://2.1.5` |
@@ -198,14 +198,14 @@ nodelocaldns: forward . 8.8.8.8 8.8.4.4
 
 ### 증상
 DNS loop를 고친 뒤 CoreDNS pod는 `Running`이 되었지만, GPU 노드 위 pod의
-readiness가 실패했다.
+readiness check가 실패했다.
 
 ```text
 failed to list *v1.Service:
 Get "https://10.234.0.1:443/...": dial tcp 10.234.0.1:443: i/o timeout
 ```
 
-GPU 노드의 test pod에서도 처음에는 아래처럼 실패했다.
+GPU 노드의 테스트 pod에서도 처음에는 아래처럼 실패했다.
 
 ```text
 api_backend:fail
@@ -219,7 +219,7 @@ Cilium inventory에 아래 값이 들어가 있었다.
 cilium_native_routing_cidr: 10.34.48.0/24
 ```
 
-MiniX는 tunnel mode인데, 이 값 때문에 GPU pod → node/API 서버 대역 트래픽이
+MiniX는 터널 모드인데, 이 값 때문에 GPU pod → node/API 서버 대역 트래픽이
 SNAT되지 않고 pod source IP로 나갔다. master/API 서버 쪽 return path 또는
 `rp_filter`/host routing 문제로 응답이 돌아오지 않아 timeout이 발생했다.
 
@@ -238,7 +238,7 @@ api_service:ok
 ```
 
 ### 해결
-Tunnel mode에서는 pod → node/API 트래픽이 SNAT되도록
+터널 모드에서는 pod → node/API 트래픽이 SNAT되도록
 `cilium_native_routing_cidr`를 비웠다.
 
 ```yaml
@@ -255,7 +255,7 @@ ansible-playbook -i inventory/minix/inventory.ini cluster.yml -b --tags cilium
 kubectl -n kube-system rollout restart ds/cilium
 ```
 
-### stale iptables 정리
+### 잔여 iptables 정리
 GPU 노드의 Cilium pod는 한 번 더 stale iptables chain 문제를 보였다.
 
 ```text

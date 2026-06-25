@@ -1,44 +1,46 @@
-# Contributing
+# 기여 가이드
 
-Thanks for considering a contribution. This runbook grows by adding **real incidents you've actually resolved** — not theoretical fixes.
+이 런북은 이론적인 해결책이 아니라 **실제로 겪고 해결한 운영 이슈**를 쌓아가는 저장소다.
+문제를 재현할 수 있는 증상, 확인 명령, 복구 절차를 함께 남기는 것을 우선한다.
 
-## Recipe template
+## 문서 템플릿
 
-Copy this skeleton into the appropriate `recipes/<category>/` folder:
+적절한 카테고리 폴더에 아래 형식으로 문서를 추가한다.
 
-```markdown
-# <Short, searchable title>
+````markdown
+# <검색하기 쉬운 짧은 제목>
 
-## Symptom
-- Observable signs (logs, metrics, `kubectl` output)
+## 증상
+- 로그, 메트릭, `kubectl` 출력 등 관측 가능한 현상
 
-## Diagnosis
-\`\`\`bash
-# Exact commands the on-call should run
-\`\`\`
-
-## Root cause
-Why this happens. Link to upstream issue or doc if relevant.
-
-## Fix
-\`\`\`bash
-# Step-by-step recovery commands
-\`\`\`
-
-## Prevention
-How to avoid it next time (config change, monitoring, runbook update).
-
-## References
-- [Upstream issue](#)
-- Related recipe: [link](#)
+## 진단
+```bash
+# 당직자가 그대로 실행할 수 있는 확인 명령
 ```
 
-## Style
-- Keep recipes **scannable at 3 AM** — short headers, copy-pasteable commands
-- Prefer `kubectl`/`ceph` CLI over screenshots
-- If a fix is environment-specific, say so (e.g. "Cilium 1.14+, kernel 6.x")
+## 원인
+왜 발생했는지 설명한다. 관련 upstream issue나 문서가 있으면 링크한다.
 
-## Discussions vs Issues vs PR
-- **Discussion**: "I'm seeing X, anyone else?" — Q&A before there's a recipe
-- **Issue**: "Recipe Y is wrong/outdated"
-- **PR**: New recipe or fix to an existing one
+## 해결
+```bash
+# 단계별 복구 명령
+```
+
+## 재발 방지
+다음에 피하기 위한 설정 변경, 모니터링, 런북 업데이트 내용을 적는다.
+
+## 참고
+- [업스트림 이슈](#)
+- 관련 문서: [link](#)
+````
+
+## 작성 스타일
+- **새벽 3시에 훑어도 이해되게** 짧은 제목과 복사 가능한 명령을 사용한다.
+- 스크린샷보다 `kubectl`, `ceph`, `ip`, `journalctl` 같은 CLI 출력을 선호한다.
+- 특정 환경에서만 맞는 해결책이면 조건을 명시한다. 예: `Cilium 1.14+`, `kernel 6.x`.
+- 임시 조치와 영구 조치를 구분해서 쓴다.
+
+## Discussions / Issues / PR
+- 정식 문서 전 질문이나 메모는 Discussion에 남긴다.
+- 기존 문서가 틀렸거나 오래됐으면 Issue로 남긴다.
+- 새 문서 추가나 수정은 PR로 보낸다.
