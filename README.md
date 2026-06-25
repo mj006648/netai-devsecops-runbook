@@ -15,6 +15,13 @@ Covers networking, storage, policy, observability, and incident notes accumulate
 - **[apps/](apps/)** — Trident Portal, catalog services, query engines
 - **[incidents/](incidents/)** — timestamped incident write-ups
 
+
+## 최근 트러블슈팅
+
+- **[MiniX Kubespray 업그레이드 트러블슈팅](incidents/minix-kubespray-upgrade-2026-06-25.md)** —
+  Cilium 권한 문제, kubeadm health-check timeout, Rook-Ceph PDB drain block,
+  CoreDNS loop, GPU 노드 pod → API 서버 timeout 정리
+
 ## Note format
 
 Each note is written so it can be scanned at 3 AM:
