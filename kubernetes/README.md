@@ -1,7 +1,7 @@
 # Kubernetes Notes
 
 TwinX와 MiniX 클러스터를 운영하면서 필요한 Kubernetes 참고 문서와 업그레이드 계획을 모아둔 공간입니다.
-기존 [`kubernetes-study`](https://github.com/mj006648/kubernetes-study)에 있던 문서를 이 런북으로 옮겼습니다.
+기존 [`kubernetes-study-archive`](https://github.com/mj006648/kubernetes-study-archive)에 있던 문서를 이 런북으로 옮겼습니다.
 앞으로 Kubernetes 운영 문서는 이 디렉터리에 추가합니다.
 
 ## Index
