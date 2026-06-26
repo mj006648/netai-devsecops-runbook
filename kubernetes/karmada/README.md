@@ -9,11 +9,11 @@
 ## 현재 상태
 
 - 작성일: 2026-06-25
-- 상태: 실험 11까지 완료, 여러 workload batch 재균형 검증 완료
+- 상태: 실험 12까지 완료, ScaleX-POD role label 기반 placement 검증 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, controller-manager anti-affinity rollout 이슈, scheduler-estimator 로그를 실험 문서에 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, controller-manager anti-affinity rollout 이슈, scheduler-estimator 로그를 실험 문서에 기록
 
 ---
 
@@ -115,6 +115,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-26-11-multi-workload-rebalancer.md`](./experiments/2026-06-26-11-multi-workload-rebalancer.md)
   - 하나의 `WorkloadRebalancer`로 여러 Deployment를 batch 재균형하는 절차 검증
   - 세 workload를 skew 상태에서 모두 `twinx=1`, `edgex=1`, `datax=1`로 재분산
+- [`experiments/2026-06-26-12-scalex-role-label-placement.md`](./experiments/2026-06-26-12-scalex-role-label-placement.md)
+  - ScaleX-POD 역할 label을 사용해 render/edge/data workload 배치 검증
+  - render는 `twinx=3`, `edgex=1`, edge는 `edgex=2`, data는 `datax=2`로 배치
 
 ---
 

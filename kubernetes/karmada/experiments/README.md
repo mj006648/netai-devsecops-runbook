@@ -34,6 +34,7 @@
 | 09 | [`2026-06-26-09-workload-rebalancer-reschedule.md`](./2026-06-26-09-workload-rebalancer-reschedule.md) | WorkloadRebalancer 재균형 | 성공 | NoExecute 후 edgex/datax에 남은 workload를 twinx/edgex/datax=1:1:1로 재균형 |
 | 10 | [`2026-06-26-10-noexecute-toleration-scope.md`](./2026-06-26-10-noexecute-toleration-scope.md) | NoExecute 영향 범위와 toleration | 성공/주의 필요 | toleration 없는 workload는 이동, matching toleration 있는 workload는 twinx 유지 |
 | 11 | [`2026-06-26-11-multi-workload-rebalancer.md`](./2026-06-26-11-multi-workload-rebalancer.md) | 여러 workload batch 재균형 | 성공 | 하나의 WorkloadRebalancer로 세 Deployment를 모두 twinx/edgex/datax=1:1:1로 재균형 |
+| 12 | [`2026-06-26-12-scalex-role-label-placement.md`](./2026-06-26-12-scalex-role-label-placement.md) | ScaleX-POD role label placement | 성공 | role/pool/location/workload label로 render=twinx3+edgex1, edge=edgex2, data=datax2 배치 |
 
 ---
 
@@ -41,7 +42,7 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | ScaleX-POD role label placement | TwinX/EdgeX/DataX/Resource Pool 역할 기반 배치 고도화 |
+| 1 | Resource Pool 역할 label placement | fallback/general pool 역할을 추가해 ScaleX-POD 배치 모델 확장 |
 | 2 | OverridePolicy image/storageClass | EdgeX/DataX/TwinX별 image registry와 storageClass 차이 반영 |
 | 3 | scheduler-estimator 정리 | estimator 설치 또는 scheduler estimator 비활성화 필요성 확인 |
 | 4 | spreadConstraints | zone/role/provider 기준 분산 배치 |
@@ -54,7 +55,7 @@
 ## 현재 우선순위
 
 ```text
-1. ScaleX-POD role label placement
+1. Resource Pool 역할 label placement
 2. OverridePolicy image/storageClass
 3. scheduler-estimator 정리
 4. ArgoCD 연동

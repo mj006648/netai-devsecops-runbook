@@ -1,0 +1,33 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-scalex-render-policy
+  namespace: demo-scalex-role
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-scalex-render-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-scalex-render-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchLabels:
+          scalex.io/pool: gpu
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: gpu-render
+            weight: 3
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: edge-gpu
+            weight: 1
