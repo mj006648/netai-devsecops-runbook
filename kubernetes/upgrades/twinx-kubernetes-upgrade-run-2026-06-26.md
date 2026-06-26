@@ -206,8 +206,8 @@ pgs: 248 active+clean, 33 undersized+peered
 ### etcd / control-plane
 
 - [x] etcd endpoint health
-- [ ] etcd snapshot
-- [ ] `/etc/kubernetes` backup on control-plane nodes
+- [x] etcd snapshot
+- [x] `/etc/kubernetes` backup on control-plane nodes
 - [x] kube-apiserver, kube-controller-manager, kube-scheduler pod status check
 
 ### Cilium / networking
@@ -259,8 +259,8 @@ Do not proceed until the remaining gates are done.
 
 Required gates before any upgrade playbook:
 
-1. etcd snapshot
-2. `/etc/kubernetes` backup on control-plane nodes
+1. etcd snapshot ✅
+2. `/etc/kubernetes` backup on control-plane nodes ✅
 3. target Kubespray tag/branch prepared for Kubernetes `v1.35.4`
 4. inventory typo and removed-var candidates reviewed
 5. ArgoCD auto-sync policy decided for sensitive apps
@@ -284,6 +284,36 @@ Hold by default:
 | `sv4000-1` | Ceph MON/MDS/RGW/Rook-heavy node, Ubuntu 22.04 special case, inventory typo |
 
 
+
+
+## Backup completed before upgrade
+
+Backups were created before any upgrade playbook was executed. These backup files contain sensitive cluster material and are intentionally not committed to the runbook repository.
+
+Local backup path on `control1`:
+
+```text
+/home/netai/chang/Git/twinx-upgrade-backups/20260626T035056Z
+/home/netai/chang/Git/twinx-upgrade-backups/latest -> /home/netai/chang/Git/twinx-upgrade-backups/20260626T035056Z
+```
+
+Remote copy path on control-plane nodes:
+
+```text
+/home/netai/twinx-upgrade-backups/20260626T035056Z
+```
+
+Created artifacts:
+
+| Artifact | Result |
+| --- | --- |
+| `etcd-snapshot-control1.db` | created on `control1`, copied locally, sha256 verified |
+| `etcd-snapshot-control1.status.txt` | snapshot status saved, revision `228214558`, total keys `9031`, total size `239 MB` |
+| `control-plane-config-control1.tar.gz` | `/etc/kubernetes` and `/etc/ssl/etcd/ssl` backup, sha256 verified |
+| `control-plane-config-control2.tar.gz` | `/etc/kubernetes` and `/etc/ssl/etcd/ssl` backup, sha256 verified |
+| `control-plane-config-control3.tar.gz` | `/etc/kubernetes` and `/etc/ssl/etcd/ssl` backup, sha256 verified |
+
+Important: backup creation is complete, but Kubernetes upgrade has still not started.
 
 ## Kubespray v2.30 staging
 
@@ -457,6 +487,7 @@ Stop before moving to the next node if any of the following happens.
 | 2026-06-26 before 13:00 KST | Checked Ceph/Harbor/Partridge/ArgoCD/Kubespray | Found multiple hold conditions: Ceph WARN, Harbor RWO attachment conflict, Partridge readiness, Kubespray not target tag | Do not start whole-cluster upgrade |
 | 2026-06-26 before 13:00 KST | Revised first-wave scope | `rm352-2` removed from first wave; first candidate scope is control-plane and edgebox nodes only | Wait for explicit user approval before any upgrade |
 | 2026-06-26 before upgrade | Prepared Kubespray v2.30.0 worktree | `/home/netai/chang/kubespray-v2.30`, copied inventory, fixed `sv4000-1` typo, set `kube_version: v1.34.4`, inventory parses | Do not execute until backup/OIDC/Cilium gates are decided |
+| 2026-06-26 before upgrade | Created pre-upgrade backups | etcd snapshot and control-plane config tarballs created under `/home/netai/chang/Git/twinx-upgrade-backups/20260626T035056Z`, sha256 verified | Upgrade still not started |
 
 ## Next planned action
 
@@ -464,9 +495,9 @@ No upgrade is running.
 
 Next safe actions before an actual upgrade are:
 
-1. take etcd snapshot
-2. back up `/etc/kubernetes` on control-plane nodes
-3. prepare Kubespray target tag for Kubernetes `v1.35.4`
+1. prepare/confirm Cilium version policy for the v2.30 step
+2. decide ArgoCD auto-sync handling
+3. prepare Kubespray v2.31 target for Kubernetes `v1.35.4`
 4. validate and clean inventory/removed vars
 5. decide ArgoCD auto-sync handling
 6. ask for explicit approval before starting the first upgrade wave
