@@ -349,6 +349,8 @@ Current live check found an inconsistency that must be handled carefully:
 
 Interpretation: OIDC is present in the inventory and static manifest files, but only `control1` is currently running with the OIDC arguments. During the control-plane upgrade, Kubespray should regenerate/restart kube-apiserver pods; after each control-plane node, verify OIDC args are present before continuing.
 
+Existing OIDC RBAC subjects are present. `oidc-test-view` is not present, but current bindings include `oidc:twinx-login:partridge-view` and `partridge/oidc:twinx-login:partridge-admin` for `oidc:partridge`, `oidc:jinwang`, and `oidc:ich6648`.
+
 Do not store client-side kubeconfig secrets or OIDC client secrets in this public runbook. Keep `tx-config` style client files local-only.
 
 ## If all nodes must be upgraded today
