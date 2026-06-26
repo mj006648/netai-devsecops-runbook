@@ -1,0 +1,48 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-multi-rebalance-policy
+  namespace: demo-multi-rebalance
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-multi-render-nginx
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-multi-edge-nginx
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-multi-data-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-multi-render-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-multi-edge-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-multi-data-nginx
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - twinx
+        - edgex
+        - datax
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              clusterNames:
+                - twinx
+            weight: 1
+          - targetCluster:
+              clusterNames:
+                - edgex
+            weight: 1
+          - targetCluster:
+              clusterNames:
+                - datax
+            weight: 1

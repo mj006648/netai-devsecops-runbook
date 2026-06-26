@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-multi-data-nginx
+  namespace: demo-multi-rebalance
+  labels:
+    app: demo-multi-data-nginx
+    scalex.io/workload: data
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demo-multi-data-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-multi-data-nginx
+        scalex.io/workload: data
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80

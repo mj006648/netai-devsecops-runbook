@@ -1,0 +1,18 @@
+apiVersion: apps.karmada.io/v1alpha1
+kind: WorkloadRebalancer
+metadata:
+  name: demo-multi-workload-rebalance-batch
+spec:
+  workloads:
+    - apiVersion: apps/v1
+      kind: Deployment
+      namespace: demo-multi-rebalance
+      name: demo-multi-render-nginx
+    - apiVersion: apps/v1
+      kind: Deployment
+      namespace: demo-multi-rebalance
+      name: demo-multi-edge-nginx
+    - apiVersion: apps/v1
+      kind: Deployment
+      namespace: demo-multi-rebalance
+      name: demo-multi-data-nginx
