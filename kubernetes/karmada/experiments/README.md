@@ -35,6 +35,7 @@
 | 10 | [`2026-06-26-10-noexecute-toleration-scope.md`](./2026-06-26-10-noexecute-toleration-scope.md) | NoExecute 영향 범위와 toleration | 성공/주의 필요 | toleration 없는 workload는 이동, matching toleration 있는 workload는 twinx 유지 |
 | 11 | [`2026-06-26-11-multi-workload-rebalancer.md`](./2026-06-26-11-multi-workload-rebalancer.md) | 여러 workload batch 재균형 | 성공 | 하나의 WorkloadRebalancer로 세 Deployment를 모두 twinx/edgex/datax=1:1:1로 재균형 |
 | 12 | [`2026-06-26-12-scalex-role-label-placement.md`](./2026-06-26-12-scalex-role-label-placement.md) | ScaleX-POD role label placement | 성공 | role/pool/location/workload label로 render=twinx3+edgex1, edge=edgex2, data=datax2 배치 |
+| 13 | [`2026-06-26-13-resource-pool-placement.md`](./2026-06-26-13-resource-pool-placement.md) | Resource Pool placement | 성공 | poolx를 Karmada member로 추가하고 general=poolx2, render fallback=twinx3+edgex1+poolx1 배치 |
 
 ---
 
@@ -42,8 +43,8 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | Resource Pool 역할 label placement | fallback/general pool 역할을 추가해 ScaleX-POD 배치 모델 확장 |
-| 2 | OverridePolicy image/storageClass | EdgeX/DataX/TwinX별 image registry와 storageClass 차이 반영 |
+| 1 | OverridePolicy image/storageClass | EdgeX/DataX/TwinX/Resource Pool별 image registry와 storageClass 차이 반영 |
+| 2 | Resource Pool fallback + WorkloadRebalancer | fallback 배치 후 복구/재균형 운영 절차 확인 |
 | 3 | scheduler-estimator 정리 | estimator 설치 또는 scheduler estimator 비활성화 필요성 확인 |
 | 4 | spreadConstraints | zone/role/provider 기준 분산 배치 |
 | 5 | ArgoCD -> Karmada API Server | GitOps 흐름 검증 |
@@ -55,8 +56,8 @@
 ## 현재 우선순위
 
 ```text
-1. Resource Pool 역할 label placement
-2. OverridePolicy image/storageClass
+1. OverridePolicy image/storageClass
+2. Resource Pool fallback + WorkloadRebalancer
 3. scheduler-estimator 정리
 4. ArgoCD 연동
 5. Pull mode 후보 검토

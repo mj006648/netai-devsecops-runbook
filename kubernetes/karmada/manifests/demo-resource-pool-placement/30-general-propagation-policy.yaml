@@ -1,0 +1,28 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-pool-general-policy
+  namespace: demo-resource-pool
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-pool-general-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-pool-general-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchLabels:
+          scalex.io/role: resource-pool
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: resource-pool
+            weight: 1

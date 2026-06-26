@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-pool-general-nginx
+  namespace: demo-resource-pool
+  labels:
+    app: demo-pool-general-nginx
+    scalex.io/workload: general
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-pool-general-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-pool-general-nginx
+        scalex.io/workload: general
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
