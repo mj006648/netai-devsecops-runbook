@@ -4,4 +4,5 @@ Kubernetes/Kubespray 업그레이드 계획, preflight, blocker, 작업 순서�
 
 | Last update | Target | Document | Contents |
 | --- | --- | --- | --- |
+| 2026-06-26 | TwinX run log | [TwinX Kubernetes Upgrade Run 2026-06-26](twinx-kubernetes-upgrade-run-2026-06-26.md) | 당일 preflight, 완료한 OTP 임시 해제, 실행 로그, 중단 기준 |
 | 2026-06-25 | TwinX `v1.33.3 -> v1.35.4` | [TwinX Kubernetes 1.35 Upgrade Plan](twinx-kubernetes-1-35-upgrade-plan.md) | Kubespray 경로, Ceph/Harbor/Partridge/l40s blocker, Hubble/DRA 순서, 중단 기준 |

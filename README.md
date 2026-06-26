@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-06-26 | Kubernetes / Upgrade | [TwinX Kubernetes Upgrade Run 2026-06-26](kubernetes/upgrades/twinx-kubernetes-upgrade-run-2026-06-26.md) | 당일 preflight, OTP 임시 해제 결과, 실행 로그, 다음 작업과 중단 기준 |
 | 2026-06-25 | Kubernetes / Upgrade | [TwinX Kubernetes 1.35 Upgrade Plan](kubernetes/upgrades/twinx-kubernetes-1-35-upgrade-plan.md) | TwinX Kubespray `1.33 -> 1.35.4` 계획, Ceph/Harbor/Partridge/l40s blocker, Hubble/DRA 적용 순서 |
 | 2026-06-25 | Incident | [MiniX Kubespray Upgrade Troubleshooting](incidents/minix-kubespray-upgrade-2026-06-25.md) | Cilium 권한, kubeadm health-check timeout, Rook-Ceph PDB drain block, CoreDNS loop, GPU node API timeout |
 | 2026-06-25 | Incident | [Cluster Cascade](incidents/cluster-cascade.md) | OTel, Cilium hostNetwork, Rook-Ceph 재구축으로 이어진 연쇄 장애 정리 |
