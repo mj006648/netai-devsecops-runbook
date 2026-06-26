@@ -1,0 +1,43 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: OverridePolicy
+metadata:
+  name: demo-override-platform-storageclass
+  namespace: demo-override-platform
+spec:
+  resourceSelectors:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: demo-override-platform-data
+  overrideRules:
+    - targetCluster:
+        clusterNames:
+          - twinx
+      overriders:
+        plaintext:
+          - path: /spec/storageClassName
+            operator: replace
+            value: scalex-twinx-local
+    - targetCluster:
+        clusterNames:
+          - edgex
+      overriders:
+        plaintext:
+          - path: /spec/storageClassName
+            operator: replace
+            value: scalex-edgex-local
+    - targetCluster:
+        clusterNames:
+          - datax
+      overriders:
+        plaintext:
+          - path: /spec/storageClassName
+            operator: replace
+            value: scalex-datax-local
+    - targetCluster:
+        clusterNames:
+          - poolx
+      overriders:
+        plaintext:
+          - path: /spec/storageClassName
+            operator: replace
+            value: scalex-poolx-local

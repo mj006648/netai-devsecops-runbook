@@ -9,11 +9,11 @@
 ## 현재 상태
 
 - 작성일: 2026-06-25
-- 상태: 실험 13까지 완료, Resource Pool member cluster와 fallback placement 검증 완료
+- 상태: 실험 14까지 완료, OverridePolicy image/storageClass 검증 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, controller-manager anti-affinity rollout 이슈, scheduler-estimator 로그를 실험 문서에 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, controller-manager anti-affinity rollout 이슈, scheduler-estimator 로그를 실험 문서에 기록
 
 ---
 
@@ -122,6 +122,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-26-13-resource-pool-placement.md`](./experiments/2026-06-26-13-resource-pool-placement.md)
   - `poolx`를 Resource Pool member cluster로 추가하고 fallback/general placement 검증
   - general workload는 `poolx=2`, render fallback은 `twinx=3`, `edgex=1`, `poolx=1`로 배치
+- [`experiments/2026-06-26-14-override-image-storageclass.md`](./experiments/2026-06-26-14-override-image-storageclass.md)
+  - `OverridePolicy`로 cluster별 image tag와 PVC `storageClassName` 변경 검증
+  - `twinx/edgex/datax/poolx`에 서로 다른 image/storageClass가 적용되고 모든 PVC가 Bound됨
 
 ---
 

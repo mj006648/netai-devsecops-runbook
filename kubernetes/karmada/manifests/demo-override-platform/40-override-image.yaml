@@ -1,0 +1,43 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: OverridePolicy
+metadata:
+  name: demo-override-platform-image
+  namespace: demo-override-platform
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-override-platform-nginx
+  overrideRules:
+    - targetCluster:
+        clusterNames:
+          - twinx
+      overriders:
+        plaintext:
+          - path: /spec/template/spec/containers/0/image
+            operator: replace
+            value: nginx:1.27-alpine
+    - targetCluster:
+        clusterNames:
+          - edgex
+      overriders:
+        plaintext:
+          - path: /spec/template/spec/containers/0/image
+            operator: replace
+            value: nginx:1.26-alpine
+    - targetCluster:
+        clusterNames:
+          - datax
+      overriders:
+        plaintext:
+          - path: /spec/template/spec/containers/0/image
+            operator: replace
+            value: nginx:1.25-alpine
+    - targetCluster:
+        clusterNames:
+          - poolx
+      overriders:
+        plaintext:
+          - path: /spec/template/spec/containers/0/image
+            operator: replace
+            value: nginx:1.27-alpine

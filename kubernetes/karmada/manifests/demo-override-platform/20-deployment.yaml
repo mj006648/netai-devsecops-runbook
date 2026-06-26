@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-override-platform-nginx
+  namespace: demo-override-platform
+  labels:
+    app: demo-override-platform-nginx
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: demo-override-platform-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-override-platform-nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/nginx/html/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: demo-override-platform-data
