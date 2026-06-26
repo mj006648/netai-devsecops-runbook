@@ -60,6 +60,17 @@
 
 따라서 현재 운영 목표는 `1.36.1`이 아니라 **Kubernetes 1.35.4**로 잡는다.
 
+
+### Kubespray v2.30 staging result
+
+`/home/netai/chang/kubespray-v2.30` was prepared as a separate `v2.30.0` worktree for the intermediate Kubernetes `v1.34.4` step. The existing inventory was copied locally, `sv4000-1 ansible_hose` was fixed in the copy, and `kube_version: v1.34.4` was added. `ansible-inventory --graph` parses the inventory.
+
+Important gates before executing the v2.30 playbook:
+
+- OIDC variables are present in the copied inventory, but the currently running kube-apiserver process has OIDC only on `control1`; verify OIDC after each control-plane node.
+- v2.30 defaults to Cilium `1.18.6`; decide whether to accept a Cilium upgrade during the Kubernetes 1.34 step or pin it separately.
+- Do not commit client kubeconfig secrets or OIDC client secrets.
+
 ## 2. 업그레이드 목표와 순서
 
 목표 버전:

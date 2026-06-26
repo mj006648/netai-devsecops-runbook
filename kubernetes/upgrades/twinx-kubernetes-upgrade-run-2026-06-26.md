@@ -284,6 +284,73 @@ Hold by default:
 | `sv4000-1` | Ceph MON/MDS/RGW/Rook-heavy node, Ubuntu 22.04 special case, inventory typo |
 
 
+
+## Kubespray v2.30 staging
+
+Intermediate Kubespray worktree was prepared for the `v1.33.3 -> v1.34.4` step. No upgrade playbook has been executed.
+
+```text
+source:      /home/netai/chang/kubespray
+worktree:    /home/netai/chang/kubespray-v2.30
+tag:         v2.30.0
+kube target: v1.34.4
+etcd target: 3.5.26 candidate from v2.30 checksums
+ansible:     ansible 10.7.0 / ansible-core 2.17.x
+```
+
+Local prep performed only inside the v2.30 worktree:
+
+- copied `inventory/mycluster` from the existing Kubespray checkout
+- fixed the copied `sv4000-1 ansible_hose` typo to `ansible_host`
+- added explicit `kube_version: v1.34.4` for the intermediate step
+- verified `ansible-inventory --graph` parses the copied inventory
+
+Cilium note:
+
+```text
+Kubespray v2.30 default cilium_version: 1.18.6
+Current inventory cilium_version override: none
+```
+
+Therefore, running v2.30 as-is may also upgrade Cilium. Decide before execution whether to accept that or pin Cilium separately.
+
+## OIDC / Keycloak preservation gate
+
+OIDC is important and must be preserved through the Kubespray-rendered kube-apiserver manifest. The copied v2.30 inventory includes the required Kubespray OIDC variables in `inventory/mycluster/group_vars/k8s_cluster/k8s-cluster.yml`:
+
+```text
+kube_oidc_auth: true
+kube_oidc_url: https://auth.mobilex.kr/realms/mobilex
+kube_oidc_client_id: tenants
+kube_oidc_username_claim: preferred_username
+kube_oidc_username_prefix: oidc:
+kube_oidc_groups_claim: groups
+kube_oidc_groups_prefix: oidc:
+```
+
+Kubespray v2.30 templates still consume these variables and render the following kube-apiserver options:
+
+```text
+oidc-issuer-url
+oidc-client-id
+oidc-username-claim
+oidc-username-prefix
+oidc-groups-claim
+oidc-groups-prefix
+```
+
+Current live check found an inconsistency that must be handled carefully:
+
+| Check | control1 | control2 | control3 |
+| --- | --- | --- | --- |
+| host `/etc/kubernetes/manifests/kube-apiserver.yaml` contains OIDC | yes | yes | yes |
+| Kubernetes mirror pod YAML contains OIDC | yes | no | no |
+| running kube-apiserver process contains OIDC | yes | no | no |
+
+Interpretation: OIDC is present in the inventory and static manifest files, but only `control1` is currently running with the OIDC arguments. During the control-plane upgrade, Kubespray should regenerate/restart kube-apiserver pods; after each control-plane node, verify OIDC args are present before continuing.
+
+Do not store client-side kubeconfig secrets or OIDC client secrets in this public runbook. Keep `tx-config` style client files local-only.
+
 ## If all nodes must be upgraded today
 
 전 노드를 오늘 끝내는 방법은 있다. 단, 이 경우 목표는 **무중단 rolling upgrade**가 아니라 **maintenance window 안에서 Kubernetes version을 맞추는 작업**으로 잡아야 한다. Harbor, Partridge, 일부 GPU workload, Ceph-backed workload의 순간 중단 가능성을 받아들이는 전략이다.
@@ -387,6 +454,7 @@ Stop before moving to the next node if any of the following happens.
 | 2026-06-26 before 13:00 KST | Checked etcd/control-plane/Cilium | etcd healthy, control-plane pods Running, Cilium `12/12 reachable` | Continue only after backup gates |
 | 2026-06-26 before 13:00 KST | Checked Ceph/Harbor/Partridge/ArgoCD/Kubespray | Found multiple hold conditions: Ceph WARN, Harbor RWO attachment conflict, Partridge readiness, Kubespray not target tag | Do not start whole-cluster upgrade |
 | 2026-06-26 before 13:00 KST | Revised first-wave scope | `rm352-2` removed from first wave; first candidate scope is control-plane and edgebox nodes only | Wait for explicit user approval before any upgrade |
+| 2026-06-26 before upgrade | Prepared Kubespray v2.30.0 worktree | `/home/netai/chang/kubespray-v2.30`, copied inventory, fixed `sv4000-1` typo, set `kube_version: v1.34.4`, inventory parses | Do not execute until backup/OIDC/Cilium gates are decided |
 
 ## Next planned action
 
