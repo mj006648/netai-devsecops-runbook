@@ -2,13 +2,28 @@
 
 > 작성일: 2026-06-25
 > 상태: 계획 문서. 실제 업그레이드, 재시작, drain, rollout은 아직 수행하지 않음.
-> 최신 점검: 2026-06-25 읽기 전용 클러스터 감사 결과 반영.
+> 최신 점검: 2026-06-26 당일 preflight 결과 반영. 실제 업그레이드, drain, restart, rollout은 아직 수행하지 않음.
 
 이 문서는 TwinX 클러스터를 Kubernetes 1.35 계열로 업그레이드하면서 Hubble 관측 기능과 DRA 기반 GPU 자원 할당 실험을 함께 준비하기 위한 작업 메모이다.
 
 ## 1. 현재 확인된 상태
 
 2026-06-25 기준 감사 스냅샷은 `/tmp/twinx-cluster-audit-20260625073732`에 보관했다. 이 감사에서는 `kubectl get/describe`, Ceph status, Cilium health, ArgoCD 상태 등 읽기 전용 조회만 수행했고 업그레이드, drain, restart, rollout은 수행하지 않았다.
+
+
+### 2026-06-26 당일 preflight 업데이트
+
+당일 preflight 결과, 업그레이드는 아직 시작하지 않았고 1차 범위를 더 줄였다. `rm352-2`는 어제 기준 저위험 후보였지만, 오늘 Harbor 신규 registry/jobservice pod가 `rm352-2`에서 `ContainerCreating` 상태이고 관련 RWO volume은 여전히 `rm352-1`에 attach되어 있어 1차 대상에서 제외한다.
+
+추가 gate:
+
+- etcd snapshot과 `/etc/kubernetes` 백업 완료
+- Kubespray checkout을 Kubernetes `v1.35.4`를 지원하는 target tag로 준비
+- `sv4000-1` inventory의 `ansible_hose` 오타 수정
+- target Kubespray에서 removed vars validation 통과
+- ArgoCD auto-sync 처리 방침 결정
+
+현 시점의 1차 후보는 `control1 -> control2 -> control3`, 이후 `edgebox1 -> edgebox2 -> edgebox3 -> edgebox4`로 제한한다. `rm352-1`, `rm352-2`, `sv4000-2`, `l40s`, `sv4000-1`은 보류한다.
 
 ### Kubernetes
 
@@ -228,7 +243,7 @@ Degraded data redundancy: 33 pgs undersized
 | `control3` | control-plane, hard PDB 없음 | `drain=true`, control-plane 한 대씩 순차 진행 |
 | `edgebox1~4` | T4 GPU node, 이미 `SchedulingDisabled`, non-DS pod 적음 | GPU job 확인 후 `drain=true` 가능성이 높음 |
 | `rm352-1` | A10 GPU node, Harbor registry 500Gi RWO PVC가 attach된 상태 | **Harbor registry 정리 전 보류.** drain 시 Harbor registry 중단/볼륨 재attach 가능성 확인 |
-| `rm352-2` | A10 GPU node, PDB allowed=1 workload 있음, 과거 Cilium 이슈 이력 | 표준 `drain=true` 후보. 전후 Cilium health와 pod/node 통신 검증 |
+| `rm352-2` | A10 GPU node, 과거 Cilium 이슈 이력, 2026-06-26 Harbor 신규 registry/jobservice pod가 `ContainerCreating` | **오늘 1차 wave에서 제외.** Harbor RWO volume attachment가 안정된 뒤 Cilium health와 pod/node 통신 검증 |
 | `sv4000-2` | A100 GPU node, Partridge 전용 label/taint, Kyverno로 `partridge` namespace pod 고정 | **Partridge 전용 노드. 서비스 영향 공지 후 처리. 대체 전용 노드가 없으면 drain 시 Partridge pod는 Pending/중단 가능** |
 | `l40s` | OSD 3개, MON/MGR, keycloak-db primary, nessiedb primary, redis master | **Ceph/DB-heavy 노드. Ceph WARN 해소 후 마지막에 처리. drain 실패 시 `drain_nodes=false` 예외 고려** |
 | `sv4000-1` | MON 2개, MDS, RGW, Rook operator/tools, 많은 Trident pod, Ubuntu 22.04.4 | **가장 위험한 노드. OS 업그레이드와 K8s 업그레이드 분리. Ceph WARN 해소 후 별도 작업. 필요 시 `drain_nodes=false` 예외** |
@@ -248,14 +263,13 @@ Degraded data redundancy: 33 pgs undersized
 
 2. 가벼운 GPU/worker 노드
    - edgebox1~4
-   - rm352-2
    - 기본 drain=true
 
 3. Harbor 영향 노드
-   - rm352-1
+   - rm352-1 / rm352-2
    - Harbor registry 500Gi RWO PVC attachment 상태 정리 후 진행
    - registry pod가 안정적으로 한 곳에 떠 있고 stuck pod가 없는지 확인
-   - Harbor가 중요하면 별도 짧은 중단 공지 후 drain
+   - 오늘 전 노드 완료가 목표라면 Harbor downtime을 허용하고 maintenance mode로 처리
 
 4. Partridge 전용 노드 별도 처리
    - sv4000-2
@@ -465,13 +479,12 @@ OTP를 해제하더라도 작업창 동안만 적용하고, 완료 후 반드시
 
 3. 저위험 worker
    - edgebox1~4
-   - rm352-2
    - 각 노드 후 Cilium health와 GPU Operator daemonset 확인
 
-4. 보류 또는 별도 작업
-   - rm352-1: Harbor registry 안정화 후
+4. 보류 또는 maintenance-mode 작업
+   - rm352-1 / rm352-2: Harbor registry 안정화 후. 오늘 전 노드 완료가 목표면 Harbor downtime 허용
    - sv4000-2: Partridge downtime 합의 후
-   - l40s/sv4000-1: Ceph health 정리 후
+   - l40s/sv4000-1: Ceph health 정리 후. 오늘 전 노드 완료가 목표면 no-drain 예외와 downtime 감수
 ```
 
 ### 시간 예상
@@ -480,9 +493,23 @@ OTP를 해제하더라도 작업창 동안만 적용하고, 완료 후 반드시
 | --- | --- | --- |
 | preflight + 상태 판단 | 1~2시간 | 반드시 필요 |
 | control-plane 3대 | 1~2시간 이상 | etcd/OTP 문제 없을 때 |
-| edgebox/rm352-2 일부 worker | 1~3시간 | drain 상황에 따라 변동 |
+| edgebox worker | 1~2시간 | 이미 SchedulingDisabled라 비교적 단순 |
+| rm352-1/rm352-2 Harbor 영향 노드 | 1~3시간 이상 | Harbor downtime 또는 RWO attachment 정리 필요 |
 | 전체 노드 완료 | 반나절~하루 이상 | 현재 상태에서는 무리하지 않는 편이 안전 |
 | Ceph/Harbor/Partridge 포함 완전 완료 | 별도 작업창 권장 | 내일 한 번에 묶지 않기 |
+
+
+### 오늘 전 노드 완료 옵션
+
+전 노드를 오늘 모두 올리려면 일반 rolling upgrade가 아니라 maintenance-mode 전략으로 바꿔야 한다. 핵심은 다음과 같다.
+
+- Hubble, DRA, Cilium 기능 변경은 오늘 하지 않고 Kubernetes version upgrade만 수행한다.
+- Harbor는 downtime을 허용하고 registry/jobservice RWO volume 상태를 명확히 한 뒤 `rm352-1`, `rm352-2`를 처리한다.
+- Partridge는 `sv4000-2` 전용 node 의존성이 있으므로 downtime을 허용하거나 대체 전용 노드를 준비한다.
+- `l40s`, `sv4000-1`은 Ceph-heavy 노드라 drain보다 no-drain 예외가 현실적이다. 단, kubelet/containerd 재시작 중 Ceph-backed workload 영향 가능성을 받아들여야 한다.
+- `sv4000-1`은 Ceph MON 2개가 같은 노드에 있어 가장 위험하다. 가능하면 mon 분산 후 처리하고, 오늘 반드시 해야 한다면 Ceph quorum 영향 가능성을 중단 조건으로 둔다.
+
+즉 오늘 전 노드 완료는 가능할 수 있지만, 현재 상태에서는 무중단/저위험 작업이 아니다.
 
 ### 중단 기준
 
