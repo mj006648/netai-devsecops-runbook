@@ -1,0 +1,42 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-pool-fallback-rebalance-policy
+  namespace: demo-resource-pool-rebalance
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-pool-fallback-rebalance-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-pool-fallback-rebalance-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchExpressions:
+          - key: scalex.io/pool
+            operator: In
+            values:
+              - gpu
+              - general
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: gpu-render
+            weight: 3
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: edge-gpu
+            weight: 1
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: resource-pool
+            weight: 1

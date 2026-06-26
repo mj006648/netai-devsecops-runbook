@@ -1,0 +1,10 @@
+apiVersion: apps.karmada.io/v1alpha1
+kind: WorkloadRebalancer
+metadata:
+  name: demo-pool-fallback-rebalance-run
+spec:
+  workloads:
+    - apiVersion: apps/v1
+      kind: Deployment
+      namespace: demo-resource-pool-rebalance
+      name: demo-pool-fallback-rebalance-nginx

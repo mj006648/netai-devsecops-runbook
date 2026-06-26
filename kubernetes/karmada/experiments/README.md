@@ -37,6 +37,7 @@
 | 12 | [`2026-06-26-12-scalex-role-label-placement.md`](./2026-06-26-12-scalex-role-label-placement.md) | ScaleX-POD role label placement | 성공 | role/pool/location/workload label로 render=twinx3+edgex1, edge=edgex2, data=datax2 배치 |
 | 13 | [`2026-06-26-13-resource-pool-placement.md`](./2026-06-26-13-resource-pool-placement.md) | Resource Pool placement | 성공 | poolx를 Karmada member로 추가하고 general=poolx2, render fallback=twinx3+edgex1+poolx1 배치 |
 | 14 | [`2026-06-26-14-override-image-storageclass.md`](./2026-06-26-14-override-image-storageclass.md) | OverridePolicy image/storageClass | 성공 | cluster별 image tag와 PVC storageClassName을 다르게 override하고 모든 PVC Bound 확인 |
+| 15 | [`2026-06-26-15-resource-pool-rebalance.md`](./2026-06-26-15-resource-pool-rebalance.md) | Resource Pool fallback 재균형 | 성공 | poolx=5 fallback skew를 WorkloadRebalancer로 twinx=3, edgex=1, poolx=1로 복구 |
 
 ---
 
@@ -44,22 +45,20 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | Resource Pool fallback + WorkloadRebalancer | fallback 배치 후 복구/재균형 운영 절차 확인 |
-| 2 | scheduler-estimator 정리 | estimator 설치 또는 scheduler estimator 비활성화 필요성 확인 |
-| 3 | spreadConstraints | zone/role/provider 기준 분산 배치 |
-| 4 | ArgoCD -> Karmada API Server | GitOps 흐름 검증 |
-| 5 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
-| 6 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
+| 1 | scheduler-estimator 정리 | estimator 설치 또는 scheduler estimator 비활성화 필요성 확인 |
+| 2 | spreadConstraints | zone/role/provider 기준 분산 배치 |
+| 3 | ArgoCD -> Karmada API Server | GitOps 흐름 검증 |
+| 4 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
+| 5 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
 
 ---
 
 ## 현재 우선순위
 
 ```text
-1. Resource Pool fallback + WorkloadRebalancer
-2. scheduler-estimator 정리
-3. spreadConstraints
-4. ArgoCD 연동
-5. Pull mode 후보 검토
-6. Kueue 조합 검토
+1. scheduler-estimator 정리
+2. spreadConstraints
+3. ArgoCD 연동
+4. Pull mode 후보 검토
+5. Kueue 조합 검토
 ```
