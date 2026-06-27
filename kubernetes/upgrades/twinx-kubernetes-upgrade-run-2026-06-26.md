@@ -7,10 +7,10 @@ TwinX Kubernetes upgrade run log for the 2026-06-26 UTC / 2026-06-27 KST mainten
 ```text
 start:   Kubernetes v1.34.3 for most nodes after the earlier v1.34 wave
 target:  Kubernetes v1.35.4 with Kubespray v2.31.0
-result:  main control-plane and GPU/storage workers upgraded to v1.35.4
-hold:    edgebox nodes intentionally deferred
+result:  main control-plane, GPU/storage workers, edgebox1, and edgebox2 upgraded to v1.35.4
+hold:    edgebox3 and edgebox4 intentionally deferred because they remain NotReady
 hubble:  not enabled in this run
-otp:     temporary SSH OTP bypass remains enabled until the deferred edgebox upgrade is complete
+otp:     temporary SSH OTP bypass remains enabled until the remaining edgebox3/4 decision is complete
 ```
 
 Final node status captured after today's run:
@@ -25,8 +25,8 @@ Final node status captured after today's run:
 | `l40s` | Ready | v1.35.4 | containerd 2.2.3 | upgraded |
 | `rm352-1` | Ready | v1.35.4 | containerd 2.2.3 | upgraded |
 | `rm352-2` | Ready | v1.35.4 | containerd 2.2.3 | upgraded |
-| `edgebox1` | Ready,SchedulingDisabled | v1.34.3 | containerd 2.2.1 | deferred |
-| `edgebox2` | Ready,SchedulingDisabled | v1.34.3 | containerd 2.2.1 | deferred |
+| `edgebox1` | Ready,SchedulingDisabled | v1.35.4 | containerd 2.2.3 | upgraded with no-drain follow-up |
+| `edgebox2` | Ready,SchedulingDisabled | v1.35.4 | containerd 2.2.3 | upgraded with no-drain follow-up |
 | `edgebox3` | NotReady,SchedulingDisabled | v1.34.3 | containerd 2.2.1 | deferred; node/network issue |
 | `edgebox4` | NotReady,SchedulingDisabled | v1.34.3 | containerd 2.2.1 | deferred; node/network issue |
 
@@ -37,8 +37,8 @@ Final node status captured after today's run:
 | Upgrade method | Use Kubespray v2.31.0 `upgrade-cluster.yml` for Kubernetes v1.35.4. |
 | Drain policy | Use no-drain for the remaining storage/GPU worker upgrades because Rook-Ceph, Harbor, MinIO, and GPU workloads make normal drain risky. |
 | Hubble | Do not enable Hubble in this run because Cilium is still managed through Kubespray rather than GitOps. |
-| Edgebox | Defer edgebox1-4. edgebox3/4 already have connectivity/NotReady issues, and edgebox1/2 stay cordoned for the edgebox-specific follow-up. |
-| OTP bypass | Keep temporary SSH OTP bypass enabled until the deferred edgebox upgrade is complete, then run rollback. |
+| Edgebox | Upgrade edgebox1/2 one by one with no-drain after the main wave. Keep edgebox3/4 deferred because they remain NotReady and need node/network recovery first. |
+| OTP bypass | Keep temporary SSH OTP bypass enabled until the remaining edgebox3/4 decision is complete, then run rollback. |
 | Ceph `noout` | Temporarily used around Ceph-heavy node work, then unset. Final flags do not include `noout`. |
 
 ## Command pattern used
@@ -78,7 +78,7 @@ ansible-playbook --syntax-check ... upgrade-cluster.yml: passed
 rm352-1 and rm352-2: cordon happened, actual kubectl drain did not run, upgrade succeeded
 ```
 
-Directive: if a fresh Kubespray checkout is used for the deferred edgebox work, re-check this patch before using `drain_nodes=false`.
+Directive: if a fresh Kubespray checkout is used for the remaining edgebox work, re-check this patch before using `drain_nodes=false`.
 
 ## Backup and recovery material
 
@@ -114,9 +114,9 @@ Match User netai
 # END NETAI TEMP OTP BYPASS 2026-06-26
 ```
 
-Current decision: do not rollback yet. Keep it until the deferred edgebox upgrade is complete.
+Current decision: do not rollback yet. Keep it until the remaining edgebox3/4 decision is complete.
 
-Rollback command to run after edgebox work:
+Rollback command to run after the remaining edgebox3/4 decision:
 
 ```bash
 /tmp/rollback_netai_otp_bypass.sh
@@ -141,7 +141,10 @@ Note: one rollback attempt was intentionally stopped/abandoned because the user 
 | v1.35 wave | Ceph flag cleanup | `noout` unset after Ceph-heavy work. Final flags do not include `noout`. |
 | v1.35 wave | `rm352-1` | Upgraded to v1.35.4. Play recap `failed=0`; actual drain skipped. |
 | v1.35 wave | `rm352-2` | Upgraded to v1.35.4. Play recap `failed=0`; actual drain skipped. |
-| final check | Cluster verification | Main upgraded nodes Ready on v1.35.4; etcd healthy; edgebox deferred. |
+| main wave final check | Cluster verification | Main upgraded nodes Ready on v1.35.4; etcd healthy; edgebox1-4 still deferred at that moment. |
+| edgebox follow-up | `edgebox1` | Upgraded to v1.35.4 with `drain_nodes=false`; play recap `failed=0`; no `kubectl drain edgebox1` process observed. |
+| edgebox follow-up | `edgebox2` | Upgraded to v1.35.4 with `drain_nodes=false`; play recap `failed=0`; no `kubectl drain edgebox2` process observed. |
+| edgebox follow-up | edgebox verification | edgebox1/2 Ready on v1.35.4; Cilium, kube-proxy, nginx-proxy Running; edgebox1/2 MinIO pods Running. |
 
 ## Final verification evidence
 
@@ -153,6 +156,28 @@ Cilium: cilium-89hzl Running
 kube-proxy: kube-proxy-sw6g2 Running
 Rook-Ceph pods on rm352-2: Running
 Non-running pods on rm352-2: none
+```
+
+### edgebox1/2 post-upgrade
+
+```text
+edgebox1 Ready,SchedulingDisabled v1.35.4 containerd://2.2.3
+edgebox2 Ready,SchedulingDisabled v1.35.4 containerd://2.2.3
+```
+
+Core system pods on edgebox1/2:
+
+```text
+edgebox1: cilium, cilium-envoy, kube-proxy, nginx-proxy Running
+edgebox2: cilium, cilium-envoy, kube-proxy, nginx-proxy Running
+```
+
+Workload check:
+
+```text
+edgebox1/2 non-running pods: none
+minio-0 and minio-6 on edgebox1: Running
+minio-1 and minio-3 on edgebox2: Running
 ```
 
 ### etcd health
@@ -194,40 +219,40 @@ minio/minio-7                                      Terminating on edgebox4
 
 Interpretation:
 
-- Edgebox-related Pending/Terminating pods are part of the deferred edgebox work.
+- Edgebox3/4-related Pending/Terminating pods are part of the remaining deferred edgebox work.
 - Harbor pods on `l40s` are a separate RWO/Multi-Attach style cleanup item and were not treated as blocking the Kubernetes node upgrade.
 
-## Deferred edgebox work
+## Remaining deferred edgebox work
 
-Edgebox nodes are intentionally not completed in this run.
+Edgebox1/2 were completed in the follow-up run. Edgebox3/4 are intentionally not completed yet because both remain NotReady.
 
 Current edgebox state:
 
 ```text
-edgebox1: v1.34.3, Ready,SchedulingDisabled
-edgebox2: v1.34.3, Ready,SchedulingDisabled
+edgebox1: v1.35.4, Ready,SchedulingDisabled
+edgebox2: v1.35.4, Ready,SchedulingDisabled
 edgebox3: v1.34.3, NotReady,SchedulingDisabled
 edgebox4: v1.34.3, NotReady,SchedulingDisabled
 ```
 
-Before upgrading edgebox nodes:
+Before upgrading edgebox3/4:
 
 1. Confirm power/link/reachability for `edgebox3` and `edgebox4`.
 2. Decide whether edgebox MinIO pods can be cleaned up or need recovery first.
 3. Re-check Kubespray no-drain patch if using a fresh checkout.
-4. Upgrade edgebox nodes one by one, not in parallel.
+4. Upgrade remaining edgebox nodes one by one, not in parallel.
 5. Verify kubelet/Cilium/kube-proxy after each node.
-6. Only after edgebox is complete, rollback temporary OTP bypass.
+6. Only after the remaining edgebox decision is complete, rollback temporary OTP bypass.
 
 ## Remaining risks
 
 | Risk | Status | Next action |
 | --- | --- | --- |
-| Edgebox nodes not upgraded | accepted temporary skew | finish next edgebox maintenance window |
+| edgebox3/4 not upgraded | accepted temporary skew | recover node/network state before the next edgebox maintenance window |
 | edgebox3/4 NotReady | unresolved | power/link/SSH/network check |
 | Harbor registry/jobservice ContainerCreating | unresolved | inspect RWO volume attachments and old pod cleanup |
 | Ceph HEALTH_WARN | baseline warning remains | monitor PGs, mon disk usage, scrub backlog, no-replica pools |
-| OTP bypass still enabled | intentional temporary state | rollback after edgebox completion |
+| OTP bypass still enabled | intentional temporary state | rollback after remaining edgebox3/4 decision |
 | Hubble not enabled | intentional | enable later after Cilium GitOps/values plan |
 
 ## Stop conditions for next edgebox run
