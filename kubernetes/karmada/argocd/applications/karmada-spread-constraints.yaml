@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karmada-spread-constraints
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mj006648/netai-devsecops-runbook.git
+    targetRevision: main
+    path: kubernetes/karmada/manifests/demo-spread-constraints
+  destination:
+    server: https://karmada-apiserver.karmada-system.svc:5443
+    namespace: demo-spread-constraints
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
