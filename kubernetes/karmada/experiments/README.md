@@ -39,6 +39,7 @@
 | 14 | [`2026-06-26-14-override-image-storageclass.md`](./2026-06-26-14-override-image-storageclass.md) | OverridePolicy image/storageClass | 성공 | cluster별 image tag와 PVC storageClassName을 다르게 override하고 모든 PVC Bound 확인 |
 | 15 | [`2026-06-26-15-resource-pool-rebalance.md`](./2026-06-26-15-resource-pool-rebalance.md) | Resource Pool fallback 재균형 | 성공 | poolx=5 fallback skew를 WorkloadRebalancer로 twinx=3, edgex=1, poolx=1로 복구 |
 | 16 | [`2026-06-27-16-scheduler-estimator.md`](./2026-06-27-16-scheduler-estimator.md) | scheduler-estimator 상태 정리 | 성공/설정 변경 | estimator 서비스 부재와 dial 실패 로그 확인, lab에서는 estimator 비활성화 후 weighted scheduling 정상 확인 |
+| 17 | [`2026-06-27-17-spread-constraints.md`](./2026-06-27-17-spread-constraints.md) | spreadConstraints pool group 분산 | 성공/주의 필요 | `scalex.io/pool` 기준 spread 배치 성공, labelSelector weight는 매칭 cluster별 weight처럼 동작하고 minGroups hard fail은 미확인 |
 
 ---
 
@@ -46,9 +47,9 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | spreadConstraints | zone/role/provider 기준 분산 배치 |
-| 2 | ArgoCD -> Karmada API Server | GitOps 흐름 검증 |
-| 3 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
+| 1 | ArgoCD -> Karmada API Server | GitOps 흐름 검증 |
+| 2 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
+| 3 | prune/delete/rollback | GitOps와 Karmada 전파 삭제/복구 동작 검증 |
 | 4 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
 | 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
 
@@ -57,9 +58,9 @@
 ## 현재 우선순위
 
 ```text
-1. spreadConstraints
-2. ArgoCD 연동
-3. Pull mode 후보 검토
+1. ArgoCD 연동
+2. Pull mode 후보 검토
+3. prune/delete/rollback 검증
 4. Kueue 조합 검토
 5. scheduler-estimator 설치형 실험
 ```

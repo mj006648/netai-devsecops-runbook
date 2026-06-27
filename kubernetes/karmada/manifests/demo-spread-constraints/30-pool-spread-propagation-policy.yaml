@@ -1,0 +1,47 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-spread-pool-policy
+  namespace: demo-spread-constraints
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-spread-pool-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-spread-pool-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchExpressions:
+          - key: scalex.io/pool
+            operator: In
+            values:
+              - gpu
+              - data
+              - general
+    spreadConstraints:
+      - spreadByLabel: scalex.io/pool
+        minGroups: 3
+        maxGroups: 3
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/pool: gpu
+            weight: 2
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/pool: data
+            weight: 1
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/pool: general
+            weight: 1

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-spread-pool-nginx
+  namespace: demo-spread-constraints
+spec:
+  selector:
+    app: demo-spread-pool-nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
