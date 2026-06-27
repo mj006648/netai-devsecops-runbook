@@ -1,0 +1,23 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-estimator-aggregated-policy
+  namespace: demo-scheduler-estimator
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-estimator-aggregated-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-estimator-aggregated-nginx
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - twinx
+        - edgex
+        - datax
+        - poolx
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Aggregated

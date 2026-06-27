@@ -1,0 +1,41 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-estimator-disabled-weighted-policy
+  namespace: demo-scheduler-estimator
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-estimator-disabled-weighted-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-estimator-disabled-weighted-nginx
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - twinx
+        - edgex
+        - datax
+        - poolx
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              clusterNames:
+                - twinx
+            weight: 1
+          - targetCluster:
+              clusterNames:
+                - edgex
+            weight: 1
+          - targetCluster:
+              clusterNames:
+                - datax
+            weight: 1
+          - targetCluster:
+              clusterNames:
+                - poolx
+            weight: 1

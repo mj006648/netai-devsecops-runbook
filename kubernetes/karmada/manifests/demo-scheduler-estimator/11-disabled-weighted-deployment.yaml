@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-estimator-disabled-weighted-nginx
+  namespace: demo-scheduler-estimator
+  labels:
+    app: demo-estimator-disabled-weighted-nginx
+    scalex.io/workload: estimator-disabled-check
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: demo-estimator-disabled-weighted-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-estimator-disabled-weighted-nginx
+        scalex.io/workload: estimator-disabled-check
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          ports:
+            - containerPort: 80

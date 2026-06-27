@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-estimator-aggregated-nginx
+  namespace: demo-scheduler-estimator
+  labels:
+    app: demo-estimator-aggregated-nginx
+    scalex.io/workload: estimator-check
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: demo-estimator-aggregated-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-estimator-aggregated-nginx
+        scalex.io/workload: estimator-check
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          ports:
+            - containerPort: 80
