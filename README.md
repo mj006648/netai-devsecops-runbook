@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-06-28 | Kubernetes / GPU | [TwinX NVIDIA DRA Driver Rollout](kubernetes/gpu/twinx-nvidia-dra-driver-rollout-2026-06-28.md) | GPU Operator v25.3.4 환경에서 NVIDIA DRA driver chart 25.3.2를 GitOps로 추가하고 GPU/MIG/ComputeDomain DeviceClass와 ResourceSlice 검증 |
 | 2026-06-28 | Kubernetes / Virtualization | [TwinX KubeVirt User VM Plan](kubernetes/virtualization/twinx-kubevirt-user-vm-plan-2026-06-28.md) | 사용자별 KubeVirt VM 제공 설계, v1.8.4 선택 이유, GitOps 준비 결과, 배포 전 preflight와 중단 기준 |
 | 2026-06-26 | Kubernetes / Karmada | [Karmada ScaleX-POD Lab](kubernetes/karmada/) | MiniX kind 기반 Karmada 실험 00~14, OverridePolicy image/storageClass, Resource Pool fallback, NoExecute failover, WorkloadRebalancer 재균형 |
 | 2026-06-26 | Kubernetes / Upgrade | [TwinX Kubernetes Upgrade Run 2026-06-26](kubernetes/upgrades/twinx-kubernetes-upgrade-run-2026-06-26.md) | 당일 preflight 결과, OTP 임시 해제, Harbor/Ceph/Partridge/Kubespray blocker, 축소된 1차 wave |
@@ -26,15 +27,14 @@
 | 2026-06-25 | Storage | [LV Preparation](storage/lv-preparation.md) | 재부팅 후 Ceph OSD가 올라오지 않는 stale LVM PV 문제 |
 | 2026-06-25 | Policy | [Kyverno + cert-manager](policy/kyverno-cert-manager.md) | Kyverno chart v3.7.x에서 인증서 ping-pong이 반복되는 문제 |
 | 2026-06-25 | Policy | [Webhook Cert SIGTERM](policy/webhook-cert-sigterm.md) | webhook controller가 인증서 owner 충돌로 주기적 SIGTERM 재시작되는 문제 |
-| 2026-06-25 | Kubernetes / Study | [Kubernetes Study Guides](kubernetes/study/) | DRA, Gateway API, PV/PVC, ServiceAccount/RBAC 공부용 정리 |
 
 ## Sections
 
 - **[kubernetes/](kubernetes/)** — Kubernetes 운영 계획과 공부 문서
   - **[kubernetes/karmada/](kubernetes/karmada/)** — ScaleX-POD Karmada 멀티클러스터 실험과 운영 runbook
+  - **[kubernetes/gpu/](kubernetes/gpu/)** — GPU Operator, NVIDIA DRA, MIG, GPU node 운영
   - **[kubernetes/upgrades/](kubernetes/upgrades/)** — Kubespray 업그레이드, Hubble, DRA 적용 계획
   - **[kubernetes/virtualization/](kubernetes/virtualization/)** — KubeVirt 기반 사용자별 VM 제공 계획과 운영 절차
-  - **[kubernetes/study/](kubernetes/study/)** — DRA, Gateway API, PV/PVC, RBAC 같은 공부용 정리
 - **[networking/](networking/)** — netplan, Cilium, MTU, secondary IP, 노드 라우팅
 - **[storage/](storage/)** — Rook-Ceph 설치·복구·튜닝, LVM 준비
 - **[policy/](policy/)** — Kyverno, cert-manager, webhook lifecycle
