@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-06-28 | Kubernetes / Virtualization | [TwinX KubeVirt User VM Plan](kubernetes/virtualization/twinx-kubevirt-user-vm-plan-2026-06-28.md) | 사용자별 KubeVirt VM 제공 설계, v1.8.4 선택 이유, GitOps 준비 결과, 배포 전 preflight와 중단 기준 |
 | 2026-06-26 | Kubernetes / Karmada | [Karmada ScaleX-POD Lab](kubernetes/karmada/) | MiniX kind 기반 Karmada 실험 00~14, OverridePolicy image/storageClass, Resource Pool fallback, NoExecute failover, WorkloadRebalancer 재균형 |
 | 2026-06-26 | Kubernetes / Upgrade | [TwinX Kubernetes Upgrade Run 2026-06-26](kubernetes/upgrades/twinx-kubernetes-upgrade-run-2026-06-26.md) | 당일 preflight 결과, OTP 임시 해제, Harbor/Ceph/Partridge/Kubespray blocker, 축소된 1차 wave |
 | 2026-06-25 | Kubernetes / Upgrade | [TwinX Kubernetes 1.35 Upgrade Plan](kubernetes/upgrades/twinx-kubernetes-1-35-upgrade-plan.md) | TwinX Kubespray `1.33 -> 1.35.4` 계획, Ceph/Harbor/Partridge/l40s blocker, Hubble/DRA 적용 순서 |
@@ -32,6 +33,7 @@
 - **[kubernetes/](kubernetes/)** — Kubernetes 운영 계획과 공부 문서
   - **[kubernetes/karmada/](kubernetes/karmada/)** — ScaleX-POD Karmada 멀티클러스터 실험과 운영 runbook
   - **[kubernetes/upgrades/](kubernetes/upgrades/)** — Kubespray 업그레이드, Hubble, DRA 적용 계획
+  - **[kubernetes/virtualization/](kubernetes/virtualization/)** — KubeVirt 기반 사용자별 VM 제공 계획과 운영 절차
   - **[kubernetes/study/](kubernetes/study/)** — DRA, Gateway API, PV/PVC, RBAC 같은 공부용 정리
 - **[networking/](networking/)** — netplan, Cilium, MTU, secondary IP, 노드 라우팅
 - **[storage/](storage/)** — Rook-Ceph 설치·복구·튜닝, LVM 준비
