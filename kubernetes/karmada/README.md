@@ -10,11 +10,11 @@
 
 - 작성일: 2026-06-25
 - 최근 업데이트: 2026-06-29
-- 상태: 실험 27까지 완료, Karmada + Kueue DataX Job admission/queue 검증 완료
+- 상태: 실험 28까지 완료, ArgoCD -> Karmada -> DataX -> Kueue end-to-end 검증 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, ArgoCD -> Karmada -> DataX -> Kueue end-to-end sync/self-heal/admission 검증, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
 
 ---
 
@@ -169,6 +169,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-29-27-kueue-datax-basic.md`](./experiments/2026-06-29-27-kueue-datax-basic.md)
   - Kueue를 `datax`에 설치하고 Karmada가 전파한 Job의 member-local admission/queue 동작 검증
   - cpu=1 quota에서 Job 1개 admitted, 1개 pending/Suspended, quota 반환 후 pending Job admitted 확인
+- [`experiments/2026-06-29-28-argocd-karmada-kueue.md`](./experiments/2026-06-29-28-argocd-karmada-kueue.md)
+  - ArgoCD가 Karmada API Server로 sync한 Job을 Karmada가 datax로 전파하고, datax Kueue가 admission을 제어하는 end-to-end 구조 검증
+  - ArgoCD Synced/Karmada FullyApplied와 Kueue pending/admitted 상태를 함께 봐야 함을 확인
 
 ---
 
@@ -322,6 +325,7 @@ karmada/
     2026-06-29-25-argocd-prune-safety.md                # ArgoCD prune 운영 안전장치
     2026-06-29-26-pull-mode-network-partition.md        # Pull mode 네트워크 단절/복구
     2026-06-29-27-kueue-datax-basic.md                  # Kueue DataX Job admission
+    2026-06-29-28-argocd-karmada-kueue.md                # ArgoCD/Karmada/Kueue 통합
   argocd/
     applications/                   # ArgoCD Application 샘플
     applicationsets/                # ArgoCD ApplicationSet 샘플
@@ -341,4 +345,5 @@ karmada/
     demo-cluster-failover/          # 실제 cluster 장애 failover YAML
     demo-failover-enabled/          # Failover 옵션 활성화 재실험 YAML
     demo-kueue-datax/                # Karmada + Kueue DataX Job admission YAML
+    demo-argocd-kueue-datax/         # ArgoCD -> Karmada -> DataX -> Kueue YAML
 ```

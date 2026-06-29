@@ -50,6 +50,7 @@
 | 25 | [`2026-06-29-25-argocd-prune-safety.md`](./2026-06-29-25-argocd-prune-safety.md) | ArgoCD prune 운영 안전장치 | 성공 | prune 위험 모델, runbook, `karmada-guarded` AppProject 샘플을 정리하고 live ArgoCD 적용까지 확인 |
 | 26 | [`2026-06-29-26-pull-mode-network-partition.md`](./2026-06-29-26-pull-mode-network-partition.md) | Pull mode 네트워크 단절/복구 | 성공/주의 필요 | agent Pod egress FORWARD 차단으로 `pullx READY=Unknown`, 기존 workload 유지, 복구 후 재수렴을 확인 |
 | 27 | [`2026-06-29-27-kueue-datax-basic.md`](./2026-06-29-27-kueue-datax-basic.md) | Karmada + Kueue DataX Job admission | 성공/주의 필요 | Karmada가 Job을 datax로 전파하고, datax Kueue가 cpu=1 quota로 1개 admitted/1개 pending을 제어함 |
+| 28 | [`2026-06-29-28-argocd-karmada-kueue.md`](./2026-06-29-28-argocd-karmada-kueue.md) | ArgoCD -> Karmada -> DataX -> Kueue | 성공/주의 필요 | ArgoCD sync, Karmada 전파, datax Kueue admission, self-heal 후 재입장까지 end-to-end 확인 |
 
 ---
 
@@ -63,20 +64,20 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | 실제 ScaleX-POD 이전 checklist | MiniX/kind 실험 결과를 실제 Tower/TwinX/EdgeX/DataX 이전 절차로 변환 |
-| 2 | Kueue 관측/알림 | Karmada ResourceBinding과 member Kueue Workload/Queue를 함께 보는 기준 정리 |
-| 3 | ArgoCD AppProject migration | 기존 Application을 `default`에서 목적별 AppProject로 옮기는 절차 검증 |
-| 4 | Kueue GitOps 배포 구조 | Kueue 설치/queue를 ArgoCD로 member cluster에 관리할지 검토 |
-| 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 1 | Kueue 관측/알림 | Karmada ResourceBinding과 member Kueue Workload/Queue를 함께 보는 기준 정리 |
+| 2 | Kueue GitOps 배포 구조 | Kueue 설치/queue를 ArgoCD로 member cluster에 관리할지 검토 |
+| 3 | Kueue controller 장애/복구 | member-local admission controller 장애 시 Job 상태와 복구 후 수렴 확인 |
+| 4 | Kueue quota 변경 | quota 증감 시 pending/running Job 반응 확인 |
+| 5 | ArgoCD AppProject migration | 기존 Application을 `default`에서 목적별 AppProject로 옮기는 절차 검증 |
 
 ---
 
 ## 현재 우선순위
 
 ```text
-1. 실제 ScaleX-POD 이전 checklist
-2. Kueue 관측/알림 정리
-3. ArgoCD AppProject migration 실험
-4. Kueue GitOps 배포 구조 검토
-5. scheduler-estimator 설치형 실험
+1. Kueue 관측/알림 정리
+2. Kueue GitOps 배포 구조 검토
+3. Kueue controller 장애/복구 실험
+4. Kueue quota 변경 실험
+5. ArgoCD AppProject migration 실험
 ```

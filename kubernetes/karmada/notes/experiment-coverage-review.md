@@ -2,7 +2,7 @@
 
 ## 목적
 
-실험 00~27까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
+실험 00~28까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
 
 ---
 
@@ -15,6 +15,7 @@
 18~19, 24~25: ArgoCD -> Karmada GitOps, prune/restore, ApplicationSet, prune 안전장치
 20~23, 26: Pull mode, agent 복구, 신규 cluster label 영향, Pull mode 재균형, 네트워크 단절/복구
 27: Kueue member-local Job admission과 Karmada placement 역할 분리
+28: ArgoCD -> Karmada -> DataX -> Kueue end-to-end 구조
 ```
 
 결론:
@@ -40,6 +41,7 @@
 | 20, 21, 26 | 모두 Pull mode | 20은 등록/전파 baseline, 21은 agent Deployment 중단/복구, 26은 agent process를 내리지 않고 네트워크 단절/복구 |
 | 22, 23 | 둘 다 pullx 추가 이후 영향 | 22는 label 매칭 영향 분석, 23은 실제 replica 재균형 실행 |
 | 16, 27 | 둘 다 scheduling 관련 | 16은 Karmada scheduler-estimator, 27은 member cluster 내부 Kueue Job admission이라 계층이 다름 |
+| 18, 27, 28 | 모두 GitOps/Job 배포와 관련 | 18은 ArgoCD -> Karmada 기본 sync, 27은 Karmada + Kueue만, 28은 세 도구를 end-to-end로 연결 |
 
 ---
 
@@ -61,6 +63,7 @@
 13. Pull mode 등록, agent 장애/복구, 네트워크 단절/복구
 14. 신규 cluster label 영향 audit
 15. Kueue member-local Job admission과 quota 기초 동작
+16. ArgoCD -> Karmada -> Kueue end-to-end 동작
 ```
 
 ---
@@ -94,5 +97,5 @@
 ScaleX-POD placement: 12~17, 22
 GitOps: 18~19, 24~25
 Pull mode: 20~23, 26
-Queue/admission: 27
+Queue/admission: 27~28
 ```

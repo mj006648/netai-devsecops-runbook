@@ -25,6 +25,11 @@ Karmada API Server cluster secret은 kubeconfig 인증서와 키를 포함하므
   - Git source: `kubernetes/karmada/manifests/demo-argocd-prune-rollback`
   - destination: Karmada API Server
   - prune/self-heal 검증용
+- `applications/karmada-kueue-datax.yaml`
+  - Git source: `kubernetes/karmada/manifests/demo-argocd-kueue-datax/karmada`
+  - destination: Karmada API Server
+  - ArgoCD -> Karmada -> datax -> Kueue end-to-end 검증용
+  - Kueue queue resource는 datax member cluster에 별도로 준비
 
 ## applicationsets
 
@@ -63,3 +68,7 @@ Karmada API Server cluster secret은 kubeconfig 인증서와 키를 포함하므
 실험 25에서 ArgoCD prune 위험 모델을 정리하고 `karmada-guarded` AppProject 샘플을 live ArgoCD에 적용했다. 기존 Application은 아직 `default` project에 남겨두고, 실제 migration은 별도 실험으로 분리했다.
 
 자세한 기록: `kubernetes/karmada/experiments/2026-06-29-25-argocd-prune-safety.md`
+
+실험 28에서 `karmada-kueue-datax` Application은 Karmada API Server로 Job/Policy를 sync했고, Karmada는 datax로 Job을 전파했다. datax의 Kueue는 cpu=1 quota 기준으로 하나의 Job만 admitted하고 다른 Job은 Suspended/Pending으로 유지했다. 실험 후 live demo 리소스는 정리했다.
+
+자세한 기록: `kubernetes/karmada/experiments/2026-06-29-28-argocd-karmada-kueue.md`
