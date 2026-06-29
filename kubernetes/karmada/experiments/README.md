@@ -47,6 +47,8 @@
 | 22 | [`2026-06-29-22-new-cluster-label-impact.md`](./2026-06-29-22-new-cluster-label-impact.md) | 신규 cluster label 영향 범위 | 성공/주의 필요 | `pullx` label이 기존 edge Service에 추가 매칭되는 현상을 정리하고 label 부여 전후 checklist 작성 |
 | 23 | [`2026-06-29-23-pull-mode-workload-rebalancer.md`](./2026-06-29-23-pull-mode-workload-rebalancer.md) | Pull mode + WorkloadRebalancer | 성공 | 기존 edge Deployment를 `edgex=2`에서 `edgex=1,pullx=1`로 재균형, Push/Pull 혼합 재균형 확인 |
 | 24 | [`2026-06-29-24-argocd-applicationset.md`](./2026-06-29-24-argocd-applicationset.md) | ArgoCD ApplicationSet -> Karmada | 성공/주의 필요 | ApplicationSet이 Karmada용 Application 2개를 생성하고 edge는 `edgex=1,pullx=1`, data는 `datax=2`로 전파됨 |
+| 25 | [`2026-06-29-25-argocd-prune-safety.md`](./2026-06-29-25-argocd-prune-safety.md) | ArgoCD prune 운영 안전장치 | 성공 | prune 위험 모델, runbook, `karmada-guarded` AppProject 샘플을 정리하고 live ArgoCD 적용까지 확인 |
+| 26 | [`2026-06-29-26-pull-mode-network-partition.md`](./2026-06-29-26-pull-mode-network-partition.md) | Pull mode 네트워크 단절/복구 | 성공/주의 필요 | agent Pod egress FORWARD 차단으로 `pullx READY=Unknown`, 기존 workload 유지, 복구 후 재수렴을 확인 |
 
 ---
 
@@ -60,20 +62,20 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | ArgoCD prune 운영 안전장치 | prune=true 운영 시 AppProject, sync window, branch protection 정리 |
-| 2 | Pull mode 네트워크 단절/복구 | agent scale-down보다 강한 현장망 단절 상황에서 status와 수렴 시간 확인 |
-| 3 | 실제 ScaleX-POD 이전 checklist | MiniX/kind 실험 결과를 실제 Tower/TwinX/EdgeX/DataX 이전 절차로 변환 |
-| 4 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
-| 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 1 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
+| 2 | 실제 ScaleX-POD 이전 checklist | MiniX/kind 실험 결과를 실제 Tower/TwinX/EdgeX/DataX 이전 절차로 변환 |
+| 3 | ArgoCD AppProject migration | 기존 Application을 `default`에서 목적별 AppProject로 옮기는 절차 검증 |
+| 4 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 5 | 관측/알림 정리 | Cluster READY Unknown, agent health, binding drift를 운영 알림으로 변환 |
 
 ---
 
 ## 현재 우선순위
 
 ```text
-1. ArgoCD prune 운영 안전장치 정리
-2. Pull mode 네트워크 단절/복구 실험
-3. 실제 ScaleX-POD 이전 checklist
-4. Kueue 조합 검토
-5. scheduler-estimator 설치형 실험
+1. Kueue 기초 실험
+2. 실제 ScaleX-POD 이전 checklist
+3. ArgoCD AppProject migration 실험
+4. scheduler-estimator 설치형 실험
+5. 관측/알림 정리
 ```

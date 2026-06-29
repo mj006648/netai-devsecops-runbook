@@ -10,11 +10,11 @@
 
 - 작성일: 2026-06-25
 - 최근 업데이트: 2026-06-29
-- 상태: 실험 24까지 완료, ArgoCD ApplicationSet으로 여러 Karmada app 생성/전파 검증 완료
+- 상태: 실험 26까지 완료, ArgoCD prune 안전장치와 Pull mode 네트워크 단절/복구 검증 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
 
 ---
 
@@ -42,6 +42,7 @@ pullx  : Pull mode Edge 계열 member cluster
 - [MiniX Lab에서 ScaleX-POD 멀티클러스터까지의 검증 로드맵](https://github.com/mj006648/MiniX/blob/main/docs/architecture/multicluster-roadmap.md)
 - [Karmada 실험 진행표](./experiments/README.md)
 - [신규 member cluster label 영향 범위 점검 checklist](./runbooks/new-cluster-label-impact-checklist.md)
+- [ArgoCD prune 운영 안전장치 runbook](./runbooks/argocd-prune-safety.md)
 - [실험 coverage review](./notes/experiment-coverage-review.md)
 
 ---
@@ -159,6 +160,12 @@ kubectl config get-contexts
 - [`experiments/2026-06-29-24-argocd-applicationset.md`](./experiments/2026-06-29-24-argocd-applicationset.md)
   - ArgoCD ApplicationSet으로 Karmada용 Application 여러 개 생성 검증
   - edge app은 `edgex=1,pullx=1`, data app은 `datax=2`로 전파
+- [`experiments/2026-06-29-25-argocd-prune-safety.md`](./experiments/2026-06-29-25-argocd-prune-safety.md)
+  - ArgoCD prune 위험 모델과 운영 안전장치 runbook 정리
+  - `karmada-guarded` AppProject 샘플을 live ArgoCD에 적용해 source/destination/resource 범위 제한 검증
+- [`experiments/2026-06-29-26-pull-mode-network-partition.md`](./experiments/2026-06-29-26-pull-mode-network-partition.md)
+  - Pull mode `pullx`에서 Karmada API Server로 가는 네트워크 단절/복구 검증
+  - kind/CNI 환경에서는 node OUTPUT 차단이 실패했고, agent Pod egress FORWARD 차단이 실제 단절을 만들었음
 
 ---
 
@@ -297,6 +304,7 @@ karmada/
   README.md                         # 전체 계획과 현재 상태
   notes/
     concepts.md                     # 개념 정리
+    experiment-coverage-review.md   # 실험 중복/누락 review
   experiments/
     README.md                                           # 실험 진행표
     2026-06-25-00-kind-lab-plan.md                      # kind/Karmada Lab 구성
@@ -306,7 +314,17 @@ karmada/
     2026-06-25-04-override-policy-env.md                # cluster별 env override
     2026-06-25-05-cluster-taint-failover.md             # cluster taint/toleration/failover 관찰
     2026-06-25-06-actual-cluster-failover.md            # 실제 member cluster 장애 관찰
-    2026-06-26-07-failover-feature-gate.md               # Failover feature gate 재실험
+    2026-06-26-07-failover-feature-gate.md              # Failover feature gate 재실험
+    ...
+    2026-06-29-25-argocd-prune-safety.md                # ArgoCD prune 운영 안전장치
+    2026-06-29-26-pull-mode-network-partition.md        # Pull mode 네트워크 단절/복구
+  argocd/
+    applications/                   # ArgoCD Application 샘플
+    applicationsets/                # ArgoCD ApplicationSet 샘플
+    projects/                       # ArgoCD AppProject 안전장치 샘플
+  runbooks/
+    new-cluster-label-impact-checklist.md
+    argocd-prune-safety.md
   manifests/
     demo-nginx/                     # 기본 전파 실험용 YAML
     demo-twinx-only/                # twinx-only 배치 YAML

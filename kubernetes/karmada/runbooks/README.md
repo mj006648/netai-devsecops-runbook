@@ -65,8 +65,40 @@
 - [`new-cluster-label-impact-checklist.md`](./new-cluster-label-impact-checklist.md)
 - [`../experiments/2026-06-29-22-new-cluster-label-impact.md`](../experiments/2026-06-29-22-new-cluster-label-impact.md)
 
+### ArgoCD prune 운영 안전장치
+
+```text
+1. ArgoCD Application의 prune/selfHeal/finalizer 상태 확인
+2. AppProject로 source repo, destination namespace, resource 종류 제한
+3. sync window와 reviewed sync 정책 준비
+4. prune 전 ResourceBinding/Work/member cluster snapshot 저장
+5. ApplicationSet/Application 삭제와 manifest prune을 분리
+6. 잘못 prune된 경우 Git 복구 -> ArgoCD refresh -> Karmada/member 확인
+```
+
+관련 문서:
+
+- [`argocd-prune-safety.md`](./argocd-prune-safety.md)
+- [`../argocd/projects/karmada-guarded-project.yaml`](../argocd/projects/karmada-guarded-project.yaml)
+- [`../experiments/2026-06-29-25-argocd-prune-safety.md`](../experiments/2026-06-29-25-argocd-prune-safety.md)
+
+### Pull mode 네트워크 단절/복구
+
+```text
+1. Pull mode cluster와 agent 상태 확인
+2. 네트워크 차단 지점이 node OUTPUT인지 Pod egress/FORWARD인지 구분
+3. 차단 중 Cluster READY, agent log, member workload 유지 여부 확인
+4. 차단 중 desired state 변경이 member에 반영되지 않는지 확인
+5. 복구 후 agent 재시작, Work sync, status reflect까지 확인
+```
+
+관련 실험:
+
+- [`../experiments/2026-06-29-26-pull-mode-network-partition.md`](../experiments/2026-06-29-26-pull-mode-network-partition.md)
+
 ## 다음 정리 대상
 
 - OverridePolicy image/storageClass
 - scheduler-estimator
 - ArgoCD -> Karmada API Server GitOps 흐름
+- 실제 ScaleX-POD 이전 checklist

@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: karmada-guarded
+  namespace: argocd
+spec:
+  description: Guarded Karmada project for reviewed sync and prune operations.
+  sourceRepos:
+    - https://github.com/mj006648/netai-devsecops-runbook.git
+  destinations:
+    - server: https://karmada-apiserver.karmada-system.svc:5443
+      namespace: demo-*
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: policy.karmada.io
+      kind: PropagationPolicy
+  orphanedResources:
+    warn: true
+  syncWindows:
+    - kind: allow
+      schedule: "0 0 * * *"
+      duration: 1h
+      applications:
+        - karmada-guarded-*
+      manualSync: true
