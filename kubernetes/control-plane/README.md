@@ -1,9 +1,8 @@
 # Kubernetes Control Plane Runbooks
 
-TwinX와 MiniX의 control-plane, etcd, API server 구조 변경 작업을 정리한다.
+이 디렉터리의 주요 문서는 `kubernetes/cluster-lifecycle/`로 이동했습니다.
 
-## Quick map
+- 새 위치: [Kubernetes Cluster Lifecycle Runbooks](../cluster-lifecycle/)
+- 이유: control-plane/etcd topology 변경은 Kubernetes upgrade, node 제거, Kubespray inventory 정리와 함께 클러스터 생애주기 작업으로 관리하는 편이 낫기 때문입니다.
 
-| Last update | Topic | Note | Contents |
-| --- | --- | --- | --- |
-| 2026-06-29 | TwinX control-plane | [TwinX 단일 Control Plane 전환 계획 및 실행 로그](twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, 단계별 제거, 중단 기준 |
+기존 링크 호환을 위해 이 안내 파일은 남겨둡니다.

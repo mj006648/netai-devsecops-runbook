@@ -1,0 +1,14 @@
+# Kubernetes Cluster Lifecycle Runbooks
+
+Kubernetes 클러스터의 생애주기 작업을 모아둔다.  
+여기에는 Kubespray 기반 Kubernetes version upgrade, control-plane/etcd topology 변경, node 제거, maintenance window 계획이 포함된다.
+
+`kubespray`라는 이름을 쓰지 않는 이유는 이 디렉터리가 Kubespray만을 위한 공간이 아니기 때문이다. 예를 들어 TwinX 단일 control-plane 전환은 worker/GPU 노드의 직접 Docker container 영향을 피하기 위해 Kubespray 전체 playbook을 기본 경로로 쓰지 않는다.
+
+## Quick map
+
+| Last update | Target | Document | Contents |
+| --- | --- | --- | --- |
+| 2026-06-29 | TwinX control-plane | [TwinX 단일 Control Plane 전환 계획 및 실행 로그](twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, Kubespray 회피 전략, 단계별 중단 기준 |
+| 2026-06-27 | TwinX run log | [TwinX Kubernetes Upgrade Run 2026-06-26](twinx-kubernetes-upgrade-run-2026-06-26.md) | v1.35.4 업그레이드 완료 노드, edgebox1/2 완료, edgebox3/4 보류, Kubespray no-drain 패치, Ceph/Harbor/OTP 남은 작업 |
+| 2026-06-25 | TwinX `v1.33.3 -> v1.35.4` | [TwinX Kubernetes 1.35 Upgrade Plan](twinx-kubernetes-1-35-upgrade-plan.md) | Kubespray 경로, Ceph/Harbor/Partridge/l40s blocker, Hubble/DRA 순서, 중단 기준 |
