@@ -1,11 +1,10 @@
-# TwinX OpenBao Sealed Recovery (2026-06-28)
+# TwinX OpenBao Sealed 복구 기록 2026-06-28
 
-## Summary
+## 요약
 
-TwinX Argo CD에서 `external-secrets-resources`, `trident-portal`,
-`trident-spark`, `trident-twin-hub`가 `Degraded`로 보였다.
-직접 원인은 OpenBao가 `Sealed=true` 상태였고, ESO가
-`openbao-cluster-store`로 OpenBao Kubernetes auth login을 할 수 없었던 것이다.
+TwinX Argo CD에서 `external-secrets-resources`, `trident-portal`, `trident-spark`, `trident-twin-hub`가 `Degraded`로 보였습니다.
+
+직접 원인은 OpenBao가 `Sealed=true` 상태였고, External Secrets Operator가 `openbao-cluster-store`를 통해 OpenBao Kubernetes auth login을 할 수 없었던 것입니다.
 
 2026-06-28 복구 결과:
 
@@ -18,11 +17,11 @@ TwinX Argo CD에서 `external-secrets-resources`, `trident-portal`,
   - `trident-spark`: `Healthy`
   - `trident-twin-hub`: `Healthy`
 
-> Public runbook rule: unseal keys and root tokens must never be written here.
+> 공개 runbook 규칙: unseal key와 root token 값은 절대 이 문서에 쓰지 않습니다.
 
-## Symptom
+## 증상
 
-Argo CD showed the following health failures:
+Argo CD에서 아래 health 문제가 보였습니다.
 
 ```text
 external-secrets-resources   Synced     Degraded
@@ -31,7 +30,7 @@ trident-spark                OutOfSync  Degraded
 trident-twin-hub             OutOfSync  Degraded
 ```
 
-Kubernetes-side symptoms:
+Kubernetes 쪽 증상 확인 명령:
 
 ```bash
 kubectl get clustersecretstore openbao-cluster-store
@@ -39,14 +38,14 @@ kubectl get externalsecret -n trident
 kubectl get externalsecret -n spark-operator
 ```
 
-Observed shape:
+관측된 형태:
 
 ```text
 openbao-cluster-store  InvalidProviderConfig  Ready=False
 trident-*              SecretSyncedError      Ready=False
 ```
 
-ESO log contained:
+External Secrets Operator 로그에는 아래 내용이 있었습니다.
 
 ```text
 unable to log in with Kubernetes auth
@@ -55,9 +54,9 @@ Code: 503
 * Vault is sealed
 ```
 
-## Diagnosis
+## 진단
 
-Check OpenBao status from inside the pod:
+OpenBao pod 내부에서 상태를 확인했습니다.
 
 ```bash
 kubectl -n openbao exec openbao-0 -- sh -lc '
@@ -66,7 +65,7 @@ kubectl -n openbao exec openbao-0 -- sh -lc '
 '
 ```
 
-Problem state:
+문제 상태:
 
 ```text
 Initialized        true
@@ -78,20 +77,19 @@ Storage Type       file
 HA Enabled         false
 ```
 
-Important interpretation:
+해석:
 
-- `Initialized=true` means **do not run `bao operator init` again**.
-- `Sealed=true` means the data exists but OpenBao will not serve secret/auth requests
-  until enough unseal keys are supplied.
-- `Threshold=3` means any 3 of the 5 existing unseal keys are required.
+- `Initialized=true`이므로 **`bao operator init`을 다시 실행하면 안 됩니다**.
+- `Sealed=true`는 데이터는 남아 있지만 OpenBao가 secret/auth 요청을 처리하지 않는 상태라는 뜻입니다.
+- `Threshold=3`이므로 기존 unseal key 5개 중 아무 3개가 필요합니다.
 
-Confirm ESO is using this OpenBao store:
+ESO가 이 OpenBao store를 사용 중인지 확인했습니다.
 
 ```bash
 kubectl get clustersecretstore openbao-cluster-store -o yaml
 ```
 
-Expected store shape:
+예상되는 store 형태:
 
 ```yaml
 spec:
@@ -109,9 +107,9 @@ spec:
             namespace: external-secrets
 ```
 
-## Root cause
+## 원인
 
-OpenBao was deployed as standalone Shamir-sealed OpenBao:
+OpenBao는 standalone Shamir seal 방식으로 배포되어 있었습니다.
 
 ```yaml
 server:
@@ -125,13 +123,11 @@ server:
       }
 ```
 
-With Shamir seal, the seal state is not automatically restored after a pod restart.
-The file storage/PVC preserves OpenBao data, policies, roles, and KV contents, but
-the process still starts sealed. A pod restart, node maintenance, or reschedule can
-therefore bring OpenBao back as `Initialized=true` and `Sealed=true`.
+Shamir seal 방식에서는 pod가 재시작되어도 seal 상태가 자동으로 복구되지 않습니다.
 
-This was hidden from Argo CD because the chart values intentionally allowed sealed
-OpenBao to pass probes:
+PVC의 file storage는 OpenBao 데이터, policy, role, KV 내용을 보존하지만, 프로세스는 sealed 상태로 시작합니다. 따라서 pod restart, node maintenance, reschedule 이후 OpenBao가 `Initialized=true`, `Sealed=true` 상태로 올라올 수 있습니다.
+
+이 문제는 Argo CD에서 바로 드러나지 않았습니다. chart values에서 sealed 상태의 OpenBao도 probe를 통과하도록 설정되어 있었기 때문입니다.
 
 ```yaml
 readinessProbe:
@@ -140,25 +136,23 @@ livenessProbe:
   path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
 ```
 
-That setting keeps the OpenBao pod `Ready` while sealed, but ESO cannot authenticate
-against `/v1/auth/kubernetes/login`, so all ExternalSecrets backed by OpenBao fail.
+이 설정 때문에 OpenBao pod는 sealed 상태에서도 `Ready`로 보일 수 있습니다. 하지만 ESO는 `/v1/auth/kubernetes/login`에 인증할 수 없으므로 OpenBao에 의존하는 ExternalSecret들이 모두 실패합니다.
 
-## Fix
+## 복구 절차
 
-### 1. Do not initialize again
+### 1. 다시 초기화하지 않기
 
-Do **not** run this if `Initialized=true`:
+`Initialized=true`라면 아래 명령은 실행하면 안 됩니다.
 
 ```bash
 bao operator init -key-shares=5 -key-threshold=3
 ```
 
-`operator init` is only for a brand-new, uninitialized OpenBao data directory. For
-an already initialized instance, use the existing unseal keys.
+`operator init`은 완전히 새로운 OpenBao data directory에서만 사용하는 명령입니다. 이미 초기화된 인스턴스는 기존 unseal key로 unseal해야 합니다.
 
-### 2. Unseal with 3 existing keys
+### 2. 기존 unseal key 3개로 unseal
 
-Use an interactive TTY so keys are not recorded in shell history or process args:
+key가 shell history나 process args에 남지 않도록 interactive TTY로 입력합니다.
 
 ```bash
 kubectl -n openbao exec -it openbao-0 -- sh -lc '
@@ -167,7 +161,7 @@ kubectl -n openbao exec -it openbao-0 -- sh -lc '
 '
 ```
 
-Enter one unseal key when prompted. Repeat the same command until threshold is met:
+프롬프트가 뜨면 unseal key 하나를 입력합니다. threshold를 만족할 때까지 같은 명령을 반복합니다.
 
 ```bash
 # key 1
@@ -180,7 +174,7 @@ kubectl -n openbao exec -it openbao-0 -- sh -lc 'export BAO_ADDR=http://127.0.0.
 kubectl -n openbao exec -it openbao-0 -- sh -lc 'export BAO_ADDR=http://127.0.0.1:8200; bao operator unseal'
 ```
 
-Expected final status:
+최종 기대 상태:
 
 ```text
 Initialized     true
@@ -189,10 +183,9 @@ Storage Type    file
 HA Enabled      false
 ```
 
-### 3. Trigger ESO reconciliation if status is stale
+### 3. ESO 상태가 오래 남아 있으면 reconcile 유도
 
-ESO normally recovers on the next reconcile interval. To force a safe immediate
-reconcile, annotate the store and affected ExternalSecrets with a throwaway stamp:
+ESO는 보통 다음 reconcile interval에 자동 복구됩니다. 즉시 안전하게 reconcile을 유도하려면 store와 영향을 받은 ExternalSecret에 임시 annotation을 찍습니다.
 
 ```bash
 stamp=$(date +%s)
@@ -201,8 +194,7 @@ kubectl -n trident annotate externalsecret --all force-sync="$stamp" --overwrite
 kubectl -n spark-operator annotate externalsecret --all force-sync="$stamp" --overwrite
 ```
 
-After the resources become `Ready=True`, remove the temporary annotations to avoid
-GitOps drift:
+리소스가 `Ready=True`가 되면 GitOps drift를 피하기 위해 임시 annotation을 제거합니다.
 
 ```bash
 kubectl annotate clustersecretstore openbao-cluster-store force-sync- --overwrite
@@ -210,9 +202,9 @@ kubectl -n trident annotate externalsecret --all force-sync- --overwrite
 kubectl -n spark-operator annotate externalsecret --all force-sync- --overwrite
 ```
 
-## Verification
+## 검증
 
-OpenBao:
+OpenBao 상태:
 
 ```bash
 kubectl -n openbao exec openbao-0 -- sh -lc '
@@ -221,7 +213,7 @@ kubectl -n openbao exec openbao-0 -- sh -lc '
 '
 ```
 
-Required:
+필수 상태:
 
 ```text
 Initialized     true
@@ -234,7 +226,7 @@ ESO store:
 kubectl get clustersecretstore openbao-cluster-store
 ```
 
-Required:
+필수 상태:
 
 ```text
 NAME                    STATUS   CAPABILITIES   READY
@@ -248,7 +240,7 @@ kubectl get externalsecret -n trident
 kubectl get externalsecret -n spark-operator
 ```
 
-Required shape:
+필수 형태:
 
 ```text
 STATUS         READY
@@ -258,10 +250,10 @@ SecretSynced   True
 Argo CD health:
 
 ```bash
-kubectl get applications.argoproj.io -n argocd   external-secrets-resources trident-portal trident-spark trident-twin-hub
+kubectl get applications.argoproj.io -n argocd external-secrets-resources trident-portal trident-spark trident-twin-hub
 ```
 
-Required:
+필수 상태:
 
 ```text
 external-secrets-resources   Healthy
@@ -270,20 +262,15 @@ trident-spark                Healthy
 trident-twin-hub             Healthy
 ```
 
-Note: `trident-*` apps can remain `OutOfSync` if ExternalSecret CRDs default fields
-or controller-owned metadata differ from the Git-rendered manifest. Treat health
-recovery and `SecretSynced=True` as the OpenBao incident closure signal; handle
-remaining diff as a separate GitOps drift cleanup.
+메모: `trident-*` app은 ExternalSecret CRD default field나 controller-owned metadata 차이 때문에 `OutOfSync`가 남을 수 있습니다. OpenBao 장애 종료 기준은 health 복구와 `SecretSynced=True`로 보고, 남은 diff는 별도 GitOps drift 정리로 처리합니다.
 
-## Prevention
+## 재발 방지
 
-1. Keep unseal keys in an approved secret manager and document only the retrieval
-   path, never the values.
-2. Add an alert on `bao status` / `/v1/sys/seal-status` for `sealed=true`.
-3. Consider changing OpenBao health probes so sealed state is visible operationally,
-   or add a separate synthetic check that fails when sealed.
-4. Consider auto-unseal if the environment has a safe KMS/HSM-backed seal backend.
-5. After planned node maintenance or OpenBao pod restart, explicitly check:
+1. unseal key는 승인된 secret manager에 보관하고, 이 문서에는 값이 아니라 조회 경로만 남깁니다.
+2. `bao status` 또는 `/v1/sys/seal-status` 기준 `sealed=true` 알림을 추가합니다.
+3. sealed 상태가 운영상 바로 보이도록 OpenBao health probe를 조정하거나, sealed 상태에서 실패하는 별도 synthetic check를 추가합니다.
+4. 안전한 KMS/HSM 기반 seal backend를 사용할 수 있다면 auto-unseal 도입을 검토합니다.
+5. 계획된 node maintenance 또는 OpenBao pod restart 이후에는 아래를 명시적으로 확인합니다.
 
    ```bash
    kubectl -n openbao exec openbao-0 -- bao status
@@ -291,7 +278,7 @@ remaining diff as a separate GitOps drift cleanup.
    kubectl get externalsecret -n trident
    ```
 
-## Related TwinX-Ops paths
+## 관련 TwinX-Ops 경로
 
 ```text
 argocd/twinx-infra/apps/openbao/values.yaml
