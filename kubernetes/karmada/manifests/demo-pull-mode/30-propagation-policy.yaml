@@ -1,0 +1,28 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-pull-mode-nginx-policy
+  namespace: demo-pull-mode
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-pull-mode-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-pull-mode-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchLabels:
+          scalex.io/connectivity: pull
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/role: pull-edge
+            weight: 1

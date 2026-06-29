@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-pull-mode-nginx
+  namespace: demo-pull-mode
+  labels:
+    app: demo-pull-mode-nginx
+    scalex.io/demo: pull-mode
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-pull-mode-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-pull-mode-nginx
+        scalex.io/demo: pull-mode
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi

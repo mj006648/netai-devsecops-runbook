@@ -9,11 +9,12 @@
 ## 현재 상태
 
 - 작성일: 2026-06-25
-- 상태: 실험 19까지 완료, ArgoCD prune/delete/restore 검증 완료
+- 최근 업데이트: 2026-06-29
+- 상태: 실험 20까지 완료, Pull mode member cluster 등록과 agent 기반 workload 전파 검증 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore 성공, controller-manager/scheduler anti-affinity rollout 이슈 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore 성공, Pull mode agent 기반 전파 성공, 신규 cluster label이 기존 policy에 매칭되는 주의점 확인, controller-manager/scheduler anti-affinity rollout 이슈 기록
 
 ---
 
@@ -31,6 +32,7 @@ twinx  : TwinX 역할의 member cluster
 edgex  : EdgeX 역할의 member cluster
 datax  : DataX 역할의 member cluster
 poolx  : Resource Pool 역할의 member cluster
+pullx  : Pull mode Edge 계열 member cluster
 ```
 
 ---
@@ -140,6 +142,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-29-19-argocd-prune-rollback.md`](./experiments/2026-06-29-19-argocd-prune-rollback.md)
   - ArgoCD prune/delete/restore가 Karmada API Server와 member cluster까지 반영되는지 검증
   - live Service 삭제 self-heal, Git Service 제거 prune, Git Service 복구 restore 성공
+- [`experiments/2026-06-29-20-pull-mode-member.md`](./experiments/2026-06-29-20-pull-mode-member.md)
+  - Pull mode member cluster `pullx` 등록과 `karmada-agent` 기반 workload 전파 검증
+  - Pull mode 전파 성공, 기존 namespace 자동 생성과 broad label 매칭 주의점 기록
 
 ---
 

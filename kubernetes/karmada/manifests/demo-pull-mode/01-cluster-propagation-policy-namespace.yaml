@@ -1,0 +1,14 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: ClusterPropagationPolicy
+metadata:
+  name: demo-pull-mode-namespace-policy
+spec:
+  resourceSelectors:
+    - apiVersion: v1
+      kind: Namespace
+      name: demo-pull-mode
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchLabels:
+          scalex.io/connectivity: pull
