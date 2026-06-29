@@ -34,3 +34,14 @@ data  : datax=2
 ```
 
 자세한 기록: `kubernetes/karmada/experiments/2026-06-26-12-scalex-role-label-placement.md`
+
+## 현재 live lab 참고
+
+실험 12 당시에는 `pullx`가 없었기 때문에 edge workload 결과가 `edgex=2`였다.
+이후 실험 20~23에서 Pull mode cluster `pullx`를 추가했고, 실험 23의 WorkloadRebalancer 실행 후 현재 live lab에서는 edge Deployment가 다음처럼 재균형됐다.
+
+```text
+edge: edgex=1, pullx=1
+```
+
+관련 기록: `kubernetes/karmada/experiments/2026-06-29-23-pull-mode-workload-rebalancer.md`

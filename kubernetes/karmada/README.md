@@ -10,11 +10,11 @@
 
 - 작성일: 2026-06-25
 - 최근 업데이트: 2026-06-29
-- 상태: 실험 22까지 완료, 신규 cluster label 영향 범위 checklist 작성 완료
+- 상태: 실험 23까지 완료, Pull mode cluster 포함 WorkloadRebalancer 재균형과 전체 실험 coverage review 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore 성공, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, controller-manager/scheduler anti-affinity rollout 이슈 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore 성공, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
 
 ---
 
@@ -42,6 +42,7 @@ pullx  : Pull mode Edge 계열 member cluster
 - [MiniX Lab에서 ScaleX-POD 멀티클러스터까지의 검증 로드맵](https://github.com/mj006648/MiniX/blob/main/docs/architecture/multicluster-roadmap.md)
 - [Karmada 실험 진행표](./experiments/README.md)
 - [신규 member cluster label 영향 범위 점검 checklist](./runbooks/new-cluster-label-impact-checklist.md)
+- [실험 coverage review](./notes/experiment-coverage-review.md)
 
 ---
 
@@ -152,6 +153,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-29-22-new-cluster-label-impact.md`](./experiments/2026-06-29-22-new-cluster-label-impact.md)
   - 신규 cluster label이 기존 policy selector와 binding에 주는 영향 점검
   - `pullx`의 broad edge label이 기존 Service를 추가 전파한 현상과 label checklist 기록
+- [`experiments/2026-06-29-23-pull-mode-workload-rebalancer.md`](./experiments/2026-06-29-23-pull-mode-workload-rebalancer.md)
+  - Pull mode cluster `pullx`를 포함한 WorkloadRebalancer 재균형 검증
+  - 기존 edge Deployment를 `edgex=2`에서 `edgex=1,pullx=1`로 재균형
 
 ---
 

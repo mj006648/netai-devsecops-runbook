@@ -35,6 +35,19 @@
 - [`../experiments/2026-06-26-09-workload-rebalancer-reschedule.md`](../experiments/2026-06-26-09-workload-rebalancer-reschedule.md)
 - [`../experiments/2026-06-26-11-multi-workload-rebalancer.md`](../experiments/2026-06-26-11-multi-workload-rebalancer.md)
 
+### Pull mode cluster 포함 재균형
+
+```text
+1. 신규 Pull mode cluster가 placement selector에 매칭되는지 확인
+2. ResourceBinding에서 기존 replica skew 확인
+3. WorkloadRebalancer 생성
+4. ResourceBinding이 Push/Pull cluster를 모두 포함하도록 재계산됐는지 확인
+5. Push/Pull member cluster의 실제 Deployment/Pod 상태 확인
+```
+
+관련 실험:
+
+- [`../experiments/2026-06-29-23-pull-mode-workload-rebalancer.md`](../experiments/2026-06-29-23-pull-mode-workload-rebalancer.md)
 
 ### 신규 member cluster label 영향 범위 점검
 
@@ -53,8 +66,6 @@
 - [`../experiments/2026-06-29-22-new-cluster-label-impact.md`](../experiments/2026-06-29-22-new-cluster-label-impact.md)
 
 ## 다음 정리 대상
-
-- Pull mode + WorkloadRebalancer
 
 - OverridePolicy image/storageClass
 - scheduler-estimator

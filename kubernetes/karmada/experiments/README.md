@@ -45,6 +45,13 @@
 | 20 | [`2026-06-29-20-pull-mode-member.md`](./2026-06-29-20-pull-mode-member.md) | Pull mode member cluster | 성공/주의 필요 | `pullx`를 Pull mode로 등록하고 agent 기반 workload 전파 성공, namespace 자동 생성과 broad label 매칭 주의점 확인 |
 | 21 | [`2026-06-29-21-pull-mode-agent-recovery.md`](./2026-06-29-21-pull-mode-agent-recovery.md) | Pull mode agent 장애/복구 | 성공/주의 필요 | agent 중단 시 `pullx READY=Unknown`, 기존 workload 유지, 복구 후 밀린 replicas 변경 반영, status stale 주의점 확인 |
 | 22 | [`2026-06-29-22-new-cluster-label-impact.md`](./2026-06-29-22-new-cluster-label-impact.md) | 신규 cluster label 영향 범위 | 성공/주의 필요 | `pullx` label이 기존 edge Service에 추가 매칭되는 현상을 정리하고 label 부여 전후 checklist 작성 |
+| 23 | [`2026-06-29-23-pull-mode-workload-rebalancer.md`](./2026-06-29-23-pull-mode-workload-rebalancer.md) | Pull mode + WorkloadRebalancer | 성공 | 기존 edge Deployment를 `edgex=2`에서 `edgex=1,pullx=1`로 재균형, Push/Pull 혼합 재균형 확인 |
+
+---
+
+## 전체 리뷰
+
+- [실험 coverage review](../notes/experiment-coverage-review.md)
 
 ---
 
@@ -52,22 +59,22 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | Pull mode + WorkloadRebalancer | 새 Pull cluster까지 기존 edge replica workload를 재균형할 수 있는지 확인 |
-| 2 | Pull mode 네트워크 단절/복구 | agent scale-down보다 강한 현장망 단절 상황에서 status와 수렴 시간 확인 |
-| 3 | ApplicationSet | 여러 Karmada app을 GitOps로 묶어 관리 |
-| 4 | ArgoCD prune 운영 안전장치 | prune=true 운영 시 AppProject, sync window, branch protection 정리 |
-| 5 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
-| 6 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 1 | Pull mode 네트워크 단절/복구 | agent scale-down보다 강한 현장망 단절 상황에서 status와 수렴 시간 확인 |
+| 2 | ApplicationSet | 여러 Karmada app을 GitOps로 묶어 관리 |
+| 3 | ArgoCD prune 운영 안전장치 | prune=true 운영 시 AppProject, sync window, branch protection 정리 |
+| 4 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
+| 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 6 | 실제 ScaleX-POD 이전 checklist | MiniX/kind 실험 결과를 실제 Tower/TwinX/EdgeX/DataX 이전 절차로 변환 |
 
 ---
 
 ## 현재 우선순위
 
 ```text
-1. Pull mode + WorkloadRebalancer 실험
-2. Pull mode 네트워크 단절/복구 실험
-3. ApplicationSet 실험
-4. ArgoCD prune 운영 안전장치 정리
-5. Kueue 조합 검토
-6. scheduler-estimator 설치형 실험
+1. Pull mode 네트워크 단절/복구 실험
+2. ApplicationSet 실험
+3. ArgoCD prune 운영 안전장치 정리
+4. Kueue 조합 검토
+5. scheduler-estimator 설치형 실험
+6. 실제 ScaleX-POD 이전 checklist
 ```
