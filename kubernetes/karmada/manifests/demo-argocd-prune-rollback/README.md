@@ -21,3 +21,11 @@ placement : twinx=1, edgex=1, datax=1, poolx=1
 ```
 
 자세한 기록: `kubernetes/karmada/experiments/2026-06-29-19-argocd-prune-rollback.md`
+
+## 실제 결과
+
+```text
+self-heal: live Service 삭제 후 ArgoCD가 복구
+prune    : Git에서 Service 제거 후 Karmada API/member Service 삭제
+restore  : Git에서 Service 복구 후 Karmada API/member Service 재생성
+```

@@ -41,6 +41,7 @@
 | 16 | [`2026-06-27-16-scheduler-estimator.md`](./2026-06-27-16-scheduler-estimator.md) | scheduler-estimator 상태 정리 | 성공/설정 변경 | estimator 서비스 부재와 dial 실패 로그 확인, lab에서는 estimator 비활성화 후 weighted scheduling 정상 확인 |
 | 17 | [`2026-06-27-17-spread-constraints.md`](./2026-06-27-17-spread-constraints.md) | spreadConstraints pool group 분산 | 성공/주의 필요 | `scalex.io/pool` 기준 spread 배치 성공, labelSelector weight는 매칭 cluster별 weight처럼 동작하고 minGroups hard fail은 미확인 |
 | 18 | [`2026-06-27-18-argocd-to-karmada.md`](./2026-06-27-18-argocd-to-karmada.md) | ArgoCD -> Karmada API Server GitOps | 성공 | ArgoCD가 Karmada API Server를 destination으로 sync하고 self-heal로 replicas drift를 7에서 8로 복구 |
+| 19 | [`2026-06-29-19-argocd-prune-rollback.md`](./2026-06-29-19-argocd-prune-rollback.md) | ArgoCD prune/delete/restore | 성공 | live Service 삭제 self-heal, Git Service 제거 prune, Git Service 복구 restore가 Karmada/member cluster까지 반영됨 |
 
 ---
 
@@ -48,9 +49,9 @@
 
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
-| 1 | prune/delete/rollback | GitOps와 Karmada 전파 삭제/복구 동작 검증 |
-| 2 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
-| 3 | ApplicationSet | 여러 Karmada app을 GitOps로 묶어 관리 |
+| 1 | Pull mode | EdgeX처럼 외부에서 직접 접근하기 어려운 cluster 후보 검증 |
+| 2 | ApplicationSet | 여러 Karmada app을 GitOps로 묶어 관리 |
+| 3 | ArgoCD prune 운영 안전장치 | prune=true 운영 시 AppProject, sync window, branch protection 정리 |
 | 4 | Kueue와 조합 | cluster 배치는 Karmada, cluster 내부 job admission은 Kueue로 분리 |
 | 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
 
@@ -59,9 +60,9 @@
 ## 현재 우선순위
 
 ```text
-1. prune/delete/rollback 검증
-2. Pull mode 후보 검토
-3. ApplicationSet 실험
+1. Pull mode 후보 검토
+2. ApplicationSet 실험
+3. ArgoCD prune 운영 안전장치 정리
 4. Kueue 조합 검토
 5. scheduler-estimator 설치형 실험
 ```
