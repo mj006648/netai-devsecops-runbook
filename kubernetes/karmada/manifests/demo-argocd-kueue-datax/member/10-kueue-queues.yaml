@@ -1,0 +1,32 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: argocd-datax-default
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: argocd-datax-cpu-queue
+spec:
+  namespaceSelector:
+    matchLabels:
+      app.kubernetes.io/name: demo-argocd-kueue-datax
+  resourceGroups:
+    - coveredResources:
+        - cpu
+        - memory
+      flavors:
+        - name: argocd-datax-default
+          resources:
+            - name: cpu
+              nominalQuota: "1"
+            - name: memory
+              nominalQuota: 256Mi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: argocd-datax-user-queue
+  namespace: demo-argocd-kueue-datax
+spec:
+  clusterQueue: argocd-datax-cpu-queue

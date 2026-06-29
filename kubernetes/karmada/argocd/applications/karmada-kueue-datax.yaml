@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karmada-kueue-datax
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mj006648/netai-devsecops-runbook.git
+    targetRevision: main
+    path: kubernetes/karmada/manifests/demo-argocd-kueue-datax/karmada
+  destination:
+    server: https://karmada-apiserver.karmada-system.svc:5443
+    namespace: demo-argocd-kueue-datax
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

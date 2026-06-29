@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-argocd-kueue-hold-a
+  namespace: demo-argocd-kueue-datax
+  labels:
+    app.kubernetes.io/name: demo-argocd-kueue-datax
+    kueue.x-k8s.io/queue-name: argocd-datax-user-queue
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: hold
+          image: nginx:1.27-alpine
+          command:
+            - /bin/sh
+            - -c
+            - sleep 600
+          resources:
+            requests:
+              cpu: "1"
+              memory: 64Mi
