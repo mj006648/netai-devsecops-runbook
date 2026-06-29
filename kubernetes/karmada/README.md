@@ -10,11 +10,11 @@
 
 - 작성일: 2026-06-25
 - 최근 업데이트: 2026-06-29
-- 상태: 실험 29까지 완료, Kueue 관측/알림 runbook 검증 완료
+- 상태: 실험 00~29 핵심 검증 완료, ScaleX-POD 운영 모델 정리 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, ArgoCD -> Karmada -> DataX -> Kueue end-to-end sync/self-heal/admission 검증, Kueue 관측/알림 runbook 작성, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, ArgoCD -> Karmada -> DataX -> Kueue end-to-end sync/self-heal/admission 검증, Kueue 관측/알림 runbook 작성, ScaleX-POD 운영 모델 정리, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록
 
 ---
 
@@ -41,6 +41,7 @@ pullx  : Pull mode Edge 계열 member cluster
 
 - [MiniX Lab에서 ScaleX-POD 멀티클러스터까지의 검증 로드맵](https://github.com/mj006648/MiniX/blob/main/docs/architecture/multicluster-roadmap.md)
 - [Karmada 실험 진행표](./experiments/README.md)
+- [ScaleX-POD 멀티클러스터 운영 모델](./notes/scalex-pod-operating-model.md)
 - [신규 member cluster label 영향 범위 점검 checklist](./runbooks/new-cluster-label-impact-checklist.md)
 - [ArgoCD prune 운영 안전장치 runbook](./runbooks/argocd-prune-safety.md)
 - [Kueue 관측/알림 runbook](./runbooks/kueue-observability.md)
@@ -176,6 +177,9 @@ kubectl config get-contexts
 - [`experiments/2026-06-29-29-kueue-observability.md`](./experiments/2026-06-29-29-kueue-observability.md)
   - Kueue 관측/알림 runbook 작성 및 pending/admitted snapshot 재현
   - GitOps 실패, placement 실패, member apply 실패, Kueue quota 대기, Kueue controller 장애를 분리하는 기준 정리
+- [`notes/scalex-pod-operating-model.md`](./notes/scalex-pod-operating-model.md)
+  - 실험 00~29 결과를 바탕으로 ScaleX-POD에서 ArgoCD/Karmada/Kueue를 어떻게 나눠 쓸지 정리
+  - GitHub repo 구성, placement label, prune 안전장치, Kueue 관측, 보류 항목을 운영 모델로 정리
 
 ---
 
@@ -315,6 +319,7 @@ karmada/
   notes/
     concepts.md                     # 개념 정리
     experiment-coverage-review.md   # 실험 중복/누락 review
+    scalex-pod-operating-model.md    # ScaleX-POD 최종 운영 모델
   experiments/
     README.md                                           # 실험 진행표
     2026-06-25-00-kind-lab-plan.md                      # kind/Karmada Lab 구성

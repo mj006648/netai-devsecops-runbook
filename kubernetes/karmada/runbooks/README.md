@@ -2,6 +2,8 @@
 
 이 디렉터리는 Karmada 실험 결과를 실제 ScaleX-POD 운영 절차로 바꾸기 위한 runbook 공간이다.
 
+전체 운영 모델은 [`../notes/scalex-pod-operating-model.md`](../notes/scalex-pod-operating-model.md)를 기준으로 한다.
+
 ## 현재 검증된 흐름
 
 ### 장애/점검 시 workload 이동

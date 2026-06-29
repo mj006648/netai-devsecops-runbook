@@ -58,8 +58,16 @@
 ## 전체 리뷰
 
 - [실험 coverage review](../notes/experiment-coverage-review.md)
+- [ScaleX-POD 멀티클러스터 운영 모델](../notes/scalex-pod-operating-model.md)
 
 ---
+
+## 실험 정리 판단
+
+```text
+ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료됐다.
+아래 항목은 필수 검증이 아니라 운영 고도화 또는 실제 이전 준비 작업이다.
+```
 
 ## 다음 실험 후보
 
