@@ -465,6 +465,71 @@ nvidia-dra-driver-gpu-controller-7cf68bfb65-v6bmg -> sv4000-1 / 1/1 Running
 DRA controller log -> Kubernetes API 10.234.0.1:443 응답 200 OK, informer cache populated
 ```
 
+### 2026-06-29 Kubespray inventory 정리
+
+상태: 완료.
+
+control2/control3 제거 후 Kubespray가 다음 실행 때 두 노드를 다시 control-plane/etcd 대상으로 보지 않도록 active inventory를 정리했다.
+
+수정한 active inventory:
+
+```text
+/home/netai/chang/kubespray-v2.31/inventory/mycluster/inventory.ini
+/home/netai/chang/Git/TwinX/kubespray/inventory/mycluster/inventory.ini
+/home/netai/chang/Git/TwinX/kubespray/extra_playbooks/inventory/mycluster/inventory.ini -> ../inventory symlink 경로
+```
+
+백업:
+
+```text
+/home/netai/chang/kubespray-v2.31/inventory/mycluster/inventory.ini.before-single-control-plane-2026-06-29
+```
+
+최종 inventory 핵심 값:
+
+```ini
+[kube_control_plane]
+control1
+
+[etcd]
+control1
+
+[kube_node]
+l40s
+edgebox1
+edgebox2
+edgebox3
+edgebox4
+rm352-1
+rm352-2
+sv4000-1
+sv4000-2
+```
+
+control2/control3는 `[all]`에서 완전히 활성 host로 남기지 않고 주석으로 보존했다.
+
+```ini
+# retired control-plane nodes removed from Kubernetes/etcd on 2026-06-29
+# control2 ansible_host=10.38.38.16 ip=10.38.38.17
+# control3 ansible_host=10.38.38.24 ip=10.38.38.25
+```
+
+검증 결과:
+
+```text
+[kube_control_plane] -> control1 only
+[etcd] -> control1 only
+[kube_node] -> GPU/edge worker nodes 유지
+control2/control3 -> 주석으로만 남음
+ansible_hose 오타 -> ansible_host로 정리
+```
+
+주의:
+
+- `/home/netai/chang/Git/TwinX/kubespray`는 상위 TwinX-Ops repo에서 gitlink/submodule 성격으로 잡혀 있어, inventory 파일 자체가 TwinX-Ops 부모 commit에 직접 포함되지 않는다.
+- 따라서 실제 Kubespray 실행 전에는 반드시 active inventory인 `/home/netai/chang/kubespray-v2.31/inventory/mycluster/inventory.ini`를 확인한다.
+- edgebox3/4는 아직 Kubernetes node object에 남아 있고 추후 복구/업그레이드 대상이므로 `[kube_node]`에 유지했다.
+
 ### 2026-06-29 최종 known issue 및 남은 작업
 
 이번 control-plane 단일화 작업에서 해결하지 않은 항목은 아래와 같다.
@@ -475,7 +540,7 @@ DRA controller log -> Kubernetes API 10.234.0.1:443 응답 200 OK, informer cach
 | MinIO 일부 pod | `Pending` 유지 | 기존 스토리지/스케줄링 이슈로 분리, 이번 작업에서 삭제/수정하지 않음 |
 | Cilium operator live patch | 임시로 edgebox/control3 회피 | Cilium GitOps 전환 시 values로 영속화 필요 |
 | `tx-gateway-collector-0/1` | 현재 control1에 Running | control1 부담을 더 줄일 때 monitoring values에서 별도 재배치 검토 |
-| Kubespray inventory | control2/control3가 파일에 남아 있을 수 있음 | 실제 토폴로지에 맞게 control-plane/etcd 그룹 정리 필요 |
+| Kubespray inventory | active inventory 정리 완료 | 다음 Kubespray 실행 전 `/home/netai/chang/kubespray-v2.31/inventory/mycluster/inventory.ini` 재확인 |
 
 결론:
 
@@ -483,6 +548,7 @@ DRA controller log -> Kubernetes API 10.234.0.1:443 응답 200 OK, informer cach
 TwinX control-plane 단일화는 완료됐다.
 운영 기준 control-plane/etcd는 control1 하나만 사용한다.
 GPU Operator, NFD master, DRA controller는 control1에서 sv4000-1로 이동 완료했다.
+Kubespray active inventory도 control1 단일 control-plane/etcd 구조로 정리했다.
 ```
 
 
