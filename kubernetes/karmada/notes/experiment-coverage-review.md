@@ -2,7 +2,7 @@
 
 ## 목적
 
-실험 00~23까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
+실험 00~24까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
 
 ---
 
@@ -12,7 +12,7 @@
 00~04: 기본 전파, cluster 선택, replica weight, OverridePolicy
 05~11: 장애, taint, failover, WorkloadRebalancer
 12~17: ScaleX-POD 역할 label, Resource Pool, scheduler-estimator, spreadConstraints
-18~19: ArgoCD -> Karmada GitOps와 prune/restore
+18~19, 24: ArgoCD -> Karmada GitOps, prune/restore, ApplicationSet
 20~23: Pull mode, agent 복구, 신규 cluster label 영향, Pull mode 재균형
 ```
 
@@ -35,7 +35,7 @@
 | 08, 10 | 둘 다 NoExecute taint | 08은 eviction 동작, 10은 toleration 있는 workload와 없는 workload의 영향 범위 비교 |
 | 09, 11, 15, 23 | 모두 WorkloadRebalancer | 09는 단일 Push workload, 11은 batch, 15는 Resource Pool fallback, 23은 Push/Pull 혼합 재균형 |
 | 12, 13, 15, 22, 23 | 모두 ScaleX-POD label/pool과 관련 | 12는 role placement, 13은 poolx 추가, 15는 pool skew 복구, 22는 label 영향 audit, 23은 Pull cluster 편입 후 재균형 |
-| 18, 19 | 둘 다 ArgoCD | 18은 sync/self-heal 기본, 19는 prune/delete/restore 운영 흐름 |
+| 18, 19, 24 | 모두 ArgoCD | 18은 sync/self-heal 기본, 19는 prune/delete/restore 운영 흐름, 24는 ApplicationSet으로 여러 Application 생성 |
 | 20, 21 | 둘 다 Pull mode | 20은 등록/전파 baseline, 21은 agent 장애/복구 |
 | 22, 23 | 둘 다 pullx 추가 이후 영향 | 22는 label 매칭 영향 분석, 23은 실제 replica 재균형 실행 |
 
@@ -55,7 +55,7 @@
 9. spreadConstraints 기초 동작
 10. scheduler-estimator 미설치 상태와 비활성화
 11. ArgoCD -> Karmada API Server GitOps
-12. ArgoCD self-heal/prune/restore
+12. ArgoCD self-heal/prune/restore/ApplicationSet
 13. Pull mode 등록, agent 장애/복구
 14. 신규 cluster label 영향 audit
 ```
@@ -65,14 +65,13 @@
 ## 아직 남은 영역
 
 ```text
-1. Pull mode 네트워크 단절/복구
-2. ApplicationSet으로 여러 Karmada app 묶기
-3. ArgoCD prune 운영 안전장치(AppProject, sync window, branch protection)
+1. ArgoCD prune 운영 안전장치(AppProject, sync window, branch protection)
+2. Pull mode 네트워크 단절/복구
+3. 실제 ScaleX-POD 이전 migration checklist
 4. Kueue와 Karmada 역할 분리
 5. scheduler-estimator 설치형 capacity-aware scheduling
-6. 실제 ScaleX-POD 이전 migration checklist
-7. 관측/알림: Cluster READY Unknown, agent health, binding drift
-8. policy naming/label convention 최종화
+6. 관측/알림: Cluster READY Unknown, agent health, binding drift
+7. policy naming/label convention 최종화
 ```
 
 ---
@@ -91,6 +90,6 @@
 기본기: 00~04
 장애/재균형: 05~11, 15, 23
 ScaleX-POD placement: 12~17, 22
-GitOps: 18~19
+GitOps: 18~19, 24
 Pull mode: 20~23
 ```

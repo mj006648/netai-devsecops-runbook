@@ -8,7 +8,7 @@
 GitHub repo
   -> ArgoCD on Tower
     -> Karmada API Server on Tower
-      -> twinx / edgex / datax / poolx
+      -> twinx / edgex / datax / poolx / pullx
 ```
 
 ## cluster secret
@@ -26,6 +26,14 @@ Karmada API Server cluster secret은 kubeconfig 인증서와 키를 포함하므
   - destination: Karmada API Server
   - prune/self-heal 검증용
 
+## applicationsets
+
+- `applicationsets/karmada-demo-appset.yaml`
+  - list generator로 `karmada-appset-edge`, `karmada-appset-data` Application 생성
+  - destination: Karmada API Server
+  - edge app: `edgex=1`, `pullx=1`
+  - data app: `datax=2`
+
 ## 실험 결과
 
 실험 18에서 `karmada-spread-constraints` Application은 `Synced/Healthy` 상태가 됐고, Karmada API Server의 Deployment drift를 self-heal로 복구했다.
@@ -35,3 +43,7 @@ Karmada API Server cluster secret은 kubeconfig 인증서와 키를 포함하므
 실험 19에서 `karmada-prune-rollback` Application은 live delete self-heal, Git prune, Git restore 흐름을 모두 성공했다.
 
 자세한 기록: `kubernetes/karmada/experiments/2026-06-29-19-argocd-prune-rollback.md`
+
+실험 24에서 `karmada-demo-appset` ApplicationSet은 두 Application을 생성했고, 둘 다 `Synced/Healthy` 상태가 됐다. Karmada는 edge app을 `edgex=1,pullx=1`, data app을 `datax=2`로 전파했다.
+
+자세한 기록: `kubernetes/karmada/experiments/2026-06-29-24-argocd-applicationset.md`
