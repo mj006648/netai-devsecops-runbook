@@ -93,10 +93,12 @@
 6. 상태 확인은 Karmada ResourceBinding과 member Kueue Workload/Queue를 함께 확인
 ```
 
-관련 실험:
+관련 문서:
 
+- [`kueue-observability.md`](./kueue-observability.md)
 - [`../experiments/2026-06-29-27-kueue-datax-basic.md`](../experiments/2026-06-29-27-kueue-datax-basic.md)
 - [`../experiments/2026-06-29-28-argocd-karmada-kueue.md`](../experiments/2026-06-29-28-argocd-karmada-kueue.md)
+- [`../experiments/2026-06-29-29-kueue-observability.md`](../experiments/2026-06-29-29-kueue-observability.md)
 
 ### Pull mode 네트워크 단절/복구
 
@@ -118,5 +120,6 @@
 - scheduler-estimator
 - ArgoCD -> Karmada API Server GitOps 흐름
 - 실제 ScaleX-POD 이전 checklist
-- Kueue 관측/알림
 - Kueue GitOps 배포 구조
+- Kueue controller 장애/복구
+- Kueue quota 변경
