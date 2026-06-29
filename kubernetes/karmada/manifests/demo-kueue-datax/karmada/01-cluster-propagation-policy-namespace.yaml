@@ -1,0 +1,13 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: ClusterPropagationPolicy
+metadata:
+  name: demo-kueue-datax-namespace-policy
+spec:
+  resourceSelectors:
+    - apiVersion: v1
+      kind: Namespace
+      name: demo-kueue-datax
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - datax

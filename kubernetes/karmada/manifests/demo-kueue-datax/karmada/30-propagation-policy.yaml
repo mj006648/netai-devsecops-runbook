@@ -1,0 +1,17 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-kueue-datax-jobs-policy
+  namespace: demo-kueue-datax
+spec:
+  resourceSelectors:
+    - apiVersion: batch/v1
+      kind: Job
+      name: demo-kueue-hold-a
+    - apiVersion: batch/v1
+      kind: Job
+      name: demo-kueue-hold-b
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - datax

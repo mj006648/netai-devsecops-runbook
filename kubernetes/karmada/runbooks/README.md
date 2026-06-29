@@ -82,6 +82,20 @@
 - [`../argocd/projects/karmada-guarded-project.yaml`](../argocd/projects/karmada-guarded-project.yaml)
 - [`../experiments/2026-06-29-25-argocd-prune-safety.md`](../experiments/2026-06-29-25-argocd-prune-safety.md)
 
+### Karmada + Kueue 역할 분리
+
+```text
+1. Karmada는 member cluster placement를 담당
+2. Kueue는 선택된 member cluster 내부의 Job admission과 quota를 담당
+3. Kueue ResourceFlavor/ClusterQueue/LocalQueue는 Kueue가 설치된 member cluster에 적용
+4. Karmada API Server에는 일반 Job과 PropagationPolicy를 적용
+5. 상태 확인은 Karmada ResourceBinding과 member Kueue Workload/Queue를 함께 확인
+```
+
+관련 실험:
+
+- [`../experiments/2026-06-29-27-kueue-datax-basic.md`](../experiments/2026-06-29-27-kueue-datax-basic.md)
+
 ### Pull mode 네트워크 단절/복구
 
 ```text
@@ -102,3 +116,4 @@
 - scheduler-estimator
 - ArgoCD -> Karmada API Server GitOps 흐름
 - 실제 ScaleX-POD 이전 checklist
+- Kueue 관측/알림
