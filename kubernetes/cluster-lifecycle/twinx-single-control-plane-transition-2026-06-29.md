@@ -183,6 +183,8 @@ ssh control3 'docker ps -a || sudo crictl ps -a || true'
 
 사용자 Docker container가 발견되면 제거 작업을 중단하고 소유자/용도 확인 후 별도 백업한다.
 
+2026-06-29 확인 결과 `docker` binary는 없고 Kubernetes/containerd pod만 있었다. 따라서 제거 당일에는 일반 pod를 안전하게 옮기기 위해 drain을 먼저 수행한다.
+
 ### 1단계 — control3 제거
 
 먼저 `control3`부터 제거한다. 이유는 한 번에 두 member를 제거하지 않고, quorum과 API 동작을 단계별로 확인하기 위해서다.
@@ -190,21 +192,27 @@ ssh control3 'docker ps -a || sudo crictl ps -a || true'
 예상 흐름:
 
 ```bash
-# member id 확인
+# 1. Kubernetes 일반 pod 먼저 이동
+kubectl drain control3   --ignore-daemonsets   --delete-emptydir-data   --force   --grace-period=60   --timeout=10m
+
+# 2. drain 후 남은 pod 확인
+kubectl get pods -A --field-selector spec.nodeName=control3 -o wide
+
+# 3. member id 확인
 sudo ETCDCTL_API=3 etcdctl member list --write-out=table
 
-# control3 member remove
-sudo ETCDCTL_API=3 etcdctl member remove <CONTROL3_MEMBER_ID>
+# 4. control3 etcd member remove
+sudo ETCDCTL_API=3 etcdctl member remove c7b8a81e21db4ac9
 
-# control3에서 control-plane 프로세스가 다시 뜨지 않게 정지/비활성화
+# 5. control3에서 control-plane 프로세스가 다시 뜨지 않게 정지/비활성화
 ssh control3 'sudo systemctl stop etcd kubelet'
 ssh control3 'sudo systemctl disable etcd kubelet'
 
-# Kubernetes node 제거
+# 6. Kubernetes node 제거
 kubectl delete node control3
 ```
 
-`kubectl drain`은 Kubernetes pod만 대상으로 하며 직접 Docker container를 내리지는 않는다. 하지만 control-plane 제거 목적에서는 static pod와 etcd/kubelet 정리가 더 중요하므로, drain은 필수 경로로 보지 않는다.
+`kubectl drain`은 Kubernetes pod만 대상으로 하며 직접 Docker container를 내리지는 않는다. 이번 확인에서 control3에는 일반 Docker container가 없었으므로 drain을 사용한다.
 
 ### 2단계 — control3 제거 후 검증
 
@@ -221,13 +229,24 @@ sudo ETCDCTL_API=3 etcdctl endpoint health --cluster
 control3 제거 후 API와 etcd가 정상일 때만 `control2`를 제거한다.
 
 ```bash
-sudo ETCDCTL_API=3 etcdctl member remove <CONTROL2_MEMBER_ID>
+# 1. control2 일반 pod 이동
+kubectl drain control2   --ignore-daemonsets   --delete-emptydir-data   --force   --grace-period=60   --timeout=10m
+
+# 2. drain 후 남은 pod 확인
+kubectl get pods -A --field-selector spec.nodeName=control2 -o wide
+
+# 3. control2 etcd member remove
+sudo ETCDCTL_API=3 etcdctl member remove edff4a024be5bf5f
+
+# 4. control2에서 control-plane 프로세스가 다시 뜨지 않게 정지/비활성화
 ssh control2 'sudo systemctl stop etcd kubelet'
 ssh control2 'sudo systemctl disable etcd kubelet'
+
+# 5. Kubernetes node 제거
 kubectl delete node control2
 ```
 
-control2 제거 후에는 control1의 kube-apiserver static manifest에 남아 있는 `--etcd-servers`와 `--apiserver-count` 정리가 필요한지 확인한다.
+control2 제거 후에는 control1의 kube-apiserver static manifest에 남아 있는 `--etcd-servers`와 `--apiserver-count`를 control1 단일 구조로 정리해야 한다.
 
 ### 4단계 — 최종 검증
 
@@ -287,6 +306,51 @@ sudo ETCDCTL_API=3 etcdctl endpoint health --cluster
 
 ## 실행 로그
 
+
+
+### 2026-06-29 제거 직전 영향 확인
+
+- control2/control3에서 `docker` binary는 발견되지 않았다.
+- control2/control3에는 일반 Docker container가 아니라 containerd가 관리하는 Kubernetes pod만 있었다.
+- 따라서 직접 Docker container 보호 때문에 `kubectl drain`을 피할 필요는 낮다.
+- 오히려 `prometheus-server-0`, `tx-gateway-collector`, `coredns`, `cilium-operator` 같은 일반 Kubernetes pod를 안전하게 옮기기 위해 제거 전 drain을 수행하는 편이 낫다.
+
+control2에서 확인된 주요 non-DaemonSet pod:
+
+| Namespace | Pod | Owner | 비고 |
+| --- | --- | --- | --- |
+| gpu-operator | `gpu-operator-797b5df7dc-mrc4h` | Deployment/ReplicaSet | 재스케줄 가능 |
+| gpu-operator | `gpu-operator-node-feature-discovery-master-...` | Deployment/ReplicaSet | 재스케줄 가능 |
+| kube-system | `coredns-847b7d7cc7-tz545` | Deployment/ReplicaSet | CoreDNS 2 replicas 중 1개 |
+| monitoring | `tx-gateway-collector-1` | StatefulSet | PDB `maxUnavailable: 1` 존재 |
+| nvidia-dra-driver-gpu | `nvidia-dra-driver-gpu-controller-...` | Deployment/ReplicaSet | 재스케줄 가능 |
+
+control3에서 확인된 주요 non-DaemonSet pod:
+
+| Namespace | Pod | Owner | 비고 |
+| --- | --- | --- | --- |
+| kube-system | `cilium-operator-56fb7bcb48-696qn` | Deployment/ReplicaSet | 2 replicas 중 1개 |
+| monitoring | `prometheus-server-0` | StatefulSet | Rook-Ceph Block RWO PVC 사용 |
+| monitoring | `tx-gateway-collector-0` | StatefulSet | PDB `maxUnavailable: 1` 존재 |
+
+`prometheus-server-0`의 PVC:
+
+```text
+monitoring/storage-volume-prometheus-server-0
+storageClass: rook-ceph-block
+accessMode: RWO
+size: 20Gi
+```
+
+이 PVC는 local PV가 아니라 Rook-Ceph block이므로 다른 노드로 재attach 가능하다. 다만 노드 제거 전에 drain으로 정상 detach/reattach 경로를 밟는 것이 안전하다.
+
+확인 결과 저장 위치:
+
+```text
+/tmp/twinx-control-plane-final-check-2026-06-29-071725/check.txt
+/tmp/twinx-control-plane-pod-impact-2026-06-29-071802/impact.txt
+```
+
 ### 2026-06-29 계획 기록
 
 - 상태: 계획 작성 완료
@@ -299,5 +363,7 @@ sudo ETCDCTL_API=3 etcdctl endpoint health --cluster
 - snapshot 검증: `etcdutl snapshot status` 성공, revision `231105727`, size `244 MB`
 - 보안 결정: snapshot 파일은 GitHub에 올리지 않고 위치와 검증 결과만 기록
 - 실행 전략 결정: Kubespray 전체 실행은 피하고 control-plane 대상 수동/외과적 제거를 우선
-- 다음 단계: control2/control3 Docker 상태 확인 후 control3부터 제거 여부 결정
+- Docker/containerd 확인: control2/control3에는 일반 Docker container 없음, Kubernetes pod만 확인됨
+- 영향 확인: control3에는 `prometheus-server-0` RWO Ceph PVC pod가 있어 drain 후 제거가 더 안전함
+- 다음 단계: destructive 작업 승인 후 control3 drain부터 시작
 
