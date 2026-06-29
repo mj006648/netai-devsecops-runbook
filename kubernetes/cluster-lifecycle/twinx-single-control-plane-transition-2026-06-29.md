@@ -306,6 +306,186 @@ sudo ETCDCTL_API=3 etcdctl endpoint health --cluster
 
 ## 실행 로그
 
+### 2026-06-29 최종 결과 — control1 단일 control-plane 전환 완료
+
+상태: 완료.
+
+TwinX Kubernetes control-plane은 `control1` 단일 구조로 전환됐다. `control2`, `control3`는 Kubernetes Node와 etcd member에서 제거했고, API server와 etcd는 `control1`만 바라보도록 정리했다.
+
+최종 구조:
+
+| 항목 | 최종 상태 |
+| --- | --- |
+| Kubernetes API server | `control1` |
+| etcd member | `etcd1` / `10.38.38.9` only |
+| kube-controller-manager | `control1` |
+| kube-scheduler | `control1` |
+| control2 | Kubernetes Node 삭제, etcd/kubelet 비활성화 |
+| control3 | Kubernetes Node 삭제, etcd/kubelet 비활성화 |
+
+최종 검증 결과:
+
+```text
+kubectl get --raw='/readyz?verbose' -> readyz check passed
+etcd member list -> etcd1 only
+etcd endpoint health -> https://10.38.38.9:2379 true
+control1 -> Ready / v1.35.4
+control2 -> node object removed
+control3 -> node object removed
+control2/control3에 bound 된 pod -> 없음
+```
+
+최종 노드 상태 요약:
+
+| 노드 | 상태 | 비고 |
+| --- | --- | --- |
+| control1 | Ready | 단일 control-plane / etcd |
+| sv4000-1 | Ready | GPU Operator, NFD master, DRA controller 배치 |
+| sv4000-2 | Ready | Partridge 전용 taint 유지 |
+| l40s | Ready | Prometheus server 동작 |
+| rm352-1 | Ready | GPU worker |
+| rm352-2 | Ready | GPU worker |
+| edgebox1 | Ready,SchedulingDisabled | v1.35.4, 별도 cordon 유지 |
+| edgebox2 | Ready,SchedulingDisabled | v1.35.4, 별도 cordon 유지 |
+| edgebox3 | NotReady,SchedulingDisabled | 전원/하드웨어 이슈, v1.34.3 |
+| edgebox4 | NotReady,SchedulingDisabled | 전원/하드웨어 이슈, v1.34.3 |
+
+### 2026-06-29 control2 제거 실행 결과
+
+상태: `control2` 제거 완료. `control1` 단일 control-plane + 단일 etcd 구조로 안정화 확인.
+
+작업 전 추가 snapshot:
+
+```text
+control1:/root/etcd-snapshot-before-control2-remove-2026-06-29-0746.db
+```
+
+snapshot 검증:
+
+```text
+etcdutl snapshot status 성공
+hash: b558cff2
+revision: 231134668
+total keys: 3851
+total size: 244 MB
+file size: 233M
+```
+
+주요 작업:
+
+1. `control2` drain
+   - 일반 pod 이동 완료
+   - DaemonSet/static pod만 control2에 남는 상태 확인
+2. control2 etcd member 제거
+   - removed member: `edff4a024be5bf5f` / `etcd2` / `10.38.38.17`
+   - 남은 member: `65971c18597cb2e7` / `etcd1` / `10.38.38.9`
+3. control1 kube-apiserver manifest 단일화
+   - 백업 위치: `control1:/root/kube-apiserver.yaml.before-control2-remove-2026-06-29-075555`
+   - 최종 값:
+
+```text
+--etcd-servers=https://10.38.38.9:2379
+--apiserver-count=1
+```
+
+4. control2 control-plane 비활성화
+   - static pod manifest 이동 위치: `control2:/root/k8s-control-plane-disabled-2026-06-29-075555`
+   - `etcd`, `kubelet` stop/disable 완료
+   - 남아 있던 Kubernetes CRI container 정리 완료
+5. Kubernetes Node 삭제
+   - `kubectl delete node control2` 완료
+
+control2 drain으로 이동한 주요 pod:
+
+| Namespace | 기존 pod | 이동/대체 결과 |
+| --- | --- | --- |
+| gpu-operator | `gpu-operator-797b5df7dc-mrc4h` | 이후 GitOps 수정으로 `sv4000-1` 배치 |
+| gpu-operator | `gpu-operator-node-feature-discovery-master-...` | 이후 GitOps 수정으로 `sv4000-1` 배치 |
+| kube-system | `coredns-847b7d7cc7-tz545` | `l40s`에 새 replica Running |
+| monitoring | `tx-gateway-collector-1` | `control1`에 재생성 Running |
+| nvidia-dra-driver-gpu | `nvidia-dra-driver-gpu-controller-...` | 이후 GitOps 수정으로 `sv4000-1` 배치 |
+
+control2 제거 후 일시 현상:
+
+- control1이 kube-apiserver manifest 재시작 직후 잠시 `NotReady`로 표시됐다.
+- 원인: kubelet status 갱신 지연으로 보이며, 곧 `Ready`로 회복됐다.
+- API `/readyz`와 etcd health는 정상 확인됐다.
+
+### 2026-06-29 control1 부담 감소를 위한 controller 재배치
+
+control-plane 단일화 후 GPU/DRA 관련 controller가 control1로 몰리는 현상이 있었다. 단일 control-plane 안정성을 위해 GitOps values를 수정하여 GPU worker인 `sv4000-1`로 옮겼다.
+
+변경한 TwinX-Ops commit:
+
+| Commit | 내용 | 결과 |
+| --- | --- | --- |
+| `4962d7b` | `Move GPU operator off control1` | GPU Operator controller를 `sv4000-1`로 이동 |
+| `1212bb1` | `Move DRA controller off control1` | DRA controller 이동 시도 |
+| `7d2955f` | `Fix DRA controller affinity` | chart 기본 control-plane affinity 제거 후 `sv4000-1` 이동 성공 |
+
+GPU Operator values 변경:
+
+```yaml
+operator:
+  nodeSelector:
+    kubernetes.io/hostname: sv4000-1
+  tolerations: []
+  affinity: {}
+
+node-feature-discovery:
+  master:
+    nodeSelector:
+      kubernetes.io/hostname: sv4000-1
+    tolerations: []
+    affinity: {}
+```
+
+DRA driver values 변경:
+
+```yaml
+controller:
+  nodeSelector:
+    kubernetes.io/hostname: sv4000-1
+  tolerations: []
+  affinity: null
+```
+
+`affinity: null`을 사용한 이유:
+
+- NVIDIA DRA chart 기본값은 controller에 `node-role.kubernetes.io/control-plane` required affinity를 갖는다.
+- `affinity: {}`는 Helm values merge 과정에서 기본 affinity를 제거하지 못했다.
+- `affinity: null`로 렌더링했을 때 기본 control-plane affinity가 제거되는 것을 확인했다.
+
+재배치 검증 결과:
+
+```text
+gpu-operator-64bf74d6dc-qhxxx -> sv4000-1 / 1/1 Running
+gpu-operator-node-feature-discovery-master-6fd9cb8cf6-kk9z7 -> sv4000-1 / 1/1 Running
+nvidia-dra-driver-gpu-controller-7cf68bfb65-v6bmg -> sv4000-1 / 1/1 Running
+DRA controller log -> Kubernetes API 10.234.0.1:443 응답 200 OK, informer cache populated
+```
+
+### 2026-06-29 최종 known issue 및 남은 작업
+
+이번 control-plane 단일화 작업에서 해결하지 않은 항목은 아래와 같다.
+
+| 항목 | 상태 | 후속 작업 |
+| --- | --- | --- |
+| edgebox3/4 | `NotReady,SchedulingDisabled`, 전원/하드웨어 이슈 | 전원 복구 후 v1.35.4 업그레이드 재개 |
+| MinIO 일부 pod | `Pending` 유지 | 기존 스토리지/스케줄링 이슈로 분리, 이번 작업에서 삭제/수정하지 않음 |
+| Cilium operator live patch | 임시로 edgebox/control3 회피 | Cilium GitOps 전환 시 values로 영속화 필요 |
+| `tx-gateway-collector-0/1` | 현재 control1에 Running | control1 부담을 더 줄일 때 monitoring values에서 별도 재배치 검토 |
+| Kubespray inventory | control2/control3가 파일에 남아 있을 수 있음 | 실제 토폴로지에 맞게 control-plane/etcd 그룹 정리 필요 |
+
+결론:
+
+```text
+TwinX control-plane 단일화는 완료됐다.
+운영 기준 control-plane/etcd는 control1 하나만 사용한다.
+GPU Operator, NFD master, DRA controller는 control1에서 sv4000-1로 이동 완료했다.
+```
+
+
 
 
 
