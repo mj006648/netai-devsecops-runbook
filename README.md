@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-06-29 | Kubernetes / Control Plane | [TwinX 단일 Control Plane 전환 계획](kubernetes/control-plane/twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, 단계별 제거, 중단 기준 |
 | 2026-06-29 | Networking / Cilium | [TwinX Cilium GitOps 및 Hubble 전환 계획](networking/twinx-cilium-gitops-hubble-plan-2026-06-29.md) | Kubespray가 설치한 Cilium을 ArgoCD GitOps 관리로 넘기기 위한 DataX 비교, 현재 TwinX 값, Hubble 단계, 중단 기준 |
 | 2026-06-29 | Kubernetes / Registry | [TwinX Harbor RWO PVC Rollout Deadlock](kubernetes/registry/twinx-harbor-rwo-pvc-rollout-deadlock-2026-06-29.md) | Harbor registry/jobservice가 RWO PVC와 RollingUpdate 조합으로 ContainerCreating에 걸린 원인, 잘못된 Recreate 시도, PR #209 node pinning fix와 검증 |
 | 2026-06-28 | Kubernetes / Secrets | [TwinX OpenBao Sealed Recovery](kubernetes/secrets/twinx-openbao-sealed-recovery-2026-06-28.md) | OpenBao sealed 상태로 ESO와 Trident ExternalSecret이 Degraded 된 장애 복구, `operator init` 금지 조건, unseal 및 검증 절차 |
@@ -35,6 +36,7 @@
 
 - **[kubernetes/](kubernetes/)** — Kubernetes 운영 계획과 공부 문서
   - **[kubernetes/karmada/](kubernetes/karmada/)** — ScaleX-POD Karmada 멀티클러스터 실험과 운영 runbook
+  - **[kubernetes/control-plane/](kubernetes/control-plane/)** — control-plane, etcd, API server 구조 변경과 복구 절차
   - **[kubernetes/gpu/](kubernetes/gpu/)** — GPU Operator, NVIDIA DRA, MIG, GPU node 운영
   - **[kubernetes/secrets/](kubernetes/secrets/)** — OpenBao, External Secrets Operator, GitOps secret delivery 운영
   - **[kubernetes/registry/](kubernetes/registry/)** — Harbor registry, image storage, RWO PVC rollout 운영
