@@ -35,10 +35,27 @@
 - [`../experiments/2026-06-26-09-workload-rebalancer-reschedule.md`](../experiments/2026-06-26-09-workload-rebalancer-reschedule.md)
 - [`../experiments/2026-06-26-11-multi-workload-rebalancer.md`](../experiments/2026-06-26-11-multi-workload-rebalancer.md)
 
+
+### 신규 member cluster label 영향 범위 점검
+
+```text
+1. 신규 cluster label 부여 전 기존 policy selector audit
+2. ResourceBinding/ClusterResourceBinding snapshot 저장
+3. label을 한 번에 하나씩 부여
+4. label 부여 후 binding diff 확인
+5. 예상하지 않은 binding이 생기면 label 또는 policy rollback
+6. replica workload 재균형은 WorkloadRebalancer 절차로 분리
+```
+
+관련 문서:
+
+- [`new-cluster-label-impact-checklist.md`](./new-cluster-label-impact-checklist.md)
+- [`../experiments/2026-06-29-22-new-cluster-label-impact.md`](../experiments/2026-06-29-22-new-cluster-label-impact.md)
+
 ## 다음 정리 대상
 
-- ScaleX-POD role label placement
+- Pull mode + WorkloadRebalancer
+
 - OverridePolicy image/storageClass
 - scheduler-estimator
 - ArgoCD -> Karmada API Server GitOps 흐름
-- Pull mode
