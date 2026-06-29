@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-06-29 | Kubernetes / Registry | [TwinX Harbor RWO PVC Rollout Deadlock](kubernetes/registry/twinx-harbor-rwo-pvc-rollout-deadlock-2026-06-29.md) | Harbor registry/jobservice가 RWO PVC와 RollingUpdate 조합으로 ContainerCreating에 걸린 원인, 잘못된 Recreate 시도, PR #209 node pinning fix와 검증 |
 | 2026-06-28 | Kubernetes / Secrets | [TwinX OpenBao Sealed Recovery](kubernetes/secrets/twinx-openbao-sealed-recovery-2026-06-28.md) | OpenBao sealed 상태로 ESO와 Trident ExternalSecret이 Degraded 된 장애 복구, `operator init` 금지 조건, unseal 및 검증 절차 |
 | 2026-06-28 | Kubernetes / GPU | [TwinX NVIDIA DRA Driver Rollout](kubernetes/gpu/twinx-nvidia-dra-driver-rollout-2026-06-28.md) | GPU Operator v25.3.4 환경에서 NVIDIA DRA driver chart 25.3.2를 GitOps로 추가하고 GPU/MIG/ComputeDomain DeviceClass와 ResourceSlice 검증 |
 | 2026-06-28 | Kubernetes / Virtualization | [TwinX KubeVirt User VM Plan](kubernetes/virtualization/twinx-kubevirt-user-vm-plan-2026-06-28.md) | 사용자별 KubeVirt VM 제공 설계, v1.8.4 선택 이유, GitOps 준비 결과, 배포 전 preflight와 중단 기준 |
@@ -35,6 +36,7 @@
   - **[kubernetes/karmada/](kubernetes/karmada/)** — ScaleX-POD Karmada 멀티클러스터 실험과 운영 runbook
   - **[kubernetes/gpu/](kubernetes/gpu/)** — GPU Operator, NVIDIA DRA, MIG, GPU node 운영
   - **[kubernetes/secrets/](kubernetes/secrets/)** — OpenBao, External Secrets Operator, GitOps secret delivery 운영
+  - **[kubernetes/registry/](kubernetes/registry/)** — Harbor registry, image storage, RWO PVC rollout 운영
   - **[kubernetes/upgrades/](kubernetes/upgrades/)** — Kubespray 업그레이드, Hubble, DRA 적용 계획
   - **[kubernetes/virtualization/](kubernetes/virtualization/)** — KubeVirt 기반 사용자별 VM 제공 계획과 운영 절차
 - **[networking/](networking/)** — netplan, Cilium, MTU, secondary IP, 노드 라우팅
