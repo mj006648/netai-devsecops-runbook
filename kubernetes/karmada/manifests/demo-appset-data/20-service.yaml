@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-appset-data-nginx
+  namespace: demo-appset-data
+  labels:
+    app: demo-appset-data-nginx
+    scalex.io/demo: appset-data
+spec:
+  type: ClusterIP
+  selector:
+    app: demo-appset-data-nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

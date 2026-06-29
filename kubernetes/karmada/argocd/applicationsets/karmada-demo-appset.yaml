@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: karmada-demo-appset
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: edge
+            namespace: demo-appset-edge
+            path: kubernetes/karmada/manifests/demo-appset-edge
+          - name: data
+            namespace: demo-appset-data
+            path: kubernetes/karmada/manifests/demo-appset-data
+  template:
+    metadata:
+      name: 'karmada-appset-{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/mj006648/netai-devsecops-runbook.git
+        targetRevision: main
+        path: '{{path}}'
+      destination:
+        server: https://karmada-apiserver.karmada-system.svc:5443
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

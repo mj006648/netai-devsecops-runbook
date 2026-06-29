@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-appset-edge-nginx
+  namespace: demo-appset-edge
+  labels:
+    app: demo-appset-edge-nginx
+    scalex.io/demo: appset-edge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-appset-edge-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-appset-edge-nginx
+        scalex.io/demo: appset-edge
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi

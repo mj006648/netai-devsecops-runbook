@@ -1,0 +1,28 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: demo-appset-edge-policy
+  namespace: demo-appset-edge
+spec:
+  resourceSelectors:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: demo-appset-edge-nginx
+    - apiVersion: v1
+      kind: Service
+      name: demo-appset-edge-nginx
+  placement:
+    clusterAffinity:
+      labelSelector:
+        matchLabels:
+          scalex.io/location: edge
+    replicaScheduling:
+      replicaSchedulingType: Divided
+      replicaDivisionPreference: Weighted
+      weightPreference:
+        staticWeightList:
+          - targetCluster:
+              labelSelector:
+                matchLabels:
+                  scalex.io/location: edge
+            weight: 1
