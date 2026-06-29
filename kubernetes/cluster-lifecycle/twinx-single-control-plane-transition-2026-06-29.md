@@ -308,6 +308,76 @@ sudo ETCDCTL_API=3 etcdctl endpoint health --cluster
 
 
 
+
+
+### 2026-06-29 control3 제거 실행 결과
+
+상태: `control3` 제거 완료. `control1`/`control2` 2대 control-plane + 2대 etcd 구조로 안정화 확인.
+
+실행한 주요 작업:
+
+1. `control3` drain
+   - `cilium-operator`, `prometheus-server-0`, `tx-gateway-collector-0` evict 완료
+   - DaemonSet/static pod만 control3에 남는 상태 확인
+2. Prometheus GitOps 원본 수정
+   - TwinX-Ops commit: `0d0786c Relax Prometheus node pinning`
+   - 파일: `argocd/monitoring/apps/prometheus/values.yaml`
+   - 변경: `server.nodeSelector: {}`
+   - 이유: `prometheus-server-0`가 `control3`에 고정되어 Pending이 되었기 때문
+   - ArgoCD sync 후 `prometheus-server-0`는 `l40s`에서 `2/2 Running`
+3. Cilium operator 임시 운영 조치
+   - 기존 operator 1개가 `sv4000-2`에 있었고, 새 replica가 NotReady edgebox3/4로 계속 배정됨
+   - 원인: Cilium operator의 넓은 `tolerations: [{operator: Exists}]`와 required podAntiAffinity
+   - 임시 live patch로 `edgebox1`, `edgebox2`, `edgebox3`, `edgebox4`, `control3`를 피하도록 nodeAffinity 추가
+   - 결과: operator 2개가 `rm352-2`, `l40s`에서 Running
+   - 주의: Cilium은 아직 GitOps 관리가 아니므로 이 live patch는 향후 Helm/Kubespray 재적용 시 덮일 수 있다. Cilium GitOps 전환 때 정식 values에 반영해야 한다.
+4. etcd member 제거
+   - removed member: `c7b8a81e21db4ac9` / `etcd3` / `10.38.38.25`
+   - 남은 member: `etcd1` `10.38.38.9`, `etcd2` `10.38.38.17`
+5. control3 control-plane 비활성화
+   - `/etc/kubernetes/manifests` 아래 static pod manifest 백업/이동
+   - 백업 위치: `control3:/root/k8s-control-plane-disabled-2026-06-29-073847`
+   - `etcd`, `kubelet` stop/disable 완료
+   - orphan `kube-apiserver` container stop 완료
+6. Kubernetes Node 삭제
+   - `kubectl delete node control3` 완료
+7. control1/control2 kube-apiserver manifest 정리
+   - `--etcd-servers=https://10.38.38.9:2379,https://10.38.38.17:2379`
+   - `--apiserver-count=2`
+   - 백업 위치:
+     - `control1:/root/kube-apiserver.yaml.before-control3-remove-2026-06-29-073847`
+     - `control2:/root/kube-apiserver.yaml.before-control3-remove-2026-06-29-073847`
+
+검증 결과:
+
+```text
+kubectl get --raw='/readyz?verbose' -> readyz check passed
+etcd members -> etcd1, etcd2 only
+etcd endpoint health -> control1/control2 healthy
+control3 Kubernetes Node -> deleted
+control3에 남은 Kubernetes pod -> 없음
+kube-apiserver-control1 -> 1/1 Running
+kube-apiserver-control2 -> 1/1 Running
+prometheus-server-0 -> 2/2 Running on l40s
+cilium-operator -> 2/2 Running on rm352-2, l40s
+rook-ceph -> Ready / HEALTH_WARN 유지
+```
+
+남은 known issue:
+
+- edgebox3/4는 기존처럼 `NotReady,SchedulingDisabled` 상태다.
+- MinIO 일부 pod Pending은 기존 이슈로 유지된다.
+- Cilium DaemonSet desired/ready는 edgebox3/4 때문에 `11 desired / 9 ready` 상태다.
+- Cilium operator 임시 live affinity는 GitOps/Helm 영속 설정이 아니므로 Cilium GitOps 전환 시 정리 필요.
+- control2 제거는 아직 진행하지 않았다.
+
+다음 단계:
+
+1. control3 제거 상태를 잠시 관찰한다.
+2. 이상 없으면 같은 패턴으로 control2 제거를 진행한다.
+3. control2 제거 후 control1의 kube-apiserver를 `--etcd-servers=https://10.38.38.9:2379`, `--apiserver-count=1`로 정리한다.
+4. Kubespray inventory와 TwinX 운영 문서에서 control-plane/etcd 그룹을 최종 상태에 맞게 정리한다.
+
 ### 2026-06-29 제거 직전 영향 확인
 
 - control2/control3에서 `docker` binary는 발견되지 않았다.
@@ -365,5 +435,7 @@ size: 20Gi
 - 실행 전략 결정: Kubespray 전체 실행은 피하고 control-plane 대상 수동/외과적 제거를 우선
 - Docker/containerd 확인: control2/control3에는 일반 Docker container 없음, Kubernetes pod만 확인됨
 - 영향 확인: control3에는 `prometheus-server-0` RWO Ceph PVC pod가 있어 drain 후 제거가 더 안전함
-- 다음 단계: destructive 작업 승인 후 control3 drain부터 시작
+- control3 제거: 완료
+- 현재 상태: control1/control2 2대 control-plane + 2대 etcd 구조
+- 다음 단계: 안정화 관찰 후 control2 제거 여부 결정
 
