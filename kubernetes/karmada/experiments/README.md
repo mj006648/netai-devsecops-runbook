@@ -52,6 +52,9 @@
 | 27 | [`2026-06-29-27-kueue-datax-basic.md`](./2026-06-29-27-kueue-datax-basic.md) | Karmada + Kueue DataX Job admission | 성공/주의 필요 | Karmada가 Job을 datax로 전파하고, datax Kueue가 cpu=1 quota로 1개 admitted/1개 pending을 제어함 |
 | 28 | [`2026-06-29-28-argocd-karmada-kueue.md`](./2026-06-29-28-argocd-karmada-kueue.md) | ArgoCD -> Karmada -> DataX -> Kueue | 성공/주의 필요 | ArgoCD sync, Karmada 전파, datax Kueue admission, self-heal 후 재입장까지 end-to-end 확인 |
 | 29 | [`2026-06-29-29-kueue-observability.md`](./2026-06-29-29-kueue-observability.md) | Kueue 관측/알림 runbook | 성공 | ArgoCD/Karmada/Kueue 계층별 관측 명령과 pending/admitted 알림 기준 초안 작성 |
+| 30 | [`2026-06-30-30-kueue-controller-recovery.md`](./2026-06-30-30-kueue-controller-recovery.md) | Kueue controller 장애/복구 | 성공/주의 필요 | controller/webhook 중단 시 Karmada FullyApplied=False, 복구 후 resource update로 빠른 재시도 수렴 확인 |
+| 31 | [`2026-06-30-31-kueue-quota-change.md`](./2026-06-30-31-kueue-quota-change.md) | Kueue quota 변경 | 성공/주의 필요 | quota 증가는 pending Job을 admitted로 전환, quota 감소는 이미 running Job을 즉시 evict/suspend하지 않음 |
+| 32 | [`2026-07-01-32-scheduler-estimator-install.md`](./2026-07-01-32-scheduler-estimator-install.md) | scheduler-estimator 설치형 실험 | 성공/주의 필요 | Push member별 estimator addon 설치, scheduler 연결, Aggregated scheduling 성공, kind 단일 노드 rollout 이슈 확인 후 원복 |
 
 ---
 
@@ -65,7 +68,7 @@
 ## 실험 정리 판단
 
 ```text
-ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료됐다.
+ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~32에서 완료됐다.
 아래 항목은 필수 검증이 아니라 운영 고도화 또는 실제 이전 준비 작업이다.
 ```
 
@@ -74,10 +77,10 @@ ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료
 | 우선순위 | 주제 | ScaleX-POD에서 의미 |
 | --- | --- | --- |
 | 1 | Kueue GitOps 배포 구조 | Kueue 설치/queue를 ArgoCD로 member cluster에 관리할지 검토 |
-| 2 | Kueue controller 장애/복구 | member-local admission controller 장애 시 Job 상태와 복구 후 수렴 확인 |
-| 3 | Kueue quota 변경 | quota 증감 시 pending/running Job 반응 확인 |
-| 4 | ArgoCD AppProject migration | 기존 Application을 `default`에서 목적별 AppProject로 옮기는 절차 검증 |
-| 5 | scheduler-estimator 설치형 실험 | capacity-aware scheduling이 필요할 때 별도 검증 |
+| 2 | ArgoCD AppProject migration | 기존 Application을 `default`에서 목적별 AppProject로 옮기는 절차 검증 |
+| 3 | Kueue preemption/running Job 회수 | quota 감소만으로 running Job이 내려가지 않으므로 회수 정책 검토 |
+| 4 | 실제 ScaleX-POD migration checklist | kind lab 결과를 실제 Tower/TwinX/EdgeX/DataX 이전 절차로 변환 |
+| 5 | scheduler-estimator 운영 적용 판단 | 설치형 실험은 끝났고, 실제 capacity-aware scheduling 필요 시 운영화 여부 결정 |
 
 ---
 
@@ -85,8 +88,8 @@ ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료
 
 ```text
 1. Kueue GitOps 배포 구조 검토
-2. Kueue controller 장애/복구 실험
-3. Kueue quota 변경 실험
-4. ArgoCD AppProject migration 실험
-5. scheduler-estimator 설치형 실험
+2. ArgoCD AppProject migration 실험
+3. Kueue preemption/running Job 회수 정책 검토
+4. 실제 ScaleX-POD migration checklist 작성
+5. scheduler-estimator 운영 적용 여부 결정
 ```

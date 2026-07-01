@@ -93,6 +93,8 @@
 4. Karmada API Server에는 일반 Job과 PropagationPolicy를 적용
 5. ArgoCD를 같이 쓸 때도 ArgoCD Synced와 Karmada FullyApplied만으로 Job 실행을 판단하지 않음
 6. 상태 확인은 Karmada ResourceBinding과 member Kueue Workload/Queue를 함께 확인
+7. Kueue controller/webhook 장애는 Karmada FullyApplied=False로 보일 수 있음
+8. quota 증가는 pending 해소, quota 감소는 새 admission 제한으로 해석
 ```
 
 관련 문서:
@@ -101,6 +103,8 @@
 - [`../experiments/2026-06-29-27-kueue-datax-basic.md`](../experiments/2026-06-29-27-kueue-datax-basic.md)
 - [`../experiments/2026-06-29-28-argocd-karmada-kueue.md`](../experiments/2026-06-29-28-argocd-karmada-kueue.md)
 - [`../experiments/2026-06-29-29-kueue-observability.md`](../experiments/2026-06-29-29-kueue-observability.md)
+- [`../experiments/2026-06-30-30-kueue-controller-recovery.md`](../experiments/2026-06-30-30-kueue-controller-recovery.md)
+- [`../experiments/2026-06-30-31-kueue-quota-change.md`](../experiments/2026-06-30-31-kueue-quota-change.md)
 
 ### Pull mode 네트워크 단절/복구
 
@@ -119,9 +123,8 @@
 ## 다음 정리 대상
 
 - OverridePolicy image/storageClass
-- scheduler-estimator
+- scheduler-estimator 운영 적용 절차
 - ArgoCD -> Karmada API Server GitOps 흐름
 - 실제 ScaleX-POD 이전 checklist
 - Kueue GitOps 배포 구조
-- Kueue controller 장애/복구
-- Kueue quota 변경
+- Kueue preemption/running Job 회수 정책

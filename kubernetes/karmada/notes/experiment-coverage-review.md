@@ -2,7 +2,7 @@
 
 ## 목적
 
-실험 00~29까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
+실험 00~32까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
 
 ---
 
@@ -17,6 +17,9 @@
 27: Kueue member-local Job admission과 Karmada placement 역할 분리
 28: ArgoCD -> Karmada -> DataX -> Kueue end-to-end 구조
 29: Kueue 관측/알림 runbook과 pending/admitted snapshot 검증
+30: Kueue controller/webhook 장애 시 Karmada FullyApplied=False와 복구 후 재시도 확인
+31: Kueue quota 증감 시 pending/running Job 반응 확인
+32: scheduler-estimator addon 설치, scheduler 연결, Aggregated scheduling 검증
 ```
 
 결론:
@@ -41,8 +44,8 @@
 | 18, 19, 24, 25 | 모두 ArgoCD | 18은 sync/self-heal 기본, 19는 prune/delete/restore 운영 흐름, 24는 ApplicationSet으로 여러 Application 생성, 25는 prune 안전장치/AppProject/runbook |
 | 20, 21, 26 | 모두 Pull mode | 20은 등록/전파 baseline, 21은 agent Deployment 중단/복구, 26은 agent process를 내리지 않고 네트워크 단절/복구 |
 | 22, 23 | 둘 다 pullx 추가 이후 영향 | 22는 label 매칭 영향 분석, 23은 실제 replica 재균형 실행 |
-| 16, 27 | 둘 다 scheduling 관련 | 16은 Karmada scheduler-estimator, 27은 member cluster 내부 Kueue Job admission이라 계층이 다름 |
-| 18, 27, 28, 29 | 모두 GitOps/Job 배포와 관련 | 18은 ArgoCD -> Karmada 기본 sync, 27은 Karmada + Kueue만, 28은 세 도구를 end-to-end로 연결, 29는 운영 관측/알림으로 전환 |
+| 16, 27, 32 | 모두 scheduling/admission 관련 | 16/32는 Karmada scheduler-estimator, 27은 member cluster 내부 Kueue Job admission이라 계층이 다르고, 32는 estimator 설치형 검증 |
+| 18, 27, 28, 29, 30, 31 | 모두 GitOps/Job 배포와 관련 | 18은 ArgoCD -> Karmada 기본 sync, 27은 Karmada + Kueue만, 28은 세 도구를 end-to-end로 연결, 29는 운영 관측/알림, 30은 Kueue controller 장애, 31은 quota 운영 변경 |
 
 ---
 
@@ -66,6 +69,9 @@
 15. Kueue member-local Job admission과 quota 기초 동작
 16. ArgoCD -> Karmada -> Kueue end-to-end 동작
 17. Kueue pending/admitted 관측과 알림 기준
+18. Kueue controller/webhook 장애와 복구 후 재시도 절차
+19. Kueue quota 증가/감소의 운영 의미
+20. scheduler-estimator 설치형 capacity-aware scheduling 기본 동작
 ```
 
 ---
@@ -76,9 +82,10 @@
 1. 실제 ScaleX-POD 이전 migration checklist
 2. Kueue GitOps 배포 구조
 3. ArgoCD AppProject migration
-4. scheduler-estimator 설치형 capacity-aware scheduling
-5. 관측/알림: Cluster READY Unknown, agent health, binding drift
-6. policy naming/label convention 최종화
+4. Kueue preemption/running Job 회수 정책
+5. scheduler-estimator 운영 적용 여부와 secret 회전 절차
+6. 관측/알림: Cluster READY Unknown, agent health, binding drift
+7. policy naming/label convention 최종화
 ```
 
 ---
@@ -88,7 +95,7 @@
 ```text
 실험들이 일부 같은 기능을 반복하지만, 반복 단위가 기능 중복이 아니라 운영 시나리오 확장이다.
 따라서 현재 실험 세트는 유지해도 된다.
-ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료된 것으로 본다.
+ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~32에서 완료된 것으로 본다.
 이후 작업은 실제 이전 또는 운영 고도화 실험으로 분리한다.
 ```
 
@@ -101,8 +108,8 @@ ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~29에서 완료
 ```text
 기본기: 00~04
 장애/재균형: 05~11, 15, 23
-ScaleX-POD placement: 12~17, 22
+ScaleX-POD placement: 12~17, 22, 32
 GitOps: 18~19, 24~25
 Pull mode: 20~23, 26
-Queue/admission: 27~29
+Queue/admission: 27~31
 ```

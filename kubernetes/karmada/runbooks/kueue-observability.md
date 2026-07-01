@@ -161,6 +161,7 @@ Job STATUS=Running: Kueue admission 이후 Pod 실행 중
 | ArgoCD Synced + Karmada RB 없음 | ArgoCD가 target에 만들지 못했거나 resource selector 문제 | ArgoCD details, Karmada namespace/resource |
 | Karmada RB Scheduled=False | placement 실패 | PropagationPolicy, cluster label, cluster READY |
 | Karmada RB FullyApplied=False | member 적용 실패/지연 | Work, member cluster 상태 |
+| Karmada RB FullyApplied=False + Kueue webhook connection refused | member Kueue controller/webhook 장애로 admission 실패 | kueue-controller-manager, Work event, webhook service endpoint |
 | Karmada RB FullyApplied=True + Kueue pending>0 | 배포는 됐지만 member-local quota 대기 | ClusterQueue/LocalQueue quota, Workload status |
 | Kueue controller unavailable | admission controller 장애 | kueue-system Deployment/Pod/log |
 | Job Suspended + Workload not admitted | Kueue 대기 | queue quota, running workload |
@@ -174,7 +175,8 @@ Job STATUS=Running: Kueue admission 이후 Pod 실행 중
 
 ```text
 1. kueue-controller-manager available replicas = 0
-2. Karmada member cluster READY=False/Unknown이 지속됨
+2. Kueue webhook connection refused로 Karmada ResourceBinding FullyApplied=False 지속
+3. Karmada member cluster READY=False/Unknown이 지속됨
 3. ArgoCD Application Degraded가 지속됨
 4. 운영 batch namespace에서 LocalQueue pending이 장시간 증가만 함
 ```
@@ -186,6 +188,7 @@ Job STATUS=Running: Kueue admission 이후 Pod 실행 중
 2. LocalQueue PENDING WORKLOADS > 0 이 10분 이상 지속
 3. ArgoCD Synced + Karmada FullyApplied=True 이지만 Job Suspended가 10분 이상 지속
 4. Kueue controller restart count 증가
+5. quota 감소 후 admitted workload 수가 nominalQuota보다 큰 상태가 지속됨
 ```
 
 ### Info
@@ -211,8 +214,11 @@ Job STATUS=Running: Kueue admission 이후 Pod 실행 중
 6. Workload가 admitted됐는지 확인
 7. Job이 Suspended인지 Running인지 확인
 8. quota 부족이면 quota 조정, workload 우선순위, 대기, running Job 정리 중 하나를 선택
-9. Kueue controller 장애면 controller 복구 후 Workload 재수렴 확인
-10. Karmada placement 문제면 PropagationPolicy/cluster label/cluster READY를 먼저 수정
+9. quota를 늘렸다면 pending workload가 admitted로 바뀌는지 확인
+10. quota를 줄였다면 이미 running 중인 Job은 즉시 내려가지 않는다는 전제로 별도 회수 절차를 선택
+11. Kueue controller 장애면 controller 복구 후 Workload 재수렴 확인
+12. 복구 후 Karmada FullyApplied=False가 유지되면 Job annotation 등 resource update로 Work apply 재시도 유도
+13. Karmada placement 문제면 PropagationPolicy/cluster label/cluster READY를 먼저 수정
 ```
 
 ---
@@ -247,7 +253,50 @@ Kueue member cluster:
 
 ---
 
-## 8. ScaleX-POD 권장 구조
+## 8. Kueue quota 변경 해석
+
+```text
+quota 증가:
+  pending Workload를 admitted로 전환할 수 있는 정상적인 capacity 확장 조치다.
+
+quota 감소:
+  이미 admitted/running 중인 Job을 즉시 evict/suspend하지 않는다.
+  새 admission을 제한하는 조치로 보고, running Job 회수는 별도 절차로 처리한다.
+```
+
+운영자가 함께 봐야 할 값:
+
+```bash
+kubectl --context kind-datax get clusterqueue -o wide
+kubectl --context kind-datax get localqueue -A -o wide
+kubectl --context kind-datax get workloads -A -o wide
+kubectl --context kind-datax -n <namespace> get job,pods -o wide
+```
+
+---
+
+## 9. Kueue controller 복구 후 재시도
+
+controller/webhook 장애로 Karmada Work apply가 실패하면 다음 순서로 확인한다.
+
+```text
+1. kueue-controller-manager 1/1 Running 복구
+2. Karmada ResourceBinding FullyApplied 상태 확인
+3. FullyApplied=False가 유지되면 Work event에서 webhook 실패가 계속 남는지 확인
+4. 빠른 수렴이 필요하면 Karmada API Server의 Job에 annotation update를 주어 재시도 유도
+```
+
+예시:
+
+```bash
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config   -n <namespace> annotate job <job-name>   scalex.io/retry-at="$stamp" --overwrite
+```
+
+---
+
+## 10. ScaleX-POD 권장 구조
 
 ```text
 1. Tower ArgoCD dashboard만 보고 batch 상태를 끝내지 않는다.
