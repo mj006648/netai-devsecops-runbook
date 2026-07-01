@@ -43,11 +43,6 @@
 - **[templates/](templates/)** — 새 runbook/incident 작성 템플릿
 - **[archive/](archive/)** — active 구조에서 빠진 오래된 자료
 
-## Legacy redirects
-
-기존에 쓰던 `networking/`, `storage/`, `policy/`, `incidents/`, `apps/`, `observability/` 경로는 바로 지우지 않고 redirect 문서만 남깁니다.
-새 문서는 가능하면 `kubernetes/` 아래에 작성합니다.
-
 ## Note format
 
 각 노트는 아래 형식을 기준으로 작성합니다.
