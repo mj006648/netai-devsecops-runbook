@@ -13,40 +13,40 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-07-01 | Kubernetes / Networking | [TwinX Cilium GitOps 및 Hubble relay 복구](kubernetes/networking/twinx-cilium-hubble-gitops-2026-07-01.md) | Cilium GitOps ownership 전환, Hubble relay/metrics 활성화, certgen Job, relay hostNetwork 복구, edgebox3/4 known exception |
 | 2026-06-29 | Kubernetes / Cluster Lifecycle | [TwinX 단일 Control Plane 전환 계획](kubernetes/cluster-lifecycle/twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, 단계별 제거, 중단 기준 |
-| 2026-07-01 | Networking / Cilium | [TwinX Cilium GitOps 및 Hubble relay 복구](networking/twinx-cilium-gitops-hubble-plan-2026-06-29.md) | Cilium GitOps ownership 전환, Hubble relay/metrics 활성화, certgen Job, relay hostNetwork 복구, edgebox3/4 known exception |
-| 2026-06-29 | Kubernetes / Registry | [TwinX Harbor RWO PVC Rollout Deadlock](kubernetes/registry/twinx-harbor-rwo-pvc-rollout-deadlock-2026-06-29.md) | Harbor registry/jobservice가 RWO PVC와 RollingUpdate 조합으로 ContainerCreating에 걸린 원인, 잘못된 Recreate 시도, PR #209 node pinning fix와 검증 |
-| 2026-06-28 | Kubernetes / Secrets | [TwinX OpenBao Sealed Recovery](kubernetes/secrets/twinx-openbao-sealed-recovery-2026-06-28.md) | OpenBao sealed 상태로 ESO와 Trident ExternalSecret이 Degraded 된 장애 복구, `operator init` 금지 조건, unseal 및 검증 절차 |
-| 2026-06-28 | Kubernetes / GPU | [TwinX NVIDIA DRA Driver Rollout](kubernetes/gpu/twinx-nvidia-dra-driver-rollout-2026-06-28.md) | GPU Operator v25.3.4 환경에서 NVIDIA DRA driver chart 25.3.2를 GitOps로 추가하고 GPU/MIG/ComputeDomain DeviceClass와 ResourceSlice 검증 |
+| 2026-06-29 | Kubernetes / Registry | [TwinX Harbor RWO PVC Rollout Deadlock](kubernetes/registry/twinx-harbor-rwo-pvc-rollout-deadlock-2026-06-29.md) | Harbor registry/jobservice가 RWO PVC와 RollingUpdate 조합으로 ContainerCreating에 걸린 원인, PR #209 node pinning fix와 검증 |
+| 2026-06-28 | Kubernetes / Security | [TwinX OpenBao Sealed Recovery](kubernetes/security/twinx-openbao-sealed-recovery-2026-06-28.md) | OpenBao sealed 상태로 ESO와 Trident ExternalSecret이 Degraded 된 장애 복구, unseal 및 검증 절차 |
+| 2026-06-28 | Kubernetes / GPU | [TwinX NVIDIA DRA Driver Rollout](kubernetes/gpu/twinx-nvidia-dra-driver-rollout-2026-06-28.md) | GPU Operator v25.3.4 환경에서 NVIDIA DRA driver chart 25.3.2를 GitOps로 추가하고 DeviceClass/ResourceSlice 검증 |
 | 2026-06-28 | Kubernetes / Virtualization | [TwinX KubeVirt User VM Plan](kubernetes/virtualization/twinx-kubevirt-user-vm-plan-2026-06-28.md) | 사용자별 KubeVirt VM 제공 설계, v1.8.4 선택 이유, GitOps 준비 결과, 배포 전 preflight와 중단 기준 |
-| 2026-06-26 | Kubernetes / Karmada | [Karmada ScaleX-POD Lab](kubernetes/karmada/) | MiniX kind 기반 Karmada 실험 00~14, OverridePolicy image/storageClass, Resource Pool fallback, NoExecute failover, WorkloadRebalancer 재균형 |
+| 2026-06-26 | Kubernetes / Multicluster | [Karmada ScaleX-POD Lab](kubernetes/multicluster/karmada/) | MiniX kind 기반 Karmada, ArgoCD, Kueue, Resource Pool, WorkloadRebalancer 실험 |
 | 2026-06-26 | Kubernetes / Cluster Lifecycle | [TwinX Kubernetes Upgrade Run 2026-06-26](kubernetes/cluster-lifecycle/twinx-kubernetes-upgrade-run-2026-06-26.md) | 당일 preflight 결과, OTP 임시 해제, Harbor/Ceph/Partridge/Kubespray blocker, 축소된 1차 wave |
-| 2026-06-25 | Kubernetes / Cluster Lifecycle | [TwinX Kubernetes 1.35 Upgrade Plan](kubernetes/cluster-lifecycle/twinx-kubernetes-1-35-upgrade-plan.md) | TwinX Kubespray `1.33 -> 1.35.4` 계획, Ceph/Harbor/Partridge/l40s blocker, Hubble/DRA 적용 순서 |
-| 2026-06-25 | Incident | [MiniX Kubespray Upgrade Troubleshooting](incidents/minix-kubespray-upgrade-2026-06-25.md) | Cilium 권한, kubeadm health-check timeout, Rook-Ceph PDB drain block, CoreDNS loop, GPU node API timeout |
-| 2026-06-25 | Incident | [Cluster Cascade](incidents/cluster-cascade.md) | OTel, Cilium hostNetwork, Rook-Ceph 재구축으로 이어진 연쇄 장애 정리 |
-| 2026-06-25 | Networking | [rm352 Pod Communication](networking/rm352-pod-comms.md) | rm352 GPU Operator 실패, kubelet 단절, pod-to-node/API 통신 문제 원인과 해결 |
-| 2026-06-25 | Networking | [MTU / Cilium Instability](networking/mtu-cilium.md) | MTU 불일치로 인한 OSD flapping과 클러스터 불안정 |
-| 2026-06-25 | Networking | [Netplan Secondary IP](networking/netplan-secondary-ip.md) | secondary IP 추가 후 노드가 NotReady 되는 문제 |
-| 2026-06-25 | Storage | [Rook-Ceph Reinstall](storage/rook-ceph-reinstall.md) | Rook-Ceph 전체 재설치와 단계별 bring-up 절차 |
-| 2026-06-25 | Storage | [LV Preparation](storage/lv-preparation.md) | 재부팅 후 Ceph OSD가 올라오지 않는 stale LVM PV 문제 |
-| 2026-06-25 | Policy | [Kyverno + cert-manager](policy/kyverno-cert-manager.md) | Kyverno chart v3.7.x에서 인증서 ping-pong이 반복되는 문제 |
-| 2026-06-25 | Policy | [Webhook Cert SIGTERM](policy/webhook-cert-sigterm.md) | webhook controller가 인증서 owner 충돌로 주기적 SIGTERM 재시작되는 문제 |
+| 2026-06-25 | Kubernetes / Incidents | [MiniX Kubespray Upgrade Troubleshooting](kubernetes/incidents/minix-kubespray-upgrade-2026-06-25.md) | Cilium 권한, kubeadm health-check timeout, Rook-Ceph PDB drain block, CoreDNS loop, GPU node API timeout |
+| 2026-06-25 | Kubernetes / Storage | [Rook-Ceph Reinstall](kubernetes/storage/rook-ceph-reinstall.md) | Rook-Ceph 전체 재설치와 단계별 bring-up 절차 |
+| 2026-06-25 | Kubernetes / Security | [Kyverno + cert-manager](kubernetes/security/kyverno-cert-manager.md) | Kyverno chart v3.7.x에서 인증서 ping-pong이 반복되는 문제 |
 
 ## Sections
 
-- **[kubernetes/](kubernetes/)** — Kubernetes 운영 계획과 공부 문서
-  - **[kubernetes/karmada/](kubernetes/karmada/)** — ScaleX-POD Karmada 멀티클러스터 실험과 운영 runbook
-  - **[kubernetes/gpu/](kubernetes/gpu/)** — GPU Operator, NVIDIA DRA, MIG, GPU node 운영
-  - **[kubernetes/secrets/](kubernetes/secrets/)** — OpenBao, External Secrets Operator, GitOps secret delivery 운영
-  - **[kubernetes/registry/](kubernetes/registry/)** — Harbor registry, image storage, RWO PVC rollout 운영
+- **[kubernetes/](kubernetes/)** — Kubernetes 기반 운영 런북의 중심 디렉터리
   - **[kubernetes/cluster-lifecycle/](kubernetes/cluster-lifecycle/)** — Kubernetes upgrade, Kubespray 작업, control-plane/etcd topology 변경, node 제거
+  - **[kubernetes/networking/](kubernetes/networking/)** — Cilium, Hubble, MTU, Pod 통신, Kubernetes 관련 node routing
+  - **[kubernetes/storage/](kubernetes/storage/)** — Rook-Ceph, OSD, PVC, LV, local disk 운영
+  - **[kubernetes/security/](kubernetes/security/)** — OpenBao, External Secrets, Kyverno, cert-manager, OIDC/RBAC, webhook lifecycle
+  - **[kubernetes/gpu/](kubernetes/gpu/)** — GPU Operator, NVIDIA DRA, MIG, GPU node 운영
+  - **[kubernetes/registry/](kubernetes/registry/)** — Harbor registry, image storage, RWO PVC rollout 운영
   - **[kubernetes/virtualization/](kubernetes/virtualization/)** — KubeVirt 기반 사용자별 VM 제공 계획과 운영 절차
-- **[networking/](networking/)** — netplan, Cilium, MTU, secondary IP, 노드 라우팅
-- **[storage/](storage/)** — Rook-Ceph 설치·복구·튜닝, LVM 준비
-- **[policy/](policy/)** — Kyverno, cert-manager, webhook lifecycle
-- **[observability/](observability/)** — Prometheus, Grafana, OpenTelemetry
-- **[apps/](apps/)** — TwinX/MiniX 앱, 포털, 카탈로그 서비스, 쿼리 엔진
-- **[incidents/](incidents/)** — 장애 대응 기록과 postmortem
+  - **[kubernetes/observability/](kubernetes/observability/)** — Prometheus, Grafana, OpenTelemetry, Hubble metrics
+  - **[kubernetes/apps/](kubernetes/apps/)** — Kubernetes 위에서 운영되는 포털, 카탈로그, 쿼리 엔진 등 앱 운영
+  - **[kubernetes/multicluster/](kubernetes/multicluster/)** — Karmada, ScaleX-POD, multi-cluster placement 실험과 운영
+  - **[kubernetes/incidents/](kubernetes/incidents/)** — Kubernetes 장애 기록, postmortem, cross-component failure
+- **[hardware/](hardware/)** — PSU, BMC/IPMI, NIC cabling, rack 등 Kubernetes 바깥 물리 인프라 이슈
+- **[templates/](templates/)** — 새 runbook/incident 작성 템플릿
+- **[archive/](archive/)** — active 구조에서 빠진 오래된 자료
+
+## Legacy redirects
+
+기존에 쓰던 `networking/`, `storage/`, `policy/`, `incidents/`, `apps/`, `observability/` 경로는 바로 지우지 않고 redirect 문서만 남깁니다.
+새 문서는 가능하면 `kubernetes/` 아래에 작성합니다.
 
 ## Note format
 
