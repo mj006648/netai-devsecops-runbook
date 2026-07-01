@@ -13,6 +13,49 @@ ScaleX-POD: 실제 Tower / TwinX / EdgeX / DataX / Resource Pool / Pull Edge가 
 
 ---
 
+## 0. 최종 판단
+
+실험 00~32를 기준으로, ScaleX-POD의 기본 운영 모델은 다음 구조로 잡는다.
+
+```text
+GitHub repository
+  -> ArgoCD on Tower
+    -> Karmada API Server on Tower
+      -> Karmada scheduler/controller
+        -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
+          -> member-local controllers
+```
+
+도구별 책임은 명확히 분리한다.
+
+```text
+ArgoCD: Git desired state를 Karmada API Server에 sync한다.
+Karmada: ScaleX-POD member cluster 선택, 전파, override, 재균형을 담당한다.
+Kueue: DataX/TwinX 내부에서 Job admission, queue, quota, backpressure를 담당한다.
+```
+
+채택 판단:
+
+```text
+1. Karmada는 ScaleX-POD 멀티클러스터 placement/propagation 계층으로 사용 가능하다.
+2. ArgoCD는 Karmada API Server를 destination으로 삼는 GitOps 계층으로 둔다.
+3. Kueue는 Karmada가 선택한 member cluster 내부의 Job admission 계층으로 둔다.
+4. Resource Pool과 Pull Edge는 Karmada placement label, Pull mode, WorkloadRebalancer로 운영할 수 있다.
+5. scheduler-estimator는 설치형 검증은 끝났지만 기본 운영 필수값이 아니라 capacity-aware scheduling 요구가 있을 때 켠다.
+```
+
+남은 항목은 기능 검증이 아니라 운영화 작업이다.
+
+```text
+1. Kueue queue/resourceflavor GitOps 배포 구조 확정
+2. ArgoCD AppProject migration
+3. 실제 ScaleX-POD 이전 checklist
+4. 관측/알림/rollback runbook 보강
+5. Kueue preemption/running Job 회수 정책 검토
+```
+
+---
+
 ## 1. ScaleX-POD 정의
 
 ScaleX-POD는 단순히 하나의 Kubernetes cluster가 아니다.
