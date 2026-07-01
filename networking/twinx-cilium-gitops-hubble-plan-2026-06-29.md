@@ -99,6 +99,39 @@ child `Application/cilium` 생성 후 diff를 확인했다. live Helm values와 
 
 다음 실제 단계는 child `Application/cilium` sync 여부 결정이다. diff가 0이므로 예상되는 spec 변경은 없지만, ArgoCD/Helm ownership metadata와 last-applied annotation이 붙을 수 있으므로 작업 전 상태 보고와 명시 승인을 먼저 받아야 한다.
 
+## 2026-07-01 Cilium ownership sync 결과
+
+사용자 승인 후 child `Application/cilium`만 수동 sync했다. `argocd` CLI가 없는 환경이라 Application CR의 `operation.sync`를 사용했다. Hubble enable, Cilium chart version upgrade, Kubespray 실행은 하지 않았다.
+
+작업 전 백업 위치는 다음과 같다.
+
+- `/home/netai/chang/Git/cilium-backup-20260701-063130`
+
+sync 요청은 현재 child app이 보고 있던 multi-source revision을 고정해 수행했다.
+
+- Cilium chart revision: `1.17.3`
+- values repo revision: `2605673449e2e798c672419a6ed0f6033b062941`
+- prune: `false`
+- sync options: `CreateNamespace=true`, `ServerSideApply=true`, `Validate=false`
+
+결과는 다음과 같다.
+
+- `Application/cilium` sync status: `Synced`
+- operation phase: `Succeeded`
+- operation message: `successfully synced (all tasks run)`
+- `Application/cilium` operation field: empty
+- `Application/cilium` resource list: all `Synced`
+- live Cilium Helm release: `1.17.3`, revision `11` 유지
+- post-sync `kubectl diff --server-side=false -f <rendered>` 결과 `rc=0`
+- Cilium DaemonSet: generation `6`, observed `6`, `10 desired / 8 ready / 8 available`
+- Cilium Envoy DaemonSet: generation `3`, observed `3`, `10 desired / 8 ready / 8 available`
+- Cilium Operator Deployment: generation `5`, observed `5`, `2 replicas / 2 ready`
+- Cilium agent pod ages/restarts는 작업 직후 새 rollout을 보이지 않았다.
+
+`Application/cilium` health는 `Progressing`으로 남아 있다. 이는 Cilium 또는 Envoy DaemonSet이 edgebox3/4 전원 장애 때문에 전체 10개 중 8개만 available인 known exception과 연결해서 해석한다. 실제 sync status와 리소스 sync status는 `Synced`다.
+
+`Application/cilium`은 GitOps ownership을 갖게 되었으므로, 이후 Cilium 변경은 TwinX-Ops values 변경과 ArgoCD child app sync로 진행한다. Hubble 활성화는 별도 커밋과 별도 승인 후 진행한다.
+
 ## 배경
 
 TwinX는 현재 Kubespray로 Cilium을 설치하고 있다. 이 방식은 Kubernetes 설치와 업그레이드에는 편하지만, 운영 중 Cilium values를 추적하거나 Hubble 같은 관측 기능을 단계적으로 켜기에는 불편하다.
@@ -491,9 +524,7 @@ helm -n kube-system upgrade cilium cilium/cilium \
 
 ## 다음 작업
 
-1. child `Application/cilium` sync 전 상태, diff 0 결과, rollback 계획을 다시 보고하고 승인을 받는다.
-2. 승인 후 child `Application/cilium`을 sync해 Cilium ownership만 ArgoCD로 넘긴다.
-3. sync 후 Cilium DaemonSet, cilium-envoy DaemonSet, cilium-operator 상태와 live Helm revision 변화를 확인한다.
-4. edgebox3/4 전원 장애는 별도 하드웨어 이슈로 추적하고, Cilium 적용 단계에서는 known exception으로 남긴다.
-5. ownership 전환 안정화 후 Hubble relay와 metrics를 별도 커밋/승인으로 활성화한다.
-6. Cilium version upgrade는 Hubble과 분리해 ArgoCD chart revision 변경으로 단계적으로 진행한다.
+1. edgebox3/4 전원 장애는 별도 하드웨어 이슈로 추적하고, Cilium health `Progressing`의 known exception으로 남긴다.
+2. ownership 전환 안정화 상태를 하루 정도 관찰한다.
+3. Hubble relay와 metrics 활성화는 별도 커밋과 별도 승인 후 진행한다.
+4. Cilium version upgrade는 Hubble과 분리해 ArgoCD chart revision 변경으로 단계적으로 진행한다.
