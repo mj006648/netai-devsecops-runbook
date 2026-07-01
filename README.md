@@ -14,7 +14,7 @@
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
 | 2026-06-29 | Kubernetes / Cluster Lifecycle | [TwinX 단일 Control Plane 전환 계획](kubernetes/cluster-lifecycle/twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, 단계별 제거, 중단 기준 |
-| 2026-06-29 | Networking / Cilium | [TwinX Cilium GitOps 및 Hubble 전환 계획](networking/twinx-cilium-gitops-hubble-plan-2026-06-29.md) | Kubespray가 설치한 Cilium을 ArgoCD GitOps 관리로 넘기기 위한 DataX 비교, 현재 TwinX 값, Hubble 단계, 중단 기준 |
+| 2026-07-01 | Networking / Cilium | [TwinX Cilium GitOps 및 Hubble relay 복구](networking/twinx-cilium-gitops-hubble-plan-2026-06-29.md) | Cilium GitOps ownership 전환, Hubble relay/metrics 활성화, certgen Job, relay hostNetwork 복구, edgebox3/4 known exception |
 | 2026-06-29 | Kubernetes / Registry | [TwinX Harbor RWO PVC Rollout Deadlock](kubernetes/registry/twinx-harbor-rwo-pvc-rollout-deadlock-2026-06-29.md) | Harbor registry/jobservice가 RWO PVC와 RollingUpdate 조합으로 ContainerCreating에 걸린 원인, 잘못된 Recreate 시도, PR #209 node pinning fix와 검증 |
 | 2026-06-28 | Kubernetes / Secrets | [TwinX OpenBao Sealed Recovery](kubernetes/secrets/twinx-openbao-sealed-recovery-2026-06-28.md) | OpenBao sealed 상태로 ESO와 Trident ExternalSecret이 Degraded 된 장애 복구, `operator init` 금지 조건, unseal 및 검증 절차 |
 | 2026-06-28 | Kubernetes / GPU | [TwinX NVIDIA DRA Driver Rollout](kubernetes/gpu/twinx-nvidia-dra-driver-rollout-2026-06-28.md) | GPU Operator v25.3.4 환경에서 NVIDIA DRA driver chart 25.3.2를 GitOps로 추가하고 GPU/MIG/ComputeDomain DeviceClass와 ResourceSlice 검증 |
