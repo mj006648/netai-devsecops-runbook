@@ -132,6 +132,45 @@ sync 요청은 현재 child app이 보고 있던 multi-source revision을 고정
 
 `Application/cilium`은 GitOps ownership을 갖게 되었으므로, 이후 Cilium 변경은 TwinX-Ops values 변경과 ArgoCD child app sync로 진행한다. Hubble 활성화는 별도 커밋과 별도 승인 후 진행한다.
 
+## 2026-07-01 Hubble 준비 PR 결과
+
+TwinX-Ops PR #223에서 Hubble 활성화 준비를 Git에 반영했다. 아직 child `Application/cilium` sync는 하지 않았다.
+
+반영 내용은 다음과 같다.
+
+- `hubble.enabled: true`
+- `hubble.eventQueueSize: "8191"`
+- `hubble.relay.enabled: true`
+- `hubble.metrics.enabled`: `drop`, `tcp`, `flow`, `icmp`, `httpV2:exemplars=true`
+- `hubble.metrics.enableOpenMetrics: true`
+- `hubble.metrics.port: 9965`
+- `hubble.metrics.tls.enabled: false` 유지
+- `hubble.ui.enabled: false` 유지
+- Cilium chart version은 `1.17.3` 유지
+- Hubble relay image도 chart `1.17.3` 기본값인 `quay.io/cilium/hubble-relay:v1.17.3` 유지
+
+DataX 예시는 `1.17.5` 기준이므로 relay image tag/digest를 그대로 복사하지 않았다. TwinX는 현재 Cilium `1.17.3`이므로 relay도 `1.17.3`으로 맞췄다.
+
+TLS는 `hubble.tls.auto.method: cronJob`으로 설정했다. `helm` 방식은 ArgoCD 렌더링 때 Hubble 인증서 Secret이 매번 달라져 계속 diff가 생길 수 있기 때문이다. `cronJob` 방식은 렌더 결과가 반복 실행해도 동일했다.
+
+검증 결과는 다음과 같다.
+
+- `helm template cilium cilium/cilium --version 1.17.3` 반복 렌더 SHA 동일
+- client-side `kubectl diff`에서 예상된 Hubble 리소스 추가와 Cilium agent DaemonSet template 변경 확인
+- `kubectl apply --dry-run=server --validate=false` 결과 `rc=0`
+- Cilium child Application 렌더 결과 `ServerSideApply=true` 제거 확인
+
+`ServerSideApply=true`를 제거한 이유는 Hubble enable 시 `cilium-config.data.enable-hubble` 필드가 Cilium agent manager와 충돌하기 때문이다. Force conflict는 피하고, Cilium app만 client-side apply 방식으로 sync하도록 `syncOptionsOverride`를 추가했다. 다른 앱의 기본 `ServerSideApply=true` 동작은 유지된다.
+
+PR merge 후 child `Application/cilium`을 hard refresh한 결과는 다음과 같다.
+
+- child app revisions: `1.17.3`, `0e51fd008c6431fbf35eb4ed686622be714f3808`
+- child app sync: `OutOfSync`
+- child app health: `Missing`
+- live Hubble resource는 아직 없음
+
+`Missing`은 Hubble relay/certgen/metrics 리소스가 Git에는 추가됐지만 아직 sync하지 않아 live에 없기 때문에 예상되는 상태다. 다음 단계는 작업 전 백업과 상태 보고 후 child `Application/cilium` sync를 수행하는 것이다. 이 sync는 Cilium agent DaemonSet template 변경을 포함하므로 Cilium agent rollout 가능성이 있다.
+
 ## 배경
 
 TwinX는 현재 Kubespray로 Cilium을 설치하고 있다. 이 방식은 Kubernetes 설치와 업그레이드에는 편하지만, 운영 중 Cilium values를 추적하거나 Hubble 같은 관측 기능을 단계적으로 켜기에는 불편하다.
@@ -524,7 +563,8 @@ helm -n kube-system upgrade cilium cilium/cilium \
 
 ## 다음 작업
 
-1. edgebox3/4 전원 장애는 별도 하드웨어 이슈로 추적하고, Cilium health `Progressing`의 known exception으로 남긴다.
-2. ownership 전환 안정화 상태를 하루 정도 관찰한다.
-3. Hubble relay와 metrics 활성화는 별도 커밋과 별도 승인 후 진행한다.
-4. Cilium version upgrade는 Hubble과 분리해 ArgoCD chart revision 변경으로 단계적으로 진행한다.
+1. Hubble live sync 전 Cilium 백업과 현재 상태를 다시 남긴다.
+2. child `Application/cilium`을 sync해 Hubble relay/metrics를 활성화한다.
+3. sync 중 Cilium agent DaemonSet rollout, Hubble certgen Job, Hubble relay Deployment를 확인한다.
+4. edgebox3/4 전원 장애는 별도 하드웨어 이슈로 추적하고, Cilium/Hubble health의 known exception으로 남긴다.
+5. Cilium version upgrade는 Hubble과 분리해 ArgoCD chart revision 변경으로 단계적으로 진행한다.
