@@ -2,7 +2,7 @@
 
 ## 목적
 
-실험 00~32까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
+실험 00~33까지 진행한 Karmada 검증이 서로 과하게 겹치는지, 빠진 영역은 무엇인지 점검한다.
 
 ---
 
@@ -20,6 +20,7 @@
 30: Kueue controller/webhook 장애 시 Karmada FullyApplied=False와 복구 후 재시도 확인
 31: Kueue quota 증감 시 pending/running Job 반응 확인
 32: scheduler-estimator addon 설치, scheduler 연결, Aggregated scheduling 검증
+33: scalex-k8s federation repo와 twinx/datax/edgex-k8s cluster-local repo split 검증
 ```
 
 결론:
@@ -72,6 +73,7 @@
 18. Kueue controller/webhook 장애와 복구 후 재시도 절차
 19. Kueue quota 증가/감소의 운영 의미
 20. scheduler-estimator 설치형 capacity-aware scheduling 기본 동작
+21. scalex-k8s는 멀티클러스터 전파 resource + policy repo, *-k8s는 cluster-local repo로 분리하는 구조
 ```
 
 ---
@@ -86,6 +88,7 @@
 5. scheduler-estimator 운영 적용 여부와 secret 회전 절차
 6. 관측/알림: Cluster READY Unknown, agent health, binding drift
 7. policy naming/label convention 최종화
+8. 실제 GitHub repo 생성과 ArgoCD bootstrap
 ```
 
 ---
@@ -95,7 +98,7 @@
 ```text
 실험들이 일부 같은 기능을 반복하지만, 반복 단위가 기능 중복이 아니라 운영 시나리오 확장이다.
 따라서 현재 실험 세트는 유지해도 된다.
-ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~32에서 완료된 것으로 본다.
+ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~33에서 완료된 것으로 본다.
 이후 작업은 실제 이전 또는 운영 고도화 실험으로 분리한다.
 ```
 
@@ -112,4 +115,5 @@ ScaleX-POD placement: 12~17, 22, 32
 GitOps: 18~19, 24~25
 Pull mode: 20~23, 26
 Queue/admission: 27~31
+Repo split/bootstrap: 33
 ```

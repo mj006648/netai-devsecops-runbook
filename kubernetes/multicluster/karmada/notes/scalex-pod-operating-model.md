@@ -2,7 +2,7 @@
 
 ## 목적
 
-이 문서는 MiniX/kind Karmada 실험 00~32의 결과를 바탕으로, 실제 ScaleX-POD에서 ArgoCD, Karmada, Kueue를 어떤 역할로 나눠 사용할지 정리한다.
+이 문서는 MiniX/kind Karmada 실험 00~33의 결과를 바탕으로, 실제 ScaleX-POD에서 ArgoCD, Karmada, Kueue와 repo ownership을 어떤 역할로 나눠 사용할지 정리한다.
 
 실험은 끝났고, 이 문서는 다음 단계의 기준 문서다.
 
@@ -42,6 +42,7 @@ Kueue: DataX/TwinX 내부에서 Job admission, queue, quota, backpressure를 담
 3. Kueue는 Karmada가 선택한 member cluster 내부의 Job admission 계층으로 둔다.
 4. Resource Pool과 Pull Edge는 Karmada placement label, Pull mode, WorkloadRebalancer로 운영할 수 있다.
 5. scheduler-estimator는 설치형 검증은 끝났지만 기본 운영 필수값이 아니라 capacity-aware scheduling 요구가 있을 때 켠다.
+6. scalex-k8s는 federation repo, twinx/datax/edgex-k8s는 cluster-local repo로 분리한다. 같은 live resource는 두 계층에서 동시에 관리하지 않는다.
 ```
 
 남은 항목은 기능 검증이 아니라 운영화 작업이다.
@@ -122,6 +123,64 @@ GitHub repository
 ---
 
 ## 4. GitHub repository 구성 원칙
+
+### 4.1 Repo split 원칙
+
+ScaleX-POD repo는 federation 계층과 cluster-local 계층을 분리한다.
+
+```text
+SmartX-Team/scalex-k8s
+  = TowerX ArgoCD + Karmada가 보는 federation repo
+  = 멀티클러스터에 전파할 resource + PropagationPolicy/OverridePolicy 관리
+
+SmartX-Team/twinx-k8s
+SmartX-Team/datax-k8s
+SmartX-Team/edgex-k8s
+  = 각 cluster-local ArgoCD가 보는 단일 클러스터 repo
+  = 이 클러스터에 어떤 앱을 설치할 것인가 관리
+```
+
+흐름은 다음과 같이 분리한다.
+
+```text
+scalex-k8s
+  -> TowerX ArgoCD
+    -> Karmada API Server
+      -> EdgeX / DataX / TwinX
+
+twinx-k8s
+  -> TwinX ArgoCD
+    -> TwinX cluster
+
+datax-k8s
+  -> DataX ArgoCD
+    -> DataX cluster
+
+edgex-k8s
+  -> EdgeX ArgoCD
+    -> EdgeX cluster
+```
+
+판단 기준:
+
+| repo | 질문 | 관리 대상 |
+| --- | --- | --- |
+| `scalex-k8s` | 어떤 리소스를 어느 클러스터들에 전파할 것인가? | 멀티클러스터 workload, PropagationPolicy, OverridePolicy, WorkloadRebalancer, placement profile |
+| `*-k8s` | 이 클러스터에 어떤 앱을 설치할 것인가? | CNI/CSI/storage/ingress/GPU operator, cluster-local app, cluster-local namespace/RBAC/values/patches |
+
+단일 소유권 원칙:
+
+```text
+1. 같은 live resource를 TowerX/Karmada와 cluster-local ArgoCD가 동시에 관리하지 않는다.
+2. Karmada로 전파한 resource는 member cluster의 *-k8s repo에 다시 선언하지 않는다.
+3. cluster-local platform은 기본적으로 각 *-k8s에서 관리한다.
+4. federation resource에는 scalex.io/management-plane=federation 같은 ownership label을 붙인다.
+```
+
+관련 검증:
+
+- [`../experiments/2026-07-07-33-scalex-repo-split-poc.md`](../experiments/2026-07-07-33-scalex-repo-split-poc.md)
+
 
 운영 repo에는 workload YAML과 Karmada policy가 함께 있어야 한다.
 
