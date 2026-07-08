@@ -5,7 +5,7 @@
 ScaleX-POD 운영 구조를 다음처럼 나눌 수 있는지 kind lab에서 임시 repo로 검증한다.
 
 ```text
-TowerX(tower-k8s)
+TowerX(towerx-k8s)
   -> TowerX ArgoCD
     ├─ scalex-federation -> Karmada API Server -> EdgeX / DataX / TwinX
     ├─ twinx-k8s  -> TwinX cluster
@@ -25,7 +25,7 @@ TowerX(tower-k8s)
 
 ## 설계 철학
 
-### TowerX / `tower-k8s` / `scalex-federation`
+### TowerX / `towerx-k8s` / `scalex-federation`
 
 TowerX는 ScaleX-POD의 단일 GitOps 제어 계층이다.
 
@@ -35,7 +35,7 @@ TowerX
   - Karmada Control Plane
 ```
 
-`tower-k8s`는 TowerX 제어 클러스터 자체를 담당한다.
+`towerx-k8s`는 TowerX 제어 클러스터 자체를 담당한다.
 
 ```text
 - TowerX ArgoCD
@@ -458,7 +458,7 @@ scalex.io/management-plane: edgex-local
 최종 repo 전략은 다음처럼 잡는다.
 
 ```text
-SmartX-Team/tower-k8s
+SmartX-Team/towerx-k8s
   = TowerX 제어 클러스터 repo
   = TowerX ArgoCD, Karmada 설치 기반, AppProject, root Application, repo/cluster 연결 관리
 
@@ -476,7 +476,7 @@ SmartX-Team/edgex-k8s
 운영 원칙:
 
 ```text
-TowerX(tower-k8s): 제어 클러스터와 단일 ArgoCD bootstrap 담당
+TowerX(towerx-k8s): 제어 클러스터와 단일 ArgoCD bootstrap 담당
 ScaleX(scalex-federation): 전체 멀티클러스터에 공통으로 전파해야 하는 리소스나 멀티클러스터 workload 전파 담당
 EdgeX/DataX/TwinX(*-k8s): 각 클러스터 내부 전용 리소스 담당
 같은 리소스는 Karmada 전파 경로와 직접 cluster destination 경로가 동시에 관리하지 않음
@@ -490,8 +490,8 @@ EdgeX/DataX/TwinX(*-k8s): 각 클러스터 내부 전용 리소스 담당
 다만 다음은 실제 운영 전 별도 bootstrap 작업으로 남긴다.
 
 ```text
-1. 실제 GitHub repo 생성: tower-k8s, scalex-federation, twinx-k8s, datax-k8s, edgex-k8s
-2. TowerX 단일 ArgoCD root Application이 tower-k8s를 바라보도록 설정
+1. 실제 GitHub repo 생성: towerx-k8s, scalex-federation, twinx-k8s, datax-k8s, edgex-k8s
+2. TowerX 단일 ArgoCD root Application이 towerx-k8s를 바라보도록 설정
 3. TowerX ArgoCD child Application이 scalex-federation는 Karmada API Server destination으로 sync하도록 설정
 4. TowerX ArgoCD child Application이 twinx/datax/edgex-k8s는 각 member cluster destination으로 sync하도록 설정
 5. AppProject/source/destination/resource whitelist 적용

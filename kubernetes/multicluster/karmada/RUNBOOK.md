@@ -111,7 +111,7 @@
 - OverridePolicy image/storageClass
 - scheduler-estimator 운영 적용 절차
 - ArgoCD -> Karmada API Server GitOps 흐름
-- 실제 tower-k8s/scalex-federation/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
+- 실제 towerx-k8s/scalex-federation/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
 - 실제 ScaleX-POD 이전 checklist
 - Kueue GitOps 배포 구조
 - Kueue preemption/running Job 회수 정책

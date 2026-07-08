@@ -18,7 +18,7 @@
   TowerX, DataX, EdgeX, TwinX
 
 운영 repo는 5개:
-  tower-k8s, scalex-federation, datax-k8s, edgex-k8s, twinx-k8s
+  towerx-k8s, scalex-federation, datax-k8s, edgex-k8s, twinx-k8s
 
 엔진/참조 repo:
   smartx-k8s  = SmartX 엔진. feature graph/app catalog 보유
@@ -41,9 +41,9 @@ cluster-local 리소스와 Karmada federation 리소스를 같은 repo에 섞지
 ## 1. 전체 구조
 
 ```text
-tower-k8s
+towerx-k8s
   -> TowerX Argo CD
-    ├─ tower-k8s
+    ├─ towerx-k8s
     │   -> TowerX cluster
     │
     ├─ scalex-federation
@@ -79,9 +79,9 @@ ScaleX에서는 앱이 배포되는 경로가 세 가지입니다.
 TowerX에는 단일 Argo CD가 있습니다. 이 Argo CD가 전체 repo 연결의 시작점입니다.
 
 ```text
-tower-k8s/argocd/bootstrap/root-app.yaml
+towerx-k8s/argocd/bootstrap/root-app.yaml
   -> TowerX Argo CD의 tower-root Application
-    -> tower-k8s/argocd/control-plane/
+    -> towerx-k8s/argocd/control-plane/
       -> AppProject 생성
       -> scalex-federation Application 생성
       -> datax-local / edgex-local / twinx-local Application 생성
@@ -265,7 +265,7 @@ Kueue는 Job/Ray/Spark/GPU batch workload가 많아져서
 | repo | 성격 | 역할 | 여기에 두는 것 | 여기에 두지 않는 것 |
 | --- | --- | --- | --- | --- |
 | `smartx-k8s` | 엔진 | Helm chart, app catalog, feature graph, Application 생성 템플릿 | `apps/template/features.yaml`, `apps/<app>/manifest.yaml`, 공통 chart/app 정의 | 클러스터별 비밀값, 특정 클러스터 전용 values |
-| `tower-k8s` | TowerX preset/control | TowerX 제어 클러스터와 단일 Argo CD bootstrap | Argo CD root, AppProject, child Application, Karmada control-plane 설치 계획 | 일반 서비스 workload |
+| `towerx-k8s` | TowerX preset/control | TowerX 제어 클러스터와 단일 Argo CD bootstrap | Argo CD root, AppProject, child Application, Karmada control-plane 설치 계획 | 일반 서비스 workload |
 | `scalex-federation` | Karmada federation repo | 멀티클러스터 전파 정책 관리 | 공통 리소스, `PropagationPolicy`, `OverridePolicy`, `WorkloadRebalancer` | CNI/CSI/GPU Operator 같은 cluster-local 인프라 |
 | `datax-k8s` | DataX preset | DataX cluster-local 리소스 | DataX 전용 앱, DataX storage/data/analytics, DataX 전용 patches | TwinX/EdgeX 리소스, Karmada policy |
 | `edgex-k8s` | EdgeX preset | EdgeX cluster-local 리소스 | EdgeX 전용 앱, edge/GPU/local ingress, EdgeX 전용 patches | DataX/TwinX 리소스, Karmada policy |
@@ -308,10 +308,10 @@ feature graph는 smartx-k8s 엔진에만 둔다.
 
 ---
 
-### 3.2 `tower-k8s` 구조
+### 3.2 `towerx-k8s` 구조
 
 ```text
-tower-k8s/
+towerx-k8s/
 ├── manifest.yaml                       # SmartX preset 식별자
 ├── values.yaml                         # TowerX values. repo.name은 smartx-k8s 엔진을 가리킴
 ├── patches/                            # SmartX 앱 override 예정 위치
@@ -330,7 +330,7 @@ tower-k8s/
 └── docs/
 ```
 
-`tower-k8s`는 `mobilex-k8s`식 preset 구조를 따르지만, TowerX 제어 클러스터이므로 Argo CD control-plane manifest도 함께 보관합니다.
+`towerx-k8s`는 `mobilex-k8s`식 preset 구조를 따르지만, TowerX 제어 클러스터이므로 Argo CD control-plane manifest도 함께 보관합니다.
 
 ---
 
@@ -405,7 +405,7 @@ mobilex + ops -> mobilex-ops
 datax   + ops -> datax-ops
 edgex   + ops -> edgex-ops
 twinx   + ops -> twinx-ops
-tower   + ops -> tower-ops
+towerx + ops -> towerx-ops
 ```
 
 현재 PoC AppProject:
@@ -413,7 +413,7 @@ tower   + ops -> tower-ops
 | AppProject | 용도 | Argo CD destination |
 | --- | --- | --- |
 | `default` | `tower-root` bootstrap용. chicken-and-egg 방지 | TowerX in-cluster |
-| `tower-ops` | TowerX 제어용 SmartX-generated Application 예정 | TowerX cluster |
+| `towerx-ops` | TowerX 제어용 SmartX-generated Application 예정 | TowerX cluster |
 | `scalex-federation` | Karmada federation repo | Karmada API Server |
 | `datax-ops` | DataX cluster-local repo/apps | Argo CD cluster name `datax` |
 | `edgex-ops` | EdgeX cluster-local repo/apps | Argo CD cluster name `edgex` |
@@ -443,7 +443,7 @@ spec:
 
 ```text
 1. TowerX 제어용인가?
-   -> tower-k8s
+   -> towerx-k8s
 
 2. 두 개 이상 클러스터에 Karmada policy로 배치해야 하는가?
    -> scalex-federation
@@ -462,8 +462,8 @@ spec:
 
 | 앱/리소스 | 위치 | 이유 |
 | --- | --- | --- |
-| Argo CD root/app projects | `tower-k8s` | TowerX 제어 평면 |
-| Karmada Control Plane | `tower-k8s` | TowerX 제어 평면 |
+| Argo CD root/app projects | `towerx-k8s` | TowerX 제어 평면 |
+| Karmada Control Plane | `towerx-k8s` | TowerX 제어 평면 |
 | render workload를 TwinX 3, EdgeX 1로 분산 | `scalex-federation` | Karmada replicaScheduling 필요 |
 | DataX에만 띄우는 PostgreSQL | `datax-k8s` preset에서 feature 활성화 또는 DataX 전용 patch | 단일 cluster 전용 |
 | Cilium | 각 cluster-k8s preset | cluster-local CNI. federation 대상 아님 |
