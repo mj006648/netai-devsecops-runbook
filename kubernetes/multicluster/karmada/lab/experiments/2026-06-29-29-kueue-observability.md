@@ -8,7 +8,7 @@
 작성한 runbook:
 
 ```text
-kubernetes/multicluster/karmada/runbooks/kueue-observability.md
+kubernetes/multicluster/karmada/RUNBOOK.md#kueue-관측알림-runbook
 ```
 
 ---

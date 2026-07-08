@@ -49,7 +49,7 @@ Karmada API Server cluster secret은 kubeconfig 인증서와 키를 포함하므
 
 관련 runbook:
 
-- [`../runbooks/argocd-prune-safety.md`](../runbooks/argocd-prune-safety.md)
+- [`../../RUNBOOK.md#argocd-prune-운영-안전장치-runbook`](../../RUNBOOK.md#argocd-prune-운영-안전장치-runbook)
 
 ## 실험 결과
 

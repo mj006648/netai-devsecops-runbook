@@ -104,7 +104,7 @@ ScaleX-POD 설계 판단에 필요한 핵심 기능 검증은 00~33에서 완료
 
 운영 모델 문서:
 
-- [`scalex-pod-operating-model.md`](./scalex-pod-operating-model.md)
+- [`OPERATING_MODEL.md`](../OPERATING_MODEL.md)
 
 권장 묶음:
 

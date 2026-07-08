@@ -1266,7 +1266,7 @@ resourceSelectors:
 실험 결과는 별도 파일에 계속 기록한다.
 
 ```text
-kubernetes/multicluster/karmada/notes/lab-log.md
+kubernetes/multicluster/karmada/lab/
 kubernetes/multicluster/karmada/manifests/
 karmada/examples/
 ```

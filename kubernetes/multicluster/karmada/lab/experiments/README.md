@@ -104,8 +104,8 @@ Kueue: 필요 시 DataX/TwinX 내부 Job admission/quota/backpressure
 
 ## 전체 리뷰
 
-- [실험 coverage review](../notes/experiment-coverage-review.md)
-- [ScaleX-POD 멀티클러스터 운영 모델](../notes/scalex-pod-operating-model.md)
+- [실험 coverage review](../experiment-coverage-review.md)
+- [ScaleX-POD 멀티클러스터 운영 모델](../../OPERATING_MODEL.md)
 
 ---
 

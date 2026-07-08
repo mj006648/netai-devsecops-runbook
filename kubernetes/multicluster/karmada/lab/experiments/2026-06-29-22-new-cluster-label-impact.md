@@ -206,7 +206,7 @@ Deployment는 기존 replicas=2가 edgex에 유지됐고, pullx로 자동 재분
 운영 절차로 다음 runbook을 추가했다.
 
 ```text
-kubernetes/multicluster/karmada/runbooks/new-cluster-label-impact-checklist.md
+kubernetes/multicluster/karmada/RUNBOOK.md#신규-member-cluster-label-영향-범위-점검-checklist
 ```
 
 핵심 checklist:

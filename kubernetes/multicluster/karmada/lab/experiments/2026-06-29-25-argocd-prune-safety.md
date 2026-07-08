@@ -42,7 +42,7 @@ Git에서 manifest 삭제
 ## 작성한 runbook
 
 ```text
-kubernetes/multicluster/karmada/runbooks/argocd-prune-safety.md
+kubernetes/multicluster/karmada/RUNBOOK.md#argocd-prune-운영-안전장치-runbook
 ```
 
 핵심 내용:
