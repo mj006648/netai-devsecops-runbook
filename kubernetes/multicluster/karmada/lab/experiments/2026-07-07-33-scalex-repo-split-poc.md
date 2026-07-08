@@ -87,6 +87,22 @@ TwinX(twinx-k8s) -> TowerX ArgoCD -> TwinX cluster
 cluster-k8s = 이 클러스터에 어떤 앱을 설치할 것인가?
 ```
 
+
+### 배포 위치 분리 기준
+
+이번 구조에서 가장 중요한 운영 규칙은 앱을 “전체/공통”, “cluster-local”로 먼저 나누는 것이다.
+
+| 리소스 성격 | 위치 | 이유 |
+| --- | --- | --- |
+| 전체 공통 리소스 | `scalex-k8s` | Karmada가 여러 member cluster로 전파해야 함 |
+| TwinX+EdgeX 같이 여러 cluster를 같이 쓰는 workload | `scalex-k8s` | replica weight, placement, override가 필요함 |
+| EdgeX에서만 뜰 앱 | `edgex-k8s` | Karmada 없이 EdgeX destination에 직접 sync하면 충분함 |
+| MobileX에서만 뜰 앱 | `mobilex-k8s` | 기존 MobileX preset처럼 MobileX 전용 설정/patch로 관리 |
+| TwinX에서만 뜰 앱 | `twinx-k8s` | TwinX 전용 앱은 cluster-local 소유가 명확함 |
+| DataX에서만 뜰 앱 | `datax-k8s` | DataX data/batch/analytics 앱은 DataX repo가 소유 |
+
+따라서 `scalex-k8s`는 “모든 앱을 모으는 repo”가 아니라, Karmada가 필요한 리소스만 담는 federation repo다.
+
 ### 단일 소유권 원칙
 
 같은 live resource를 Karmada 전파 경로와 TowerX ArgoCD의 직접 cluster destination 경로가 동시에 관리하면 안 된다.

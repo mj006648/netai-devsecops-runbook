@@ -211,6 +211,33 @@ edgex-k8s
 - [`./lab/experiments/2026-07-07-33-scalex-repo-split-poc.md`](./lab/experiments/2026-07-07-33-scalex-repo-split-poc.md)
 
 
+### 4.2 배포 위치 결정표
+
+새 앱이나 리소스를 추가할 때는 “어디에 띄울 것인가”를 먼저 결정한다.
+
+| 띄울 위치 | repo | Argo CD destination | Karmada 사용 | 예시 |
+| --- | --- | --- | --- | --- |
+| 전체 공통 또는 여러 클러스터 | `scalex-k8s` | Karmada API Server | O | 공통 Namespace, 멀티클러스터 service, TwinX+EdgeX render workload |
+| EdgeX만 | `edgex-k8s` | EdgeX cluster | X | Edge GPU/local device/edge ingress |
+| MobileX만 | `mobilex-k8s` | MobileX cluster | X | MobileX desktop/VINE, mobilex.kr 전용 ingress/site |
+| TwinX만 | `twinx-k8s` | TwinX cluster | X | digital twin API, TwinX portal, TwinX-only AI serving |
+| DataX만 | `datax-k8s` | DataX cluster | X | data lake, analytics, DataX-only batch platform |
+| TowerX 제어용 | `tower-k8s` | TowerX cluster | X | Argo CD, Karmada control plane, AppProject/root Application |
+
+판단 순서:
+
+```text
+1. 여러 클러스터에 동시에 배포하거나 placement/weight/override가 필요한가?
+   -> scalex-k8s에 workload + PropagationPolicy/OverridePolicy로 둔다.
+2. 특정 클러스터 하나에서만 쓰는가?
+   -> 해당 cluster-k8s repo에 둔다. 예: edgex-k8s, mobilex-k8s, twinx-k8s, datax-k8s.
+3. TowerX 제어 평면 자체인가?
+   -> tower-k8s에 둔다.
+4. 애매하면 처음에는 cluster-local로 시작하고, 실제 멀티클러스터 요구가 생기면 scalex-k8s로 승격한다.
+```
+
+이 기준을 따르면 `scalex-k8s`가 모든 앱을 빨아들이는 “거대한 단일 repo”가 되지 않고, Karmada가 필요한 리소스만 중앙 전파 계층으로 분리된다.
+
 운영 repo에는 workload YAML과 Karmada policy가 함께 있어야 한다.
 
 ```text
