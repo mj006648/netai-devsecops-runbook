@@ -767,3 +767,154 @@ features:
 
 현재 Argo CD Application 목록에는 `*-kubelet-csr-approver`가 남아 있지 않습니다.
 
+---
+
+## 10. 다음부터 사용하는 방법
+
+### 10.1 먼저 결정할 것
+
+새 리소스를 추가할 때는 아래 질문부터 답합니다.
+
+```text
+Q1. 여러 클러스터에 동시에 전파하거나 placement/weight/failover가 필요한가?
+  -> yes: scalex-federation
+
+Q2. 특정 클러스터 하나에서만 쓰는 앱인가?
+  -> yes: datax-k8s / edgex-k8s / twinx-k8s 중 해당 repo
+
+Q3. 앱 카탈로그나 feature graph 자체가 새로 필요한가?
+  -> yes: smartx-k8s
+
+Q4. TowerX Argo CD, AppProject, root Application, Karmada control plane 같은 제어 평면인가?
+  -> yes: towerx-k8s
+```
+
+### 10.2 cluster-local 앱을 추가하는 방법
+
+예: DataX에만 앱을 추가할 때
+
+1. `smartx-k8s/apps/<app>/`에 앱 정의를 추가합니다.
+
+```text
+smartx-k8s/apps/<app>/
+├── Chart.yaml
+├── manifest.yaml
+├── values.yaml
+├── patches.yaml
+└── templates/
+```
+
+2. `smartx-k8s/apps/template/features.yaml`에 feature를 추가합니다.
+
+```yaml
+scalex.io/data/my-app:
+  requires:
+    - scalex.io/data
+```
+
+3. `smartx-k8s/values.yaml`의 default feature 목록에도 같은 feature를 등록합니다. SmartX 템플릿은 feature graph와 default feature 목록의 일치 여부를 검증합니다.
+
+4. 대상 preset에서 feature를 켭니다.
+
+```yaml
+# datax-k8s/values.yaml
+features:
+  - scalex.io/data/my-app
+```
+
+5. 앱이 `patched: true`이면 preset에 patch를 둡니다.
+
+```text
+datax-k8s/patches/<app>/values.yaml
+```
+
+6. 렌더링을 먼저 확인합니다.
+
+```bash
+helm template smartx ./smartx-k8s --values ./datax-k8s/values.yaml
+```
+
+7. push 후 TowerX Argo CD에서 해당 root app을 sync합니다.
+
+```bash
+argocd app sync datax --prune
+```
+
+### 10.3 여러 클러스터로 전파하는 앱을 추가하는 방법
+
+여러 member cluster에 배포하거나 Karmada placement가 필요하면 `scalex-federation`에 둡니다.
+
+```text
+scalex-federation/federation/apps/<workload>/
+├── resources.yaml
+└── propagation-policy.yaml
+```
+
+그리고 `scalex-federation/federation/kustomization.yaml`에 path를 추가합니다.
+
+검증:
+
+```bash
+argocd app sync scalex-federation
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config get resourcebindings -A
+```
+
+### 10.4 TowerX 제어 평면을 바꾸는 방법
+
+Argo CD Project, repo 연결, root Application, cluster alias 같은 제어 평면은 `towerx-k8s`에서 바꿉니다.
+
+```text
+towerx-k8s/argocd/control-plane/
+```
+
+적용:
+
+```bash
+argocd app sync tower-root --prune
+```
+
+SmartX root Application 최초 생성은 다음 파일을 사용합니다.
+
+```bash
+kubectl --context kind-tower -n argocd apply -f towerx-k8s/argocd/bootstrap/smartx-root-apps.yaml
+```
+
+### 10.5 확인 명령
+
+Argo CD 전체 상태:
+
+```bash
+kubectl --context kind-tower -n argocd get app   -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,DEST:.spec.destination.name,SYNC:.status.sync.status,HEALTH:.status.health.status
+```
+
+Karmada member cluster:
+
+```bash
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config get clusters
+```
+
+Karmada 전파 결과:
+
+```bash
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config get resourcebindings -A
+```
+
+member cluster 실제 리소스:
+
+```bash
+kubectl --context kind-datax get pods -A
+kubectl --context kind-edgex get pods -A
+kubectl --context kind-twinx get pods -A
+```
+
+### 10.6 문제 생기면 먼저 볼 것
+
+| 증상 | 먼저 확인할 것 |
+| --- | --- |
+| Argo CD Application `Unknown` | AppProject `sourceRepos`, repo credential, destination name |
+| `patched: true` 앱 sync 실패 | `<cluster>-k8s/patches/<app>/values.yaml` 존재 여부 |
+| 원하지 않는 앱이 생성됨 | `smartx-k8s/apps/<app>/manifest.yaml`의 `features`가 비어 있는지 확인 |
+| Karmada 전파 안 됨 | `PropagationPolicy` selector와 `ResourceBinding` 상태 확인 |
+| Pod가 노드에 안 뜸 | member cluster의 scheduler event, node label/taint/affinity 확인 |
+```
+
