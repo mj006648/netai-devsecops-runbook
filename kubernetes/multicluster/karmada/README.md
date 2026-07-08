@@ -651,3 +651,119 @@ kubectl --kubeconfig ~/.kube/karmada-apiserver.config -n scalex-render \
 kubectl --kubeconfig ~/.kube/karmada-apiserver.config -n scalex-data \
   get resourcebindings.work.karmada.io
 ```
+
+---
+
+## 9. 현재 kind PoC 최종 검증 결과
+
+### 9.1 kind cluster 구성
+
+현재 kind 환경은 실제 Kubernetes cluster 4개로 구성되어 있습니다.
+
+```text
+tower
+datax
+edgex
+twinx
+```
+
+각 cluster는 현재 1-node kind cluster입니다.
+
+```text
+tower-control-plane
+datax-control-plane
+edgex-control-plane
+twinx-control-plane
+```
+
+따라서 지금 검증한 것은 “여러 Kubernetes cluster 간 전파/배포”이고, “한 cluster 내부의 여러 worker node 분산 scheduling”은 아직 검증하지 않았습니다.
+
+### 9.2 Argo CD 최종 상태
+
+현재 TowerX 단일 Argo CD의 주요 Application 상태는 모두 `Synced/Healthy`입니다.
+
+```text
+tower-root                 default             Synced   Healthy
+scalex-federation          scalex-federation   Synced   Healthy
+
+datax                      towerx-ops          Synced   Healthy
+datax-scalex-healthcheck   datax-ops           Synced   Healthy
+datax-scalex-postgresql    datax-ops           Synced   Healthy
+
+edgex                      towerx-ops          Synced   Healthy
+edgex-scalex-healthcheck   edgex-ops           Synced   Healthy
+
+twinx                      towerx-ops          Synced   Healthy
+twinx-scalex-healthcheck   twinx-ops           Synced   Healthy
+```
+
+`datax-local`, `edgex-local`, `twinx-local`도 아직 남아 있지만, 이것들은 초기 direct-sync 검증용 임시 앱입니다. 최종 구조에서는 SmartX-generated 앱으로 대체하거나 제거할 수 있습니다.
+
+### 9.3 실제 member cluster 리소스
+
+SmartX feature graph로 생성된 앱은 실제 member cluster에 리소스를 만들었습니다.
+
+| cluster | namespace | 확인된 리소스 |
+| --- | --- | --- |
+| DataX | `scalex-system` | `scalex-healthcheck` Deployment/Service/ConfigMap, Pod Running |
+| DataX | `scalex-data` | `scalex-postgresql` StatefulSet/Service/Secret, Pod Running |
+| EdgeX | `scalex-system` | `scalex-healthcheck` Deployment/Service/ConfigMap, Pod Running |
+| TwinX | `scalex-system` | `scalex-healthcheck` Deployment/Service/ConfigMap, Pod Running |
+
+### 9.4 Karmada federation 최종 상태
+
+Karmada member cluster는 3개입니다.
+
+```text
+datax   Ready
+edgex   Ready
+twinx   Ready
+```
+
+ScaleX federation ResourceBinding도 정상입니다.
+
+```text
+scalex-render-demo-deployment   Scheduled=True   FullyApplied=True
+scalex-render-demo-service      Scheduled=True   FullyApplied=True
+scalex-data-hold-job            Scheduled=True   FullyApplied=True
+```
+
+### 9.5 발견한 문제와 해결
+
+#### 문제
+
+SmartX root Application을 처음 적용했을 때 다음 앱이 자동 생성되었습니다.
+
+```text
+datax-kubelet-csr-approver
+edgex-kubelet-csr-approver
+twinx-kubelet-csr-approver
+```
+
+이 앱들은 `Unknown` 상태였고, Argo CD에는 다음 오류가 있었습니다.
+
+```text
+InvalidSpecError: application repo https://postfinance.github.io/kubelet-csr-approver is not permitted in project '<cluster>-ops'
+```
+
+#### 원인
+
+`smartx-k8s/apps/kubelet-csr-approver/manifest.yaml`에서 `features: []`로 선언되어 있었습니다. SmartX 템플릿에서는 app feature가 비어 있으면 항상 생성됩니다.
+
+이 앱은 KISS/bare-metal bootstrap에 필요한 성격인데, 현재 ScaleX kind PoC는 KISS를 쓰지 않습니다.
+
+#### 해결
+
+`kubelet-csr-approver` 앱을 KISS feature가 켜졌을 때만 생성되도록 변경했습니다.
+
+```yaml
+features:
+  - org.ulagbulag.io/bare-metal-provisioning/kiss
+```
+
+그리고 `datax`, `edgex`, `twinx` SmartX root Application을 `--prune` sync하여 기존 `*-kubelet-csr-approver` Application을 제거했습니다.
+
+#### 결과
+
+현재 Argo CD Application 목록에는 `*-kubelet-csr-approver`가 남아 있지 않습니다.
+
