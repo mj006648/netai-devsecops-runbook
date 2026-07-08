@@ -117,6 +117,109 @@ Smoke test:
 
 ---
 
+
+## 0.2 이번 CNPG/Milvus 작업 요약
+
+이번 작업은 “DataX에만 필요한 database/vector DB 앱을 SmartX/mobilex 방식으로 추가하면 실제로 동작하는가”를 확인한 것입니다. Karmada 전파가 아니라 **cluster-local SmartX feature graph 경로**로 검증했습니다.
+
+### 무엇을 바꿨나
+
+| repo | 파일 | 변경 내용 | 이유 |
+| --- | --- | --- | --- |
+| `smartx-k8s` | `apps/template/features.yaml` | `scalex.io/data/cnpg/operator`, `scalex.io/data/cnpg`, `scalex.io/ai/milvus` 추가 | CNPG/Milvus를 SmartX feature graph로 선택하기 위해 |
+| `smartx-k8s` | `values.yaml`, `apps/template/defaults.yaml` | 새 `scalex.io/*` feature를 default feature 목록에 등록 | SmartX feature 검증 통과 |
+| `smartx-k8s` | `templates/applications.yaml` | 앱 manifest의 추가 sync option을 Argo CD Application에 반영 | CNPG CR에 `SkipDryRunOnMissingResource=true`를 넣기 위해 |
+| `datax-k8s` | `values.yaml` | `scalex.io/data/cnpg`, `scalex.io/ai/milvus` 활성화 | DataX에서 CNPG/Milvus 앱을 켜기 위해 |
+| `datax-k8s` | `patches/scalex-cnpg-*`, `patches/scalex-milvus` | DataX/KIND resource, storage, instance override 추가 | preset은 cluster별 차이만 관리한다는 mobilex 패턴 유지 |
+| `towerx-k8s` | `argocd/control-plane/00-project.yaml` | `datax-ops.sourceRepos`에 CNPG chart repo 허용 | CNPG operator는 외부 Helm chart를 source로 사용하기 때문 |
+
+### 무엇을 추가했나
+
+| repo | 추가한 것 | 역할 |
+| --- | --- | --- |
+| `smartx-k8s` | `apps/scalex-cnpg-operator/` | CloudNativePG operator Helm chart wrapper. feature는 `scalex.io/data/cnpg/operator` |
+| `smartx-k8s` | `apps/scalex-cnpg-cluster/` | CNPG `Cluster` CR local chart. feature는 `scalex.io/data/cnpg` |
+| `smartx-k8s` | `apps/scalex-milvus/` | Milvus standalone + embedded etcd local chart. feature는 `scalex.io/ai/milvus` |
+| `datax-k8s` | `patches/scalex-cnpg-operator/values.yaml` | DataX CNPG operator resource/concurrency override |
+| `datax-k8s` | `patches/scalex-cnpg-cluster/values.yaml` | DataX CNPG instance/storage/resource override |
+| `datax-k8s` | `patches/scalex-milvus/values.yaml` | DataX Milvus resource override |
+
+### 어떻게 작성했나
+
+```text
+1. smartx-k8s/apps/<app>/manifest.yaml
+   -> app 이름, namespace, feature, patched 여부 선언
+
+2. smartx-k8s/apps/<app>/values.yaml
+   -> 모든 cluster에 공통으로 쓸 기본값 작성
+
+3. smartx-k8s/apps/<app>/templates/* 또는 외부 Helm chart source
+   -> CNPG operator는 외부 chart, CNPG cluster/Milvus는 local chart
+
+4. smartx-k8s/apps/template/features.yaml
+   -> feature 의존성 작성
+      scalex.io/data/cnpg -> scalex.io/data/cnpg/operator
+      scalex.io/ai/milvus -> scalex.io/data
+
+5. datax-k8s/values.yaml
+   -> DataX에서 직접 켤 feature 선택
+      scalex.io/data/cnpg
+      scalex.io/ai/milvus
+
+6. datax-k8s/patches/<app>/values.yaml
+   -> DataX에서만 다른 resource/storage 값 override
+
+7. TowerX Argo CD datax root Application sync
+   -> SmartX 엔진이 datax-scalex-* Application들을 자동 생성
+```
+
+### 실제 검증 결과
+
+```text
+Argo CD:
+  datax-scalex-cnpg-operator Synced/Healthy
+  datax-scalex-cnpg-cluster  Synced/Healthy
+  datax-scalex-milvus        Synced/Healthy
+
+kind-datax:
+  deployment.apps/scalex-cnpg-operator-cloudnative-pg 1/1 Running
+  cluster.postgresql.cnpg.io/scalex-cnpg READY=1, Cluster in healthy state
+  pod/scalex-cnpg-1 1/1 Running
+  deployment.apps/scalex-milvus 1/1 Running
+
+Smoke test:
+  CNPG pg_isready -> accepting connections
+  Milvus /healthz local/service -> OK
+```
+
+주의:
+
+```text
+현재 KIND 단일 노드 PoC에서는 CNPG operator/Milvus가 리소스 압박과 embedded etcd/lease 지연으로 재시작할 수 있다.
+따라서 이번 결과는 “SmartX feature graph + DataX preset + Argo CD sync + smoke test 1차 통과”로 기록하고,
+장시간 안정성은 DataX 노드 리소스 증설 또는 운영형 분산 구성으로 다시 검증한다.
+```
+
+### 문제와 해결
+
+| 증상 | 원인 | 해결 |
+| --- | --- | --- |
+| CNPG operator Application이 AppProject에서 거부됨 | 외부 chart repo가 `datax-ops.sourceRepos`에 없었음 | `towerx-k8s` AppProject에 `https://cloudnative-pg.github.io/charts` 추가 |
+| CNPG `Cluster` 앱이 `Unknown` | ServerSideApply structured diff가 CNPG CR에서 실패 | CNPG cluster app은 `ServerSideApply=false`, `SkipDryRunOnMissingResource=true`로 변경 |
+| Milvus CrashLoopBackOff | KIND 단일 노드에서 embedded etcd lease가 지연됨 | Milvus resource 상향, `rootCoord.dmlChannelNum=1`, etcd timeout 완화 |
+| Kueue webhook connection refused | 과거 실험 Kueue webhook이 endpoint 없이 admission을 막음 | 이번 구조에서 Kueue는 보류라 stale Kueue webhook 제거 |
+| CNPG operator leader election lost | 낮은 resource와 KIND API lease 갱신 지연 | operator resource 상향, `maxConcurrentReconciles=2` |
+
+### 일부러 하지 않은 것
+
+| 하지 않은 것 | 이유 |
+| --- | --- |
+| `scalex-federation`에 CNPG/Milvus 추가 | DataX 전용 앱이라 Karmada placement가 필요 없기 때문 |
+| `datax-k8s/apps/`에 직접 앱 작성 | MobileX 방식처럼 앱 정의는 엔진 `smartx-k8s`, 선택/patch는 preset `datax-k8s`에 두기 때문 |
+| 운영형 Milvus distributed/MinIO/Pulsar 구성 | 이번 목표는 SmartX feature graph와 DataX 배포 검증. 운영형 vector DB는 다음 단계 |
+| Kueue 유지 | 현재는 Job queue가 아니라 long-running service 검증이므로 Kueue는 보류 |
+
+---
 ## 1. 전체 구조
 
 ```text
@@ -327,7 +430,7 @@ SmartX app 하나는 보통 다음 세 값을 합쳐 배포됩니다.
 
 | preset | features | 생성되는 Application |
 | --- | --- | --- |
-| `datax-k8s` | `scalex.io/data/app`, `scalex.io/data/trino`, `scalex.io/healthcheck` | `datax`, `datax-scalex-data-api`, `datax-scalex-healthcheck`, `datax-scalex-postgresql`, `datax-scalex-nessie`, `datax-scalex-trino` |
+| `datax-k8s` | `scalex.io/data/app`, `scalex.io/data/trino`, `scalex.io/data/cnpg`, `scalex.io/ai/milvus`, `scalex.io/healthcheck` | `datax`, `datax-scalex-data-api`, `datax-scalex-healthcheck`, `datax-scalex-postgresql`, `datax-scalex-nessie`, `datax-scalex-trino`, `datax-scalex-cnpg-operator`, `datax-scalex-cnpg-cluster`, `datax-scalex-milvus` |
 | `edgex-k8s` | `scalex.io/healthcheck` | `edgex`, `edgex-scalex-healthcheck` |
 | `twinx-k8s` | `scalex.io/healthcheck` | `twinx`, `twinx-scalex-healthcheck` |
 

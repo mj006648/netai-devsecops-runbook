@@ -152,7 +152,7 @@ kubectl --context kind-datax -n scalex-data exec "$pod" -- \
   trino --execute "select count(*) from tpch.tiny.nation"
 ```
 
-정상 기준:
+1차 정상 기준:
 
 ```text
 Argo CD:
@@ -169,6 +169,54 @@ Smoke test:
   Trino CLI count 결과: 25
 ```
 
+
+
+CNPG/Milvus smoke test:
+
+```bash
+# CNPG operator / cluster 상태
+kubectl --context kind-datax -n cnpg-system get deploy,pod
+kubectl --context kind-datax -n scalex-data get clusters.postgresql.cnpg.io,pod,svc | grep -E 'scalex-cnpg|scalex-milvus|NAME'
+
+# CNPG PostgreSQL readiness
+kubectl --context kind-datax -n scalex-data exec scalex-cnpg-1 -- pg_isready
+
+# Milvus healthz: pod 내부와 service 경유 모두 확인
+kubectl --context kind-datax -n scalex-data exec deploy/scalex-milvus -- \
+  curl -fsS http://127.0.0.1:9091/healthz
+
+kubectl --context kind-datax -n scalex-data run milvus-curl-check --rm -i --restart=Never \
+  --image=curlimages/curl:8.10.1 --command -- sh -c \
+  'curl -fsS http://scalex-milvus:9091/healthz'
+```
+
+1차 정상 기준:
+
+```text
+Argo CD:
+  datax-scalex-cnpg-operator Synced/Healthy
+  datax-scalex-cnpg-cluster  Synced/Healthy
+  datax-scalex-milvus        Synced/Healthy
+
+Kubernetes:
+  deployment.apps/scalex-cnpg-operator-cloudnative-pg 1/1 Running
+  cluster.postgresql.cnpg.io/scalex-cnpg READY=1, Cluster in healthy state
+  pod/scalex-cnpg-1 1/1 Running
+  deployment.apps/scalex-milvus 1/1 Running
+
+Smoke test:
+  pg_isready -> accepting connections
+  Milvus /healthz -> OK
+```
+
+주의:
+
+```text
+현재 KIND 단일 노드 PoC에서는 CNPG operator/Milvus가 리소스 압박과 embedded etcd/lease 지연으로 재시작할 수 있다.
+따라서 이번 결과는 “SmartX feature graph + DataX preset + Argo CD sync + smoke test 1차 통과”로 기록하고,
+장시간 안정성은 DataX 노드 리소스 증설 또는 운영형 분산 구성으로 다시 검증한다.
+```
+
 문제/해결 메모:
 
 | 증상 | 해결 |
@@ -176,6 +224,11 @@ Smoke test:
 | `argocd --core`가 `argocd-cm`을 못 찾음 | 현재 context namespace를 `argocd`로 맞춘다. |
 | Trino가 catalog property 오류로 시작 실패 | `/etc/trino/catalog/*.properties`에는 `connector.name`이 필요하다. 단순 Nessie URI 기록 파일은 catalog 밖(`/etc/trino/scalex-nessie.properties`)에 둔다. |
 | `patched: true` 앱 sync 실패 | `datax-k8s/patches/<app>/values.yaml` 존재 여부를 확인한다. |
+| CNPG chart repo가 AppProject에서 거부됨 | `towerx-k8s`의 `datax-ops.sourceRepos`에 `https://cloudnative-pg.github.io/charts`를 허용한다. |
+| CNPG `Cluster` 앱이 `Unknown` | CNPG cluster app은 `ServerSideApply=false`, `SkipDryRunOnMissingResource=true`를 사용한다. |
+| Milvus가 CrashLoopBackOff | KIND에서는 Milvus resource를 올리고 `rootCoord.dmlChannelNum=1`, embedded etcd timeout을 완화한다. |
+| `kueue-webhook-service` connection refused | 현재 구조에서 Kueue는 보류이므로 stale Kueue webhook을 제거한다. |
+| CNPG operator `leader election lost` | operator resource를 올리고 `maxConcurrentReconciles=2`로 낮춘다. |
 
 ## 다음 정리 대상
 
