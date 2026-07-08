@@ -106,6 +106,77 @@
 
 - [`./lab/experiments/2026-06-29-26-pull-mode-network-partition.md`](./lab/experiments/2026-06-29-26-pull-mode-network-partition.md)
 
+### 현재 ScaleX kind PoC 빠른 점검
+
+현재 구조/설계 설명은 [`README.md`](./README.md)를 기준으로 하고, 운영 중에는 아래 명령으로 빠르게 확인합니다.
+
+```bash
+# 1. TowerX 단일 Argo CD Application 상태
+kubectl --context kind-tower -n argocd get applications.argoproj.io \
+  -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,DEST:.spec.destination.name,SYNC:.status.sync.status,HEALTH:.status.health.status
+
+# 2. Argo CD core CLI namespace 맞추기
+kubectl config use-context kind-tower
+kubectl config set-context --current --namespace=argocd
+
+# 3. DataX SmartX root app 재동기화
+argocd --core app sync datax --prune --timeout 240
+
+# 4. DataX에 실제로 뜬 SmartX feature graph 앱 확인
+kubectl --context kind-datax -n scalex-data get deploy,sts,svc,pod
+kubectl --context kind-datax -n scalex-system get deploy,svc,pod
+```
+
+현재 DataX에서 검증한 SmartX feature graph 의존성:
+
+```text
+scalex.io/data/app   -> scalex.io/data/postgresql
+scalex.io/data/trino -> scalex.io/data/nessie
+```
+
+Nessie/Trino smoke test:
+
+```bash
+# Nessie REST config와 Trino info API 확인
+kubectl --context kind-datax -n scalex-data run scalex-curl-check --rm -i --restart=Never \
+  --image=curlimages/curl:8.10.1 --command -- sh -c \
+  'curl -fsS http://scalex-nessie:19120/api/v2/config >/tmp/nessie.json && \
+   curl -fsS http://scalex-trino:8080/v1/info >/tmp/trino.json && \
+   cat /tmp/nessie.json && echo && cat /tmp/trino.json'
+
+# Trino 내장 TPCH catalog query 확인
+pod=$(kubectl --context kind-datax -n scalex-data get pod \
+  -l app.kubernetes.io/name=scalex-trino \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl --context kind-datax -n scalex-data exec "$pod" -- \
+  trino --execute "select count(*) from tpch.tiny.nation"
+```
+
+정상 기준:
+
+```text
+Argo CD:
+  datax-scalex-nessie Synced/Healthy
+  datax-scalex-trino  Synced/Healthy
+
+Kubernetes:
+  deployment.apps/scalex-nessie 1/1 Running
+  deployment.apps/scalex-trino  1/1 Running
+
+Smoke test:
+  Nessie /api/v2/config OK
+  Trino /v1/info ACTIVE, version 482
+  Trino CLI count 결과: 25
+```
+
+문제/해결 메모:
+
+| 증상 | 해결 |
+| --- | --- |
+| `argocd --core`가 `argocd-cm`을 못 찾음 | 현재 context namespace를 `argocd`로 맞춘다. |
+| Trino가 catalog property 오류로 시작 실패 | `/etc/trino/catalog/*.properties`에는 `connector.name`이 필요하다. 단순 Nessie URI 기록 파일은 catalog 밖(`/etc/trino/scalex-nessie.properties`)에 둔다. |
+| `patched: true` 앱 sync 실패 | `datax-k8s/patches/<app>/values.yaml` 존재 여부를 확인한다. |
+
 ## 다음 정리 대상
 
 - OverridePolicy image/storageClass
