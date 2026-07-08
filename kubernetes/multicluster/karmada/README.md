@@ -196,8 +196,8 @@ cluster-k8s
 1. datax-k8s/values.yaml에서 feature 선택
 
    features:
-     - scalex.io/demo/common
-     - scalex.io/demo/postgresql
+     - scalex.io/data/postgresql
+     - scalex.io/healthcheck
 
 2. TowerX Argo CD가 smartx-k8s Helm chart를 렌더링
 
@@ -213,11 +213,11 @@ cluster-k8s
 
 4. 생성된 Application이 실제 앱을 설치
 
-   datax-scalex-common-demo
+   datax-scalex-healthcheck
      -> project: datax-ops
      -> destination.name: datax
 
-   datax-scalex-data-postgresql
+   datax-scalex-postgresql
      -> project: datax-ops
      -> destination.name: datax
 ```
@@ -237,6 +237,17 @@ SmartX app 하나는 보통 다음 세 값을 합쳐 배포됩니다.
 ```
 
 없으면 Argo CD sync가 실패할 수 있습니다.
+
+
+현재 kind PoC에서 검증 중인 SmartX feature graph 앱:
+
+| preset | features | 생성되는 Application |
+| --- | --- | --- |
+| `datax-k8s` | `scalex.io/data/postgresql`, `scalex.io/healthcheck` | `datax`, `datax-scalex-healthcheck`, `datax-scalex-postgresql` |
+| `edgex-k8s` | `scalex.io/healthcheck` | `edgex`, `edgex-scalex-healthcheck` |
+| `twinx-k8s` | `scalex.io/healthcheck` | `twinx`, `twinx-scalex-healthcheck` |
+
+`datax`, `edgex`, `twinx` root Application은 `towerx-k8s/argocd/bootstrap/smartx-root-apps.yaml`로 최초 1회 생성하고, 이후 각 root Application이 smartx-k8s 렌더링 결과를 자기 project에 맞게 관리합니다.
 
 ---
 
@@ -317,9 +328,11 @@ towerx-k8s/
 ├── patches/                            # SmartX 앱 override 예정 위치
 ├── argocd/
 │   ├── bootstrap/
-│   │   └── root-app.yaml               # 최초 1회 apply할 TowerX root Application
+│   │   ├── root-app.yaml               # 최초 1회 apply할 TowerX root Application
+│   │   └── smartx-root-apps.yaml       # datax/edgex/twinx SmartX root Application bootstrap
 │   └── control-plane/
 │       ├── 00-project.yaml             # AppProject 정의
+│       ├── 05-towerx-cluster.yaml      # SmartX root app용 TowerX cluster alias
 │       ├── 10-scalex-federation-app.yaml
 │       ├── 20-datax-local-app.yaml
 │       ├── 21-twinx-local-app.yaml
