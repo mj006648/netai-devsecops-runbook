@@ -1,37 +1,44 @@
-# ScaleX Karmada 운영 계획
+# ScaleX Karmada + SmartX 운영 계획
 
 이 문서가 **현재 계획의 입구**입니다. 먼저 이 파일만 보면 됩니다.
 
-운영 계획/모델은 이 `README.md`에 통합하고, 실제 장애/운영 명령은 [`RUNBOOK.md`](./RUNBOOK.md), 과거 실험 기록은 [`lab/`](./lab/)에 둡니다.
+- 운영 모델/레포 구조/소유권 기준: 이 `README.md`
+- 실제 장애/운영 명령: [`RUNBOOK.md`](./RUNBOOK.md)
+- Karmada 개념 설명: [`CONCEPTS.md`](./CONCEPTS.md)
+- 과거 kind 실험 기록: [`lab/`](./lab/)
 
 ---
 
-## 1. 최종 목표
+## 0. 현재 결론
 
-ScaleX는 실제 클러스터 4개와 운영 repo 5개로 구성합니다.
+현재 ScaleX PoC의 결론은 다음입니다.
 
 ```text
-실제 클러스터 4개:
-  - TowerX  : 제어 클러스터
-  - DataX   : data/batch/analytics cluster
-  - EdgeX   : edge/GPU cluster
-  - TwinX   : digital twin/render/AI serving cluster
+실제 클러스터는 4개:
+  TowerX, DataX, EdgeX, TwinX
 
-운영 repo 5개:
-  - tower-k8s
-  - scalex-federation
-  - datax-k8s
-  - edgex-k8s
-  - twinx-k8s
+운영 repo는 5개:
+  tower-k8s, scalex-federation, datax-k8s, edgex-k8s, twinx-k8s
 
-엔진/참조:
-  - smartx-k8s   : 공통 엔진/app catalog/feature graph
-  - mobilex-k8s  : 참고용 preset 구조. 우리가 관리하거나 Argo CD에 연결하지 않음
+엔진/참조 repo:
+  smartx-k8s  = SmartX 엔진. feature graph/app catalog 보유
+  mobilex-k8s = 참고용 preset. 우리가 관리하거나 Argo CD에 연결하지 않음
+
+Argo CD server는 TowerX에 1개만 둔다.
+Karmada Control Plane도 TowerX에 둔다.
+Resource Pool/poolx/pullx는 현재 최종 구조에 포함하지 않는다.
+```
+
+핵심 소유권 원칙:
+
+```text
+같은 live Kubernetes resource는 반드시 하나의 repo만 소유한다.
+cluster-local 리소스와 Karmada federation 리소스를 같은 repo에 섞지 않는다.
 ```
 
 ---
 
-## 2. 최종 구조
+## 1. 전체 구조
 
 ```text
 tower-k8s
@@ -53,60 +60,386 @@ tower-k8s
         -> TwinX cluster
 ```
 
-핵심은 **Argo CD 서버는 TowerX에 하나만 둔다**는 것입니다.
+의미:
+
+```text
+TowerX Argo CD는 여러 repo를 연결한다.
+단일 클러스터 전용 리소스는 각 *-k8s repo가 직접 해당 cluster destination으로 sync한다.
+멀티클러스터 placement가 필요한 리소스만 scalex-federation이 Karmada API Server로 sync한다.
+```
 
 ---
 
-## 3. repo별 역할
+## 1.1 동작 방식
 
-| repo | 역할 | 여기에 두는 것 | 여기에 두지 않는 것 |
-| --- | --- | --- | --- |
-| `tower-k8s` | TowerX 제어 클러스터 repo | Argo CD, Karmada Control Plane, AppProject, root/child Application | 일반 서비스 workload |
-| `scalex-federation` | Karmada federation repo | 멀티클러스터 workload, PropagationPolicy, OverridePolicy, WorkloadRebalancer | Cilium/CSI/GPU Operator 같은 cluster-local 인프라 |
-| `datax-k8s` | DataX cluster-local repo | DataX 전용 앱, DataX CNI/CSI/storage/ingress/GPU 설정 | TwinX/EdgeX 리소스 |
-| `edgex-k8s` | EdgeX cluster-local repo | EdgeX 전용 앱, EdgeX CNI/CSI/storage/ingress/GPU 설정 | DataX/TwinX 리소스 |
-| `twinx-k8s` | TwinX cluster-local repo | TwinX 전용 앱, TwinX CNI/CSI/storage/ingress/GPU 설정 | DataX/EdgeX 리소스 |
+ScaleX에서는 앱이 배포되는 경로가 세 가지입니다.
+
+### A. TowerX 제어 평면 동작
+
+TowerX에는 단일 Argo CD가 있습니다. 이 Argo CD가 전체 repo 연결의 시작점입니다.
+
+```text
+tower-k8s/argocd/bootstrap/root-app.yaml
+  -> TowerX Argo CD의 tower-root Application
+    -> tower-k8s/argocd/control-plane/
+      -> AppProject 생성
+      -> scalex-federation Application 생성
+      -> datax-local / edgex-local / twinx-local Application 생성
+```
+
+역할:
+
+```text
+tower-root
+  = App of Apps root
+  = 어떤 repo를 어떤 project/destination으로 sync할지 관리
+```
+
+TowerX 제어 평면에 해당하는 것:
+
+```text
+- Argo CD server
+- Karmada Control Plane
+- Argo CD AppProject
+- Argo CD root/child Application
+```
+
+일반 서비스 workload는 TowerX에 두지 않습니다.
 
 ---
 
-## 4. scalex-federation에 들어가는 예시
+### B. cluster-local 앱 동작
 
-`scalex-federation`은 “공통 앱 repo”가 아닙니다. **Karmada placement가 필요한 앱만** 둡니다.
+특정 클러스터 하나에서만 필요한 앱은 해당 cluster repo가 직접 관리합니다.
+
+예: DataX 전용 앱
+
+```text
+datax-k8s
+  -> TowerX Argo CD Application: datax-local 또는 SmartX-generated datax-* Application
+    -> Argo CD destination.name: datax
+      -> DataX Kubernetes API Server
+        -> kube-scheduler가 DataX node 선택
+          -> kubelet이 Pod 실행
+```
+
+즉, 이 경로에서는 Karmada를 거치지 않습니다.
+
+```text
+Git repo: datax-k8s
+배포기: TowerX Argo CD
+대상: DataX cluster
+Karmada: 사용 안 함
+```
+
+EdgeX/TwinX도 동일합니다.
+
+```text
+edgex-k8s -> TowerX Argo CD -> EdgeX cluster
+twinx-k8s -> TowerX Argo CD -> TwinX cluster
+```
+
+---
+
+### C. Karmada federation 앱 동작
+
+두 개 이상 클러스터에 전파하거나, replica 분산/override/failover가 필요한 앱은 `scalex-federation`이 담당합니다.
+
+```text
+scalex-federation/federation/
+  -> TowerX Argo CD Application: scalex-federation
+    -> Argo CD destination.name: karmada-apiserver
+      -> Karmada API Server
+        -> PropagationPolicy가 대상 cluster 선택
+          -> Karmada scheduler가 ResourceBinding 생성
+            -> Karmada controller가 member cluster에 Work 전파
+              -> 각 member cluster의 kube-scheduler가 node 선택
+                -> kubelet이 Pod 실행
+```
+
+예:
+
+```text
+render-demo Deployment replicas=4
+  -> Karmada policy
+    -> TwinX replicas=3
+    -> EdgeX replicas=1
+```
+
+이 경로에서 Argo CD는 member cluster를 직접 만지지 않습니다.
+
+```text
+Git repo: scalex-federation
+배포기: TowerX Argo CD
+Argo CD 대상: Karmada API Server
+실제 실행 대상: DataX / EdgeX / TwinX
+Karmada: 사용함
+```
+
+---
+
+### D. SmartX feature graph 앱 동작
+
+SmartX 방식은 `smartx-k8s` 엔진과 각 cluster preset을 조합합니다.
+
+```text
+smartx-k8s
+  = 엔진 / feature graph / app catalog / Application 생성 템플릿
+
+cluster-k8s
+  = preset / values / patches
+```
+
+동작 흐름:
+
+```text
+1. datax-k8s/values.yaml에서 feature 선택
+
+   features:
+     - scalex.io/demo/common
+     - scalex.io/demo/postgresql
+
+2. TowerX Argo CD가 smartx-k8s Helm chart를 렌더링
+
+   source 1: smartx-k8s 엔진
+   source 2: datax-k8s preset values/patches
+
+3. smartx-k8s/templates/applications.yaml 실행
+
+   - apps/template/features.yaml 읽기
+   - feature dependency graph 계산
+   - enabled feature에 해당하는 apps/*/manifest.yaml 선택
+   - Argo CD Application 생성
+
+4. 생성된 Application이 실제 앱을 설치
+
+   datax-scalex-common-demo
+     -> project: datax-ops
+     -> destination.name: datax
+
+   datax-scalex-data-postgresql
+     -> project: datax-ops
+     -> destination.name: datax
+```
+
+SmartX app 하나는 보통 다음 세 값을 합쳐 배포됩니다.
+
+```text
+1. upstream Helm chart 또는 smartx-k8s 내부 local chart
+2. smartx-k8s/apps/<app>/values.yaml
+3. <cluster>-k8s/patches/<app>/values.yaml
+```
+
+`manifest.yaml`에서 `patched: true`인 앱은 해당 preset repo에 다음 파일이 있어야 합니다.
+
+```text
+<cluster>-k8s/patches/<app>/values.yaml
+```
+
+없으면 Argo CD sync가 실패할 수 있습니다.
+
+---
+
+### E. Node까지 내려가는 최종 실행 흐름
+
+Karmada를 쓰든 안 쓰든, member cluster 안에 들어온 뒤에는 일반 Kubernetes와 같습니다.
+
+```text
+Deployment / Job / StatefulSet
+  -> 해당 cluster의 kube-scheduler
+    -> node label / taint / affinity / resource request 기준으로 node 선택
+      -> kubelet이 container 실행
+```
+
+Kueue는 지금 필수가 아닙니다.
+
+```text
+Kueue는 Job/Ray/Spark/GPU batch workload가 많아져서
+대기열, quota, admission control이 필요할 때 member cluster 내부에 도입한다.
+```
+
+---
+
+## 2. repo별 역할
+
+| repo | 성격 | 역할 | 여기에 두는 것 | 여기에 두지 않는 것 |
+| --- | --- | --- | --- | --- |
+| `smartx-k8s` | 엔진 | Helm chart, app catalog, feature graph, Application 생성 템플릿 | `apps/template/features.yaml`, `apps/<app>/manifest.yaml`, 공통 chart/app 정의 | 클러스터별 비밀값, 특정 클러스터 전용 values |
+| `tower-k8s` | TowerX preset/control | TowerX 제어 클러스터와 단일 Argo CD bootstrap | Argo CD root, AppProject, child Application, Karmada control-plane 설치 계획 | 일반 서비스 workload |
+| `scalex-federation` | Karmada federation repo | 멀티클러스터 전파 정책 관리 | 공통 리소스, `PropagationPolicy`, `OverridePolicy`, `WorkloadRebalancer` | CNI/CSI/GPU Operator 같은 cluster-local 인프라 |
+| `datax-k8s` | DataX preset | DataX cluster-local 리소스 | DataX 전용 앱, DataX storage/data/analytics, DataX 전용 patches | TwinX/EdgeX 리소스, Karmada policy |
+| `edgex-k8s` | EdgeX preset | EdgeX cluster-local 리소스 | EdgeX 전용 앱, edge/GPU/local ingress, EdgeX 전용 patches | DataX/TwinX 리소스, Karmada policy |
+| `twinx-k8s` | TwinX preset | TwinX cluster-local 리소스 | TwinX digital twin/render/AI serving 앱, TwinX 전용 patches | DataX/EdgeX 리소스, Karmada policy |
+| `mobilex-k8s` | 참고용 | SmartX preset 구조 참고 | 구조 분석용 reference | 우리 Argo CD 연결 대상 아님 |
+
+---
+
+## 3. repo 구조
+
+### 3.1 `smartx-k8s` 엔진 구조
+
+`smartx-k8s`는 `mobilex-k8s`나 `datax-k8s`처럼 특정 클러스터 설정 repo가 아니라 **엔진 repo**입니다.
+
+```text
+smartx-k8s/
+├── Chart.yaml                         # repo 전체가 하나의 Helm chart
+├── values.yaml                        # upstream default values/features
+├── templates/applications.yaml         # feature graph를 읽고 Argo CD Application 생성
+├── apps/
+│   ├── template/
+│   │   ├── features.yaml               # feature 의존성 그래프
+│   │   ├── defaults.yaml               # ../../values.yaml 참조
+│   │   └── application.yaml            # Application 생성 템플릿
+│   └── <app>/
+│       ├── manifest.yaml               # 앱 metadata, feature, chart/source 정의
+│       ├── values.yaml                 # 앱 공통 values
+│       ├── patches.yaml                # Helm valuesObject 생성용 patch
+│       └── templates/                  # local chart일 경우 사용
+└── README.md
+```
+
+중요:
+
+```text
+feature graph는 각 preset repo에 복사하지 않는다.
+feature graph는 smartx-k8s 엔진에만 둔다.
+각 cluster-k8s repo는 values.yaml에서 필요한 feature만 선택한다.
+```
+
+---
+
+### 3.2 `tower-k8s` 구조
+
+```text
+tower-k8s/
+├── manifest.yaml                       # SmartX preset 식별자
+├── values.yaml                         # TowerX values. repo.name은 smartx-k8s 엔진을 가리킴
+├── patches/                            # SmartX 앱 override 예정 위치
+├── argocd/
+│   ├── bootstrap/
+│   │   └── root-app.yaml               # 최초 1회 apply할 TowerX root Application
+│   └── control-plane/
+│       ├── 00-project.yaml             # AppProject 정의
+│       ├── 10-scalex-federation-app.yaml
+│       ├── 20-datax-local-app.yaml
+│       ├── 21-twinx-local-app.yaml
+│       └── 22-edgex-local-app.yaml
+├── charts/                             # TowerX 전용 local chart 예정 위치
+├── ingresses/                          # TowerX ingress 예정 위치
+├── projects/                           # AppProject 정책 확장 위치
+└── docs/
+```
+
+`tower-k8s`는 `mobilex-k8s`식 preset 구조를 따르지만, TowerX 제어 클러스터이므로 Argo CD control-plane manifest도 함께 보관합니다.
+
+---
+
+### 3.3 `datax-k8s`, `edgex-k8s`, `twinx-k8s` 구조
+
+세 repo는 모두 `mobilex-k8s`와 같은 **cluster preset 계열**입니다.
+
+```text
+<cluster>-k8s/
+├── manifest.yaml                       # cluster name/group/owner
+├── values.yaml                         # cluster values + 활성화할 SmartX features
+├── patches/                            # smartx-k8s apps/<app>/values.yaml override
+├── apps/local-demo/                    # 현재 PoC용 직접 sync demo app
+├── charts/                             # cluster 전용 local chart 예정 위치
+├── ingresses/                          # cluster 전용 ingress 예정 위치
+├── projects/                           # cluster 전용 project/policy 예정 위치
+├── kiss/                               # KISS inventory 예정 위치
+└── docs/
+```
+
+현재 `apps/local-demo/`는 “단일 TowerX Argo CD가 각 member cluster에 직접 sync할 수 있는지” 확인하기 위한 PoC 경로입니다.
+향후 실제 SmartX feature graph 방식으로 앱을 전환하면, 가능하면 `apps/local-demo/` 같은 직접 경로보다 `smartx-k8s` 앱 카탈로그 + preset `features`/`patches` 조합을 우선합니다.
+
+---
+
+### 3.4 `scalex-federation` 구조
+
+`scalex-federation`은 `mobilex-k8s`식 preset이 아닙니다. **Karmada 전용 repo**입니다.
+
+```text
+scalex-federation/
+├── README.md
+├── docs/
+└── federation/
+    ├── kustomization.yaml
+    ├── common/
+    │   ├── 00-namespaces.yaml
+    │   └── namespace-propagation.yaml
+    └── apps/
+        ├── render-demo/
+        │   ├── resources.yaml
+        │   └── propagation-policy.yaml
+        └── data-hold-job/
+            ├── resources.yaml
+            └── propagation-policy.yaml
+```
+
+여기에는 다음만 둡니다.
+
+```text
+- Karmada API Server에 넣을 resource template
+- PropagationPolicy
+- OverridePolicy
+- WorkloadRebalancer
+- 멀티클러스터 placement/failover/rebalance 정책
+```
+
+---
+
+## 4. Argo CD AppProject 이름 규칙
+
+SmartX/mobilex 원래 관례는 다음입니다.
+
+```text
+AppProject 이름 = <cluster.name>-<manifest.spec.group>
+```
 
 예시:
 
 ```text
-scalex-federation/federation/apps/render-demo/
-  resources.yaml
-  propagation-policy.yaml
+mobilex + ops -> mobilex-ops
+datax   + ops -> datax-ops
+edgex   + ops -> edgex-ops
+twinx   + ops -> twinx-ops
+tower   + ops -> tower-ops
 ```
 
-의미:
+현재 PoC AppProject:
 
-```text
-render-demo Deployment/Service를
-TwinX에는 replica 3개,
-EdgeX에는 replica 1개로 나누어 배치한다.
+| AppProject | 용도 | Argo CD destination |
+| --- | --- | --- |
+| `default` | `tower-root` bootstrap용. chicken-and-egg 방지 | TowerX in-cluster |
+| `tower-ops` | TowerX 제어용 SmartX-generated Application 예정 | TowerX cluster |
+| `scalex-federation` | Karmada federation repo | Karmada API Server |
+| `datax-ops` | DataX cluster-local repo/apps | Argo CD cluster name `datax` |
+| `edgex-ops` | EdgeX cluster-local repo/apps | Argo CD cluster name `edgex` |
+| `twinx-ops` | TwinX cluster-local repo/apps | Argo CD cluster name `twinx` |
+
+헷갈리기 쉬운 부분:
+
+```yaml
+# 맞음
+spec:
+  project: datax-ops
+  destination:
+    name: datax
+
+# 틀림
+spec:
+  project: datax-ops
+  destination:
+    name: datax-ops
 ```
 
-다른 예시:
-
-```text
-scalex-federation/federation/apps/data-hold-job/
-  resources.yaml
-  propagation-policy.yaml
-```
-
-의미:
-
-```text
-TowerX Argo CD가 Job을 Karmada API Server에 넣고,
-Karmada가 DataX에만 전파한다.
-```
+`project`는 AppProject 이름이고, `destination.name`은 Argo CD에 등록된 실제 cluster name입니다.
 
 ---
 
-## 5. 어디에 둘지 헷갈릴 때
+## 5. 앱을 어디에 둘지 결정하는 기준
 
 ```text
 1. TowerX 제어용인가?
@@ -119,51 +452,189 @@ Karmada가 DataX에만 전파한다.
    -> datax-k8s / edgex-k8s / twinx-k8s
 
 4. Cilium, CSI, GPU Operator 같은 클러스터 기본 인프라인가?
-   -> 각 cluster-local *-k8s
+   -> 각 cluster-local *-k8s preset에서 feature/patch로 관리
+
+5. 여러 클러스터에서 같은 앱을 켜야 하지만 Karmada placement가 필요 없는가?
+   -> smartx-k8s app catalog에 공통 app을 두고 각 preset에서 feature를 켠다.
 ```
 
-중요:
+예시:
+
+| 앱/리소스 | 위치 | 이유 |
+| --- | --- | --- |
+| Argo CD root/app projects | `tower-k8s` | TowerX 제어 평면 |
+| Karmada Control Plane | `tower-k8s` | TowerX 제어 평면 |
+| render workload를 TwinX 3, EdgeX 1로 분산 | `scalex-federation` | Karmada replicaScheduling 필요 |
+| DataX에만 띄우는 PostgreSQL | `datax-k8s` preset에서 feature 활성화 또는 DataX 전용 patch | 단일 cluster 전용 |
+| Cilium | 각 cluster-k8s preset | cluster-local CNI. federation 대상 아님 |
+| GPU Operator | EdgeX/TwinX 등 해당 cluster-k8s preset | cluster-local node/GPU 인프라 |
+| 공통 demo app을 DataX/EdgeX/TwinX에 각각 설치 | `smartx-k8s` app catalog + 각 preset features | Karmada placement 없이 각 cluster-local로 설치 |
+
+---
+
+## 6. SmartX feature graph 사용 방식
+
+### 6.1 원리
+
+`smartx-k8s`는 다음 흐름으로 Application을 생성합니다.
 
 ```text
-같은 live resource를 scalex-federation과 각 *-k8s에 동시에 선언하지 않는다.
+cluster-k8s/values.yaml
+  features:
+    - some.feature/name
+
+        ↓
+
+smartx-k8s/apps/template/features.yaml
+  feature dependency graph 계산
+
+        ↓
+
+smartx-k8s/apps/*/manifest.yaml
+  app.spec.app.features와 매칭
+
+        ↓
+
+smartx-k8s/templates/applications.yaml
+  Argo CD Application 자동 생성
+```
+
+### 6.2 중요한 주의사항
+
+`smartx-k8s`에서는 다음이 “아무것도 설치하지 않음”이 아닙니다.
+
+```yaml
+features: []
+```
+
+위 값은 upstream default feature 전체를 의미할 수 있습니다. PoC에서 전체 앱 카탈로그가 갑자기 렌더링되는 것을 막으려면 현재처럼 sentinel을 사용합니다.
+
+```yaml
+features:
+  - ""
+```
+
+실제 앱을 켤 때만 필요한 feature를 명시합니다.
+
+```yaml
+features:
+  - scalex.io/demo/common
+  - scalex.io/demo/postgresql
 ```
 
 ---
 
-## 6. 문서 역할
+## 7. 현재 실제로 띄운 앱
 
-| 문서 | 역할 |
-| --- | --- |
-| `README.md` | 현재 계획 요약. 먼저 읽는 문서 |
-| `RUNBOOK.md` | 운영 중 확인/장애/rollback 명령 절차 |
-| `CONCEPTS.md` | Karmada 개념 설명 |
-| `lab/` | 과거 kind 실험 기록 archive |
+현재까지 실제 cluster에 띄운 것은 두 계열입니다.
+
+### 7.1 cluster-local 직접 sync PoC
+
+이건 `smartx-k8s` feature graph가 아니라, TowerX 단일 Argo CD가 각 repo를 직접 읽어 각 cluster destination으로 sync할 수 있는지 확인한 PoC입니다.
+
+| Argo CD Application | Project | Repo/path | Destination | 상태 |
+| --- | --- | --- | --- | --- |
+| `datax-local` | `datax-ops` | `datax-k8s/apps/local-demo` | `datax` | Synced/Healthy |
+| `edgex-local` | `edgex-ops` | `edgex-k8s/apps/local-demo` | `edgex` | Synced/Healthy |
+| `twinx-local` | `twinx-ops` | `twinx-k8s/apps/local-demo` | `twinx` | Synced/Healthy |
+
+실제 리소스:
+
+```text
+DataX  namespace scalex-local-datax   -> scalex-datax-local-app Deployment/Service/ConfigMap
+EdgeX  namespace scalex-local-edgex   -> scalex-edgex-local-app Deployment/Service/ConfigMap
+TwinX  namespace scalex-local-twinx   -> scalex-twinx-local-app Deployment/Service/ConfigMap
+```
+
+### 7.2 Karmada federation PoC
+
+이건 `scalex-federation`이 Karmada API Server로 sync하고, Karmada가 member cluster로 전파한 PoC입니다.
+
+| Argo CD Application | Project | Repo/path | Destination | 전파 결과 |
+| --- | --- | --- | --- | --- |
+| `scalex-federation` | `scalex-federation` | `scalex-federation/federation` | `karmada-apiserver` | DataX/EdgeX/TwinX로 전파 |
+
+실제 전파 결과:
+
+```text
+scalex-render-demo Deployment
+  -> edgex replicas=1
+  -> twinx replicas=3
+
+scalex-data-hold Job
+  -> datax replicas=1, Complete
+```
 
 ---
 
-## 7. 현재 PoC 상태
+## 8. 아직 남은 검증
 
-검증된 것:
+아직 완료되지 않은 것:
 
 ```text
-1. TowerX 단일 Argo CD가 여러 repo를 sync할 수 있음
-2. scalex-federation -> Karmada API Server -> DataX/EdgeX/TwinX 전파 가능
-3. datax-k8s/edgex-k8s/twinx-k8s는 각 cluster destination으로 직접 sync 가능
-4. Kueue는 지금 필수가 아니며 Job admission/quota가 필요해질 때 member cluster 내부에 도입
+smartx-k8s feature graph가 실제 Argo CD Application을 생성하고,
+그 Application이 DataX/EdgeX/TwinX에 앱을 설치하는 end-to-end 검증
 ```
 
-현재 정리 완료:
+다음 실험 계획:
 
 ```text
-1. ScaleX federation repo 이름을 scalex-federation으로 정리
-2. lab cluster를 TowerX/DataX/EdgeX/TwinX 4개로 정리
-3. Argo CD UI에서 최종 5개 Application만 보이도록 정리
+1. smartx-k8s에 안전한 demo app catalog 추가
+   - scalex.io/demo/common
+   - scalex.io/demo/postgresql
+
+2. preset에서 feature만 선택
+   - datax-k8s: scalex.io/demo/common + scalex.io/demo/postgresql
+   - edgex-k8s: scalex.io/demo/common
+   - twinx-k8s: scalex.io/demo/common
+
+3. TowerX Argo CD에 SmartX-generated root Application을 bootstrap
+
+4. 기대 결과
+   - DataX/EdgeX/TwinX에 common demo app 생성
+   - DataX에만 PostgreSQL demo app 생성
+   - 생성된 Application 이름과 Project가 SmartX 관례를 따름
 ```
 
-다음 작업:
+이 실험이 끝나야 “SmartX feature graph 방식으로 앱 배포까지 검증 완료”라고 말할 수 있습니다.
+
+---
+
+## 9. Resource Pool 상태
+
+현재는 Resource Pool을 하지 않습니다.
 
 ```text
-1. 실제 앱을 datax-k8s/edgex-k8s/twinx-k8s/scalex-federation 중 어디에 둘지 분류
-2. scalex-federation에는 Karmada placement가 필요한 workload만 추가
-3. 각 cluster-local *-k8s에는 CNI/CSI/GPU/Ingress와 클러스터 전용 앱을 추가
+현재 실제 클러스터:
+  TowerX, DataX, EdgeX, TwinX
+
+현재 Karmada member:
+  DataX, EdgeX, TwinX
+
+현재 제외:
+  Resource Pool, poolx, pullx
+```
+
+`lab/` 아래 과거 실험에는 `poolx`/`pullx` 기록이 남아 있을 수 있습니다. 이는 archive이며 현재 최종 운영 모델에는 포함하지 않습니다.
+
+---
+
+## 10. 현재 검증 명령 요약
+
+```bash
+# Argo CD Applications
+kubectl --context kind-tower -n argocd get applications.argoproj.io \
+  -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
+
+# Argo CD AppProjects
+kubectl --context kind-tower -n argocd get appprojects.argoproj.io
+
+# Karmada member clusters
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config get clusters
+
+# Karmada ResourceBindings
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config -n scalex-render \
+  get resourcebindings.work.karmada.io
+kubectl --kubeconfig ~/.kube/karmada-apiserver.config -n scalex-data \
+  get resourcebindings.work.karmada.io
 ```
