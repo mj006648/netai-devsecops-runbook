@@ -1,8 +1,8 @@
 # Karmada 운영 Runbook
 
-이 디렉터리는 Karmada 실험 결과를 실제 ScaleX-POD 운영 절차로 바꾸기 위한 runbook 공간이다.
+이 문서는 실제 운영 중 확인/장애/rollback 명령 절차만 정리한다.
 
-전체 운영 모델은 [`./OPERATING_MODEL.md`](./OPERATING_MODEL.md)를 기준으로 한다.
+현재 계획과 운영 모델은 [`./README.md`](./README.md)를 기준으로 한다.
 
 ## 현재 검증된 흐름
 
@@ -37,20 +37,6 @@
 - [`./lab/experiments/2026-06-26-09-workload-rebalancer-reschedule.md`](./lab/experiments/2026-06-26-09-workload-rebalancer-reschedule.md)
 - [`./lab/experiments/2026-06-26-11-multi-workload-rebalancer.md`](./lab/experiments/2026-06-26-11-multi-workload-rebalancer.md)
 
-### Pull mode cluster 포함 재균형
-
-```text
-1. 신규 Pull mode cluster가 placement selector에 매칭되는지 확인
-2. ResourceBinding에서 기존 replica skew 확인
-3. WorkloadRebalancer 생성
-4. ResourceBinding이 Push/Pull cluster를 모두 포함하도록 재계산됐는지 확인
-5. Push/Pull member cluster의 실제 Deployment/Pod 상태 확인
-```
-
-관련 실험:
-
-- [`./lab/experiments/2026-06-29-23-pull-mode-workload-rebalancer.md`](./lab/experiments/2026-06-29-23-pull-mode-workload-rebalancer.md)
-
 ### 신규 member cluster label 영향 범위 점검
 
 ```text
@@ -66,36 +52,6 @@
 
 - [신규 member cluster label 상세 checklist](#신규-member-cluster-label-영향-범위-점검-checklist)
 - [`./lab/experiments/2026-06-29-22-new-cluster-label-impact.md`](./lab/experiments/2026-06-29-22-new-cluster-label-impact.md)
-
-### ScaleX repo ownership 분리
-
-```text
-1. ArgoCD 서버는 TowerX에 하나만 둔다.
-2. tower-k8s는 TowerX 제어 클러스터 repo로 둔다.
-3. scalex-k8s는 Karmada 멀티클러스터 전용 repo로 둔다.
-4. datax-k8s/twinx-k8s/edgex-k8s는 smartx-k8s preset 방식의 단일 클러스터 repo로 둔다.
-5. 멀티클러스터 전파 resource와 PropagationPolicy/OverridePolicy는 scalex-k8s에 둔다.
-6. CNI/CSI/storage/ingress/GPU operator/cluster-local app은 각 *-k8s에 둔다.
-7. 같은 live resource를 scalex-k8s와 *-k8s에 동시에 선언하지 않는다.
-8. Karmada로 전파한 resource는 member cluster local repo에서 다시 관리하지 않는다.
-```
-
-권장 흐름:
-
-```text
-tower-k8s  -> TowerX ArgoCD -> TowerX cluster
-
-scalex-k8s -> TowerX ArgoCD -> Karmada API Server
-                              -> EdgeX / DataX / TwinX / Resource Pool
-
-twinx-k8s  -> TowerX ArgoCD -> TwinX cluster
-datax-k8s  -> TowerX ArgoCD -> DataX cluster
-edgex-k8s  -> TowerX ArgoCD -> EdgeX cluster
-```
-
-관련 실험:
-
-- [`./lab/experiments/2026-07-07-33-scalex-repo-split-poc.md`](./lab/experiments/2026-07-07-33-scalex-repo-split-poc.md)
 
 ### ArgoCD prune 운영 안전장치
 
@@ -155,7 +111,7 @@ edgex-k8s  -> TowerX ArgoCD -> EdgeX cluster
 - OverridePolicy image/storageClass
 - scheduler-estimator 운영 적용 절차
 - ArgoCD -> Karmada API Server GitOps 흐름
-- 실제 tower-k8s/scalex-k8s/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
+- 실제 tower-k8s/scalex-federation/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
 - 실제 ScaleX-POD 이전 checklist
 - Kueue GitOps 배포 구조
 - Kueue preemption/running Job 회수 정책
@@ -167,7 +123,7 @@ edgex-k8s  -> TowerX ArgoCD -> EdgeX cluster
 ## 목적
 
 ArgoCD가 Karmada API Server를 destination으로 사용할 때 `prune=true`는 단순히 Tower의 리소스만 지우는 것이 아니다.
-Karmada API Server에서 리소스가 삭제되면 Karmada가 member cluster의 Work도 정리하므로, 결과적으로 TwinX/EdgeX/DataX/Resource Pool/Pull Edge workload까지 삭제될 수 있다.
+Karmada API Server에서 리소스가 삭제되면 Karmada가 member cluster의 Work도 정리하므로, 결과적으로 TwinX/EdgeX/DataX workload까지 삭제될 수 있다.
 
 이 문서는 ScaleX-POD에서 ArgoCD prune을 운영할 때 필요한 안전장치를 정리한다.
 
@@ -366,7 +322,7 @@ kubectl --kubeconfig ~/.kube/karmada-apiserver.config -n <namespace> get deploy,
 
 Karmada에서 member cluster label은 placement의 핵심 입력이다.
 새 cluster를 등록한 뒤 label을 붙이면 기존 `PropagationPolicy` 또는 `ClusterPropagationPolicy`의 `labelSelector`에 바로 매칭될 수 있다.
-이 문서는 ScaleX-POD에서 신규 Tower/TwinX/EdgeX/DataX/Resource Pool 계열 cluster를 붙이기 전후에 확인할 checklist를 정리한다.
+이 문서는 ScaleX-POD에서 신규 TowerX/TwinX/EdgeX/DataX cluster를 붙이기 전후에 확인할 checklist를 정리한다.
 
 ---
 
@@ -572,15 +528,7 @@ scalex.io/connectivity=push 또는 pull
 scalex.io/workload=edge-runtime
 ```
 
-Resource Pool은 별도 label로 분리한다.
-
-```text
-scalex.io/role=resource-pool
-scalex.io/pool=general
-scalex.io/fallback=true
-```
-
-Pull mode cluster는 연결 방식을 명시한다.
+연결 방식이 필요한 경우에는 별도 설계 후 label을 추가한다.
 
 ```text
 scalex.io/connectivity=pull

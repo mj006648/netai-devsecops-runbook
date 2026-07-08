@@ -15,7 +15,7 @@
 
 - Karmada는 ScaleX-POD 멀티클러스터 placement/propagation 계층으로 사용 가능하다.
 - TowerX 단일 ArgoCD가 여러 repo와 여러 destination을 관리하는 구조가 가능하다.
-- `scalex-k8s`는 Karmada 전파 repo, `datax/twinx/edgex-k8s`는 cluster-local repo로 분리한다.
+- `scalex-federation`는 Karmada 전파 repo, `datax/twinx/edgex-k8s`는 cluster-local repo로 분리한다.
 - Kueue는 Karmada를 대체하지 않고, 필요 시 member cluster 내부 Job admission/quota 계층으로 둔다.
 
-현재 설계 기준은 상위 [`OPERATING_MODEL.md`](../OPERATING_MODEL.md)를 따른다.
+현재 설계 기준은 [상위 README](../README.md)를 따른다.
