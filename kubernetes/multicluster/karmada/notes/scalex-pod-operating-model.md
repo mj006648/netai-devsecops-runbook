@@ -15,44 +15,46 @@ ScaleX-POD: 실제 Tower / TwinX / EdgeX / DataX / Resource Pool / Pull Edge가 
 
 ## 0. 최종 판단
 
-실험 00~32를 기준으로, ScaleX-POD의 기본 운영 모델은 다음 구조로 잡는다.
+실험 00~33과 2026-07-08 repo 구조 논의를 기준으로, ScaleX-POD의 기본 운영 모델은 다음 구조로 잡는다.
 
 ```text
-GitHub repository
-  -> ArgoCD on Tower
-    -> Karmada API Server on Tower
-      -> Karmada scheduler/controller
-        -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
-          -> member-local controllers
+GitHub repositories
+  -> single ArgoCD on TowerX
+    ├─ tower-k8s  -> TowerX cluster
+    ├─ scalex-k8s -> Karmada API Server on TowerX
+    │                -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
+    ├─ twinx-k8s  -> TwinX cluster
+    ├─ datax-k8s  -> DataX cluster
+    └─ edgex-k8s  -> EdgeX cluster
 ```
 
 도구별 책임은 명확히 분리한다.
 
 ```text
-ArgoCD: Git desired state를 Karmada API Server에 sync한다.
-Karmada: ScaleX-POD member cluster 선택, 전파, override, 재균형을 담당한다.
-Kueue: DataX/TwinX 내부에서 Job admission, queue, quota, backpressure를 담당한다.
+ArgoCD: TowerX에 하나만 두고 여러 repo와 여러 destination을 sync한다.
+Karmada: scalex-k8s가 제출한 멀티클러스터 resource의 member cluster 선택, 전파, override, 재균형을 담당한다.
+Kueue: 필요 시 DataX/TwinX 내부에서 Job admission, queue, quota, backpressure를 담당한다.
 ```
 
 채택 판단:
 
 ```text
 1. Karmada는 ScaleX-POD 멀티클러스터 placement/propagation 계층으로 사용 가능하다.
-2. ArgoCD는 Karmada API Server를 destination으로 삼는 GitOps 계층으로 둔다.
-3. Kueue는 Karmada가 선택한 member cluster 내부의 Job admission 계층으로 둔다.
-4. Resource Pool과 Pull Edge는 Karmada placement label, Pull mode, WorkloadRebalancer로 운영할 수 있다.
-5. scheduler-estimator는 설치형 검증은 끝났지만 기본 운영 필수값이 아니라 capacity-aware scheduling 요구가 있을 때 켠다.
-6. scalex-k8s는 federation repo, twinx/datax/edgex-k8s는 cluster-local repo로 분리한다. 같은 live resource는 두 계층에서 동시에 관리하지 않는다.
+2. ArgoCD 서버는 TowerX에 하나만 둔다. 단일 ArgoCD가 여러 repo와 여러 cluster destination을 관리한다.
+3. tower-k8s는 TowerX 제어 클러스터 repo, scalex-k8s는 Karmada 멀티클러스터 전용 repo로 분리한다.
+4. twinx/datax/edgex-k8s는 smartx-k8s preset 방식의 단일 클러스터 repo로 둔다.
+5. Kueue는 Karmada가 선택한 member cluster 내부의 Job admission 계층으로 필요할 때 도입한다.
+6. 같은 live resource는 Karmada 전파 경로와 직접 cluster destination 경로에서 동시에 관리하지 않는다.
 ```
 
 남은 항목은 기능 검증이 아니라 운영화 작업이다.
 
 ```text
-1. Kueue queue/resourceflavor GitOps 배포 구조 확정
-2. ArgoCD AppProject migration
+1. tower-k8s/scalex-k8s/datax-k8s/twinx-k8s/edgex-k8s 실제 repo 구조 확정
+2. TowerX 단일 ArgoCD root Application/AppProject/bootstrap 작성
 3. 실제 ScaleX-POD 이전 checklist
 4. 관측/알림/rollback runbook 보강
-5. Kueue preemption/running Job 회수 정책 검토
+5. Kueue queue/resourceflavor GitOps 배포 구조와 preemption 정책 검토
 ```
 
 ---
@@ -79,39 +81,44 @@ MiniX는 이 구조를 바로 실제로 만들기 전, 작은 실험 cluster 하
 ## 2. 핵심 결론
 
 ```text
-ArgoCD는 Git desired state를 Karmada API Server에 제출한다.
-Karmada는 ScaleX-POD 안에서 어느 member cluster로 보낼지 결정한다.
-Kueue는 선택된 member cluster 내부에서 Job admission과 quota를 제어한다.
+TowerX ArgoCD는 모든 repo의 Git desired state를 sync한다.
+scalex-k8s 경로는 Karmada API Server에 제출하고, *-k8s 경로는 각 member cluster destination에 직접 제출한다.
+Karmada는 scalex-k8s에 있는 멀티클러스터 리소스를 어느 member cluster로 보낼지 결정한다.
+Kueue는 필요 시 선택된 member cluster 내부에서 Job admission과 quota를 제어한다.
 ```
 
 따라서 세 도구는 같은 일을 하는 것이 아니다.
 
 | 도구 | 책임 | 보면 안 되는 것 |
 | --- | --- | --- |
-| ArgoCD | GitOps sync, self-heal, prune, ApplicationSet | cluster placement 자체를 대신하지 않음 |
-| Karmada | multi-cluster placement, propagation, failover, rebalancing | Git source-of-truth 자체를 관리하지 않음 |
+| ArgoCD | TowerX 단일 GitOps sync, self-heal, prune, ApplicationSet | Karmada placement 자체를 대신하지 않음 |
+| Karmada | scalex-k8s resource의 multi-cluster placement, propagation, failover, rebalancing | Git source-of-truth 또는 cluster-local app 관리를 대신하지 않음 |
 | Kueue | member-local Job queue, admission, quota, pending/backpressure | multi-cluster placement를 대신하지 않음 |
 
 ---
 
 ## 3. 권장 전체 구조
 
+TowerX에 ArgoCD 서버를 하나만 둔다. repo는 역할별로 나누고, Application destination만 다르게 둔다.
+
 ```text
-GitHub repository
-  -> ArgoCD on Tower
-    -> Karmada API Server on Tower
-      -> Karmada scheduler/controller
-        -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
-          -> member-local controllers
-             - Kueue on DataX/TwinX for batch/AI Job admission
-             - storage/network/runtime controllers per member cluster
+TowerX
+  ├─ ArgoCD 1개
+  ├─ Karmada Control Plane
+  │
+  └─ ArgoCD Applications
+      ├─ tower-k8s  -> destination: TowerX cluster
+      ├─ scalex-k8s -> destination: Karmada API Server
+      ├─ datax-k8s  -> destination: DataX cluster
+      ├─ twinx-k8s  -> destination: TwinX cluster
+      └─ edgex-k8s  -> destination: EdgeX cluster
 ```
 
-### 기본 배포 흐름
+### 멀티클러스터 배포 흐름
 
 ```text
-1. 사용자가 GitHub에 workload manifest와 Karmada policy를 변경한다.
-2. ArgoCD가 Tower에서 GitHub 변경을 감지한다.
+1. 사용자가 scalex-k8s에 workload manifest와 Karmada policy를 변경한다.
+2. TowerX ArgoCD가 scalex-k8s 변경을 감지한다.
 3. ArgoCD Application destination은 Karmada API Server다.
 4. ArgoCD가 일반 Kubernetes resource와 Karmada policy를 Karmada API Server에 sync한다.
 5. Karmada가 PropagationPolicy/OverridePolicy를 기준으로 member cluster를 선택한다.
@@ -120,44 +127,64 @@ GitHub repository
 8. 운영자는 ArgoCD, Karmada, Kueue 상태를 함께 확인한다.
 ```
 
----
+### 단일 클러스터 배포 흐름
+
+```text
+1. 사용자가 datax-k8s/twinx-k8s/edgex-k8s 중 해당 repo를 변경한다.
+2. TowerX ArgoCD가 repo 변경을 감지한다.
+3. ArgoCD Application destination은 해당 member cluster다.
+4. ArgoCD가 해당 cluster API Server에 직접 sync한다.
+5. 해당 cluster 내부 kube-scheduler/kubelet/controller가 실행을 담당한다.
+```
+
 
 ## 4. GitHub repository 구성 원칙
 
 ### 4.1 Repo split 원칙
 
-ScaleX-POD repo는 federation 계층과 cluster-local 계층을 분리한다.
+ScaleX-POD repo는 TowerX 제어 계층, Karmada federation 계층, cluster-local 계층으로 나눈다.
 
 ```text
-SmartX-Team/scalex-k8s
-  = TowerX ArgoCD + Karmada가 보는 federation repo
-  = 멀티클러스터에 전파할 resource + PropagationPolicy/OverridePolicy 관리
+SmartX-Team/tower-k8s
+  = TowerX 제어 클러스터 repo
+  = TowerX 자체를 어떻게 구성할 것인가?
+  = TowerX ArgoCD, Karmada 설치 기반, AppProject, root Application, repo/cluster 연결
 
-SmartX-Team/twinx-k8s
+SmartX-Team/scalex-k8s
+  = Karmada 멀티클러스터 전용 repo
+  = 어떤 리소스를 어느 클러스터들에 전파할 것인가?
+  = 멀티클러스터 resource + PropagationPolicy/OverridePolicy 관리
+
 SmartX-Team/datax-k8s
+SmartX-Team/twinx-k8s
 SmartX-Team/edgex-k8s
-  = 각 cluster-local ArgoCD가 보는 단일 클러스터 repo
-  = 이 클러스터에 어떤 앱을 설치할 것인가 관리
+  = smartx-k8s preset 방식의 단일 클러스터 repo
+  = 이 클러스터에 어떤 앱을 설치할 것인가?
 ```
 
-흐름은 다음과 같이 분리한다.
+ArgoCD 서버는 TowerX에 하나만 둔다.
+각 repo가 자기 ArgoCD를 갖는 것이 아니라, TowerX 단일 ArgoCD가 여러 repo와 여러 destination을 관리한다.
 
 ```text
+tower-k8s
+  -> TowerX ArgoCD
+    -> TowerX cluster
+
 scalex-k8s
   -> TowerX ArgoCD
     -> Karmada API Server
-      -> EdgeX / DataX / TwinX
-
-twinx-k8s
-  -> TwinX ArgoCD
-    -> TwinX cluster
+      -> EdgeX / DataX / TwinX / Resource Pool
 
 datax-k8s
-  -> DataX ArgoCD
+  -> TowerX ArgoCD
     -> DataX cluster
 
+twinx-k8s
+  -> TowerX ArgoCD
+    -> TwinX cluster
+
 edgex-k8s
-  -> EdgeX ArgoCD
+  -> TowerX ArgoCD
     -> EdgeX cluster
 ```
 
@@ -165,16 +192,18 @@ edgex-k8s
 
 | repo | 질문 | 관리 대상 |
 | --- | --- | --- |
+| `tower-k8s` | TowerX 제어 클러스터를 어떻게 구성할 것인가? | TowerX ArgoCD, Karmada 설치 기반, AppProject, root Application, repo/cluster 연결 |
 | `scalex-k8s` | 어떤 리소스를 어느 클러스터들에 전파할 것인가? | 멀티클러스터 workload, PropagationPolicy, OverridePolicy, WorkloadRebalancer, placement profile |
-| `*-k8s` | 이 클러스터에 어떤 앱을 설치할 것인가? | CNI/CSI/storage/ingress/GPU operator, cluster-local app, cluster-local namespace/RBAC/values/patches |
+| `datax/twinx/edgex-k8s` | 이 클러스터에 어떤 앱을 설치할 것인가? | smartx-k8s preset 값, CNI/CSI/storage/ingress/GPU operator, cluster-local app, namespace/RBAC/values/patches |
 
 단일 소유권 원칙:
 
 ```text
-1. 같은 live resource를 TowerX/Karmada와 cluster-local ArgoCD가 동시에 관리하지 않는다.
+1. 같은 live resource를 Karmada 전파 경로와 직접 cluster destination 경로가 동시에 관리하지 않는다.
 2. Karmada로 전파한 resource는 member cluster의 *-k8s repo에 다시 선언하지 않는다.
 3. cluster-local platform은 기본적으로 각 *-k8s에서 관리한다.
 4. federation resource에는 scalex.io/management-plane=federation 같은 ownership label을 붙인다.
+5. cluster-local resource에는 scalex.io/management-plane=datax-local 같은 ownership label을 붙인다.
 ```
 
 관련 검증:

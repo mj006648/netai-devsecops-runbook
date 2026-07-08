@@ -70,25 +70,27 @@
 ### ScaleX repo ownership 분리
 
 ```text
-1. scalex-k8s는 TowerX ArgoCD + Karmada가 보는 federation repo로 둔다.
-2. twinx-k8s/datax-k8s/edgex-k8s는 각 cluster-local ArgoCD가 보는 단일 클러스터 repo로 둔다.
-3. 멀티클러스터 전파가 필요한 resource와 PropagationPolicy/OverridePolicy는 scalex-k8s에 둔다.
-4. CNI/CSI/storage/ingress/GPU operator/cluster-local app은 각 *-k8s에 둔다.
-5. 같은 live resource를 scalex-k8s와 *-k8s에 동시에 선언하지 않는다.
-6. Karmada로 전파한 resource는 member cluster local repo에서 다시 관리하지 않는다.
+1. ArgoCD 서버는 TowerX에 하나만 둔다.
+2. tower-k8s는 TowerX 제어 클러스터 repo로 둔다.
+3. scalex-k8s는 Karmada 멀티클러스터 전용 repo로 둔다.
+4. datax-k8s/twinx-k8s/edgex-k8s는 smartx-k8s preset 방식의 단일 클러스터 repo로 둔다.
+5. 멀티클러스터 전파 resource와 PropagationPolicy/OverridePolicy는 scalex-k8s에 둔다.
+6. CNI/CSI/storage/ingress/GPU operator/cluster-local app은 각 *-k8s에 둔다.
+7. 같은 live resource를 scalex-k8s와 *-k8s에 동시에 선언하지 않는다.
+8. Karmada로 전파한 resource는 member cluster local repo에서 다시 관리하지 않는다.
 ```
 
 권장 흐름:
 
 ```text
-scalex-k8s
-  -> TowerX ArgoCD
-    -> Karmada API Server
-      -> EdgeX / DataX / TwinX
+tower-k8s  -> TowerX ArgoCD -> TowerX cluster
 
-twinx-k8s -> TwinX ArgoCD -> TwinX cluster
-datax-k8s -> DataX ArgoCD -> DataX cluster
-edgex-k8s -> EdgeX ArgoCD -> EdgeX cluster
+scalex-k8s -> TowerX ArgoCD -> Karmada API Server
+                              -> EdgeX / DataX / TwinX / Resource Pool
+
+twinx-k8s  -> TowerX ArgoCD -> TwinX cluster
+datax-k8s  -> TowerX ArgoCD -> DataX cluster
+edgex-k8s  -> TowerX ArgoCD -> EdgeX cluster
 ```
 
 관련 실험:
@@ -153,7 +155,7 @@ edgex-k8s -> EdgeX ArgoCD -> EdgeX cluster
 - OverridePolicy image/storageClass
 - scheduler-estimator 운영 적용 절차
 - ArgoCD -> Karmada API Server GitOps 흐름
-- 실제 scalex-k8s/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
+- 실제 tower-k8s/scalex-k8s/twinx-k8s/datax-k8s/edgex-k8s repo 생성 및 bootstrap
 - 실제 ScaleX-POD 이전 checklist
 - Kueue GitOps 배포 구조
 - Kueue preemption/running Job 회수 정책

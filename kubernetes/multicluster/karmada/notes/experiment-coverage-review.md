@@ -73,7 +73,7 @@
 18. Kueue controller/webhook 장애와 복구 후 재시도 절차
 19. Kueue quota 증가/감소의 운영 의미
 20. scheduler-estimator 설치형 capacity-aware scheduling 기본 동작
-21. scalex-k8s는 멀티클러스터 전파 resource + policy repo, *-k8s는 cluster-local repo로 분리하는 구조
+21. TowerX 단일 ArgoCD 기준 tower-k8s는 제어 repo, scalex-k8s는 멀티클러스터 전파 repo, *-k8s는 cluster-local repo로 분리하는 구조
 ```
 
 ---
@@ -88,7 +88,7 @@
 5. scheduler-estimator 운영 적용 여부와 secret 회전 절차
 6. 관측/알림: Cluster READY Unknown, agent health, binding drift
 7. policy naming/label convention 최종화
-8. 실제 GitHub repo 생성과 ArgoCD bootstrap
+8. 실제 GitHub repo 생성과 TowerX 단일 ArgoCD bootstrap
 ```
 
 ---

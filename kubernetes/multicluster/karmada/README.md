@@ -9,33 +9,35 @@
 ## 현재 상태
 
 - 작성일: 2026-06-25
-- 최근 업데이트: 2026-07-07
-- 상태: 실험 00~33 핵심 검증 완료, ScaleX-POD 운영 모델 및 repo split 원칙 정리 완료
+- 최근 업데이트: 2026-07-08
+- 상태: 실험 00~33 핵심 검증 완료, TowerX 단일 ArgoCD + repo split 운영 모델 정리 완료
 - 실제 Karmada 설치: `kind-tower`에 설치 완료
 - 우선 실험 방식: `kind` 기반 로컬 멀티클러스터 실습
 - 최종 적용 대상: ScaleX-POD 멀티클러스터
-- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, ArgoCD -> Karmada -> DataX -> Kueue end-to-end sync/self-heal/admission 검증, Kueue 관측/알림 runbook 작성, Kueue controller 장애/복구와 quota 변경 검증, scheduler-estimator 설치형 실험과 원복 검증, ScaleX-POD 운영 모델 정리, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록, scalex-k8s federation repo와 twinx/datax/edgex-k8s cluster-local repo split 검증
+- 특이사항: Docker/kind 설치, inotify limit, context 전환, Karmada CLI 설치, Namespace binding 상태 이슈, Work 조회 kubeconfig 차이, cluster taint/실제 장애에서 기존 workload eviction 미확인, Failover feature gate 실험, 수동 NoExecute eviction 성공 및 taint 제거 후 자동 재균형 없음, WorkloadRebalancer로 복구 cluster 재분산 성공, clusterTolerations로 NoExecute 보호 검증, 여러 workload WorkloadRebalancer batch 재균형 성공, ScaleX-POD role label placement 성공, Resource Pool member cluster와 fallback placement 성공, OverridePolicy image/storageClass 성공, Resource Pool fallback 후 WorkloadRebalancer 재균형 성공, Pull mode cluster 포함 WorkloadRebalancer 재균형 성공, scheduler-estimator 서비스 부재와 비활성화 검증 완료, spreadConstraints pool group 분산 성공/주의점 확인, ArgoCD -> Karmada API Server sync/self-heal/prune/restore/ApplicationSet 성공, ArgoCD AppProject 기반 prune 안전장치 샘플 작성, Pull mode agent 기반 전파 성공, Pull mode agent 중단 시 READY Unknown/status stale/복구 후 재반영 확인, Pull mode 네트워크 단절 시 READY Unknown/기존 workload 유지/복구 후 수렴 확인, Kueue를 datax에 설치해 Karmada placement와 member-local Job admission 분리 검증, ArgoCD -> Karmada -> DataX -> Kueue end-to-end sync/self-heal/admission 검증, Kueue 관측/알림 runbook 작성, Kueue controller 장애/복구와 quota 변경 검증, scheduler-estimator 설치형 실험과 원복 검증, ScaleX-POD 운영 모델 정리, 신규 cluster label이 기존 policy에 매칭되는 주의점과 checklist 작성, 전체 실험 coverage review 완료, controller-manager/scheduler anti-affinity rollout 이슈 기록, tower-k8s 제어 repo, scalex-k8s Karmada federation repo, twinx/datax/edgex-k8s cluster-local repo split 방향 정리
 
 ---
 
 ## 종합 결론
 
 MiniX/kind Lab 기준으로 Karmada 핵심 기능 검증은 완료됐다.
-실험 00~32 결과를 종합하면 ScaleX-POD에서는 다음 구조를 기본 운영 모델로 채택할 수 있다.
+실험 00~33 결과와 2026-07-08 repo 구조 논의를 종합하면 ScaleX-POD에서는 다음 구조를 기본 운영 모델로 채택할 수 있다.
 
 ```text
-GitHub
-  -> ArgoCD on Tower
-    -> Karmada API Server on Tower
-      -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
-        -> member-local controllers
+GitHub repos
+  -> single ArgoCD on TowerX
+    ├─ tower-k8s  -> TowerX cluster
+    ├─ scalex-k8s -> Karmada API Server -> TwinX / EdgeX / DataX / Resource Pool / Pull Edge
+    ├─ twinx-k8s  -> TwinX cluster
+    ├─ datax-k8s  -> DataX cluster
+    └─ edgex-k8s  -> EdgeX cluster
 ```
 
 역할 분리는 다음과 같이 정리한다.
 
 | 계층 | 책임 | 판단 |
 | --- | --- | --- |
-| ArgoCD | Git desired state sync, self-heal, prune, ApplicationSet | Karmada API Server를 destination으로 사용하는 GitOps 계층 |
+| ArgoCD | Git desired state sync, self-heal, prune, ApplicationSet | TowerX에 하나만 두고 여러 repo와 여러 destination을 관리하는 GitOps 계층 |
 | Karmada | 멀티클러스터 placement, propagation, override, failover, rebalance | ScaleX-POD member cluster 배치/전파 계층으로 사용 가능 |
 | Kueue | DataX/TwinX 내부 Job admission, queue, quota | batch/AI Job 실행 허가와 backpressure 계층으로 사용 가능 |
 
@@ -43,10 +45,10 @@ GitHub
 
 ```text
 1. Karmada는 ScaleX-POD 멀티클러스터 placement/전파 계층으로 적합하다.
-2. ArgoCD와 Karmada는 역할이 겹치지 않으며, ArgoCD는 Karmada API Server에 desired state를 제출하는 구조가 적합하다.
+2. ArgoCD와 Karmada는 역할이 겹치지 않으며, TowerX 단일 ArgoCD가 scalex-k8s는 Karmada API Server로, *-k8s는 각 member cluster로 sync하는 구조가 적합하다.
 3. Kueue는 Karmada를 대체하지 않고, 선택된 member cluster 내부에서 Job admission/quota를 담당한다.
 4. Push/Pull mode, Resource Pool, WorkloadRebalancer, ArgoCD prune/self-heal, Kueue admission까지 핵심 시나리오는 검증됐다.
-5. 이후 작업은 기능 검증이 아니라 실제 scalex-k8s/twinx-k8s/datax-k8s/edgex-k8s repo 생성, AppProject migration, 실제 ScaleX-POD 이전 checklist 같은 운영화 단계다.
+5. 이후 작업은 기능 검증이 아니라 실제 tower-k8s/scalex-k8s/twinx-k8s/datax-k8s/edgex-k8s repo 생성, TowerX 단일 ArgoCD bootstrap, AppProject migration, 실제 ScaleX-POD 이전 checklist 같은 운영화 단계다.
 ```
 
 ---
@@ -221,7 +223,7 @@ kubectl config get-contexts
   - Push member cluster별 scheduler-estimator addon 설치와 Karmada scheduler 연결 검증
   - Aggregated scheduling 성공, kind 단일 노드 scheduler anti-affinity rollout 이슈, 실험 후 비활성화/삭제 원복 절차 기록
 - [`notes/scalex-pod-operating-model.md`](./notes/scalex-pod-operating-model.md)
-  - 실험 00~32 결과를 바탕으로 ScaleX-POD에서 ArgoCD/Karmada/Kueue를 어떻게 나눠 쓸지 정리
+  - 실험 00~33 결과와 TowerX 단일 ArgoCD 기준으로 ScaleX-POD에서 ArgoCD/Karmada/Kueue/repo ownership을 어떻게 나눠 쓸지 정리
   - GitHub repo 구성, placement label, prune 안전장치, Kueue 관측, 보류 항목을 운영 모델로 정리
 
 ---

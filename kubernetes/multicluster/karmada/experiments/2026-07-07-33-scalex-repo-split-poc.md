@@ -5,22 +5,12 @@
 ScaleX-POD 운영 구조를 다음처럼 나눌 수 있는지 kind lab에서 임시 repo로 검증한다.
 
 ```text
-TowerX(scalex-k8s)
+TowerX(tower-k8s)
   -> TowerX ArgoCD
-    -> Karmada API Server
-      -> EdgeX / DataX / TwinX
-
-TwinX(twinx-k8s)
-  -> TwinX ArgoCD
-    -> TwinX cluster
-
-DataX(datax-k8s)
-  -> DataX ArgoCD
-    -> DataX cluster
-
-EdgeX(edgex-k8s)
-  -> EdgeX ArgoCD
-    -> EdgeX cluster
+    ├─ scalex-k8s -> Karmada API Server -> EdgeX / DataX / TwinX
+    ├─ twinx-k8s  -> TwinX cluster
+    ├─ datax-k8s  -> DataX cluster
+    └─ edgex-k8s  -> EdgeX cluster
 ```
 
 이번 실험의 핵심 질문은 다음이다.
@@ -35,14 +25,24 @@ EdgeX(edgex-k8s)
 
 ## 설계 철학
 
-### TowerX / `scalex-k8s`
+### TowerX / `tower-k8s` / `scalex-k8s`
 
-TowerX는 ScaleX-POD의 멀티클러스터 제어 계층이다.
+TowerX는 ScaleX-POD의 단일 GitOps 제어 계층이다.
 
 ```text
 TowerX
-  - ArgoCD
+  - ArgoCD 1개
   - Karmada Control Plane
+```
+
+`tower-k8s`는 TowerX 제어 클러스터 자체를 담당한다.
+
+```text
+- TowerX ArgoCD
+- Karmada 설치 기반
+- AppProject
+- root Application
+- repo/cluster destination 연결
 ```
 
 `scalex-k8s`는 다음을 담당한다.
@@ -64,12 +64,13 @@ scalex-k8s = 어떤 리소스를 어느 클러스터들에 전파할 것인가?
 
 ### EdgeX/DataX/TwinX / `*-k8s`
 
-각 member cluster는 자기 내부 전용 GitOps repo와 ArgoCD를 가진다.
+각 member cluster는 자기 내부 전용 GitOps repo를 가진다.
+ArgoCD 서버는 각 member cluster에 따로 두지 않고 TowerX의 단일 ArgoCD를 사용한다.
 
 ```text
-EdgeX(edgex-k8s)
-DataX(datax-k8s)
-TwinX(twinx-k8s)
+EdgeX(edgex-k8s) -> TowerX ArgoCD -> EdgeX cluster
+DataX(datax-k8s) -> TowerX ArgoCD -> DataX cluster
+TwinX(twinx-k8s) -> TowerX ArgoCD -> TwinX cluster
 ```
 
 각 `*-k8s`는 다음을 담당한다.
@@ -88,12 +89,12 @@ cluster-k8s = 이 클러스터에 어떤 앱을 설치할 것인가?
 
 ### 단일 소유권 원칙
 
-같은 live resource를 TowerX/Karmada와 cluster-local ArgoCD가 동시에 관리하면 안 된다.
+같은 live resource를 Karmada 전파 경로와 TowerX ArgoCD의 직접 cluster destination 경로가 동시에 관리하면 안 된다.
 
 ```text
 금지 예시:
-TowerX ArgoCD + Karmada -> TwinX에 GPU Operator 설치
-TwinX ArgoCD            -> TwinX에 같은 GPU Operator 설치
+TowerX ArgoCD -> Karmada API Server -> TwinX에 GPU Operator 전파
+TowerX ArgoCD -> TwinX cluster 직접 destination -> 같은 GPU Operator 설치
 ```
 
 이 경우 두 controller가 같은 resource를 reconcile하면서 충돌할 수 있다.
@@ -271,7 +272,7 @@ kubectl --kubeconfig ~/.kube/karmada-apiserver.config apply \
 
 ### 5. cluster-local repo 적용
 
-이번 실험에서는 각 cluster-local ArgoCD 대신 `kubectl apply -k`로 local repo 적용을 대체했다.
+이번 실험에서는 TowerX ArgoCD가 각 member cluster destination으로 직접 sync하는 경로를 `kubectl apply -k`로 대체했다.
 이는 repo/ownership split 검증이 목적이기 때문이다.
 
 ```bash
@@ -441,23 +442,28 @@ scalex.io/management-plane: edgex-local
 최종 repo 전략은 다음처럼 잡는다.
 
 ```text
+SmartX-Team/tower-k8s
+  = TowerX 제어 클러스터 repo
+  = TowerX ArgoCD, Karmada 설치 기반, AppProject, root Application, repo/cluster 연결 관리
+
 SmartX-Team/scalex-k8s
-  = TowerX ArgoCD + Karmada가 보는 federation repo
+  = Karmada 멀티클러스터 전용 repo
   = 멀티클러스터에 전파할 resource + PropagationPolicy/OverridePolicy 관리
 
 SmartX-Team/twinx-k8s
 SmartX-Team/datax-k8s
 SmartX-Team/edgex-k8s
-  = 각 cluster-local ArgoCD가 보는 단일 클러스터 repo
+  = TowerX 단일 ArgoCD가 각 member cluster destination으로 sync하는 단일 클러스터 repo
   = 이 클러스터에 어떤 앱을 설치할 것인가 관리
 ```
 
 운영 원칙:
 
 ```text
-TowerX(scalex-k8s): 전체 멀티클러스터에 공통으로 전파해야 하는 리소스나 멀티클러스터 workload 전파 담당
+TowerX(tower-k8s): 제어 클러스터와 단일 ArgoCD bootstrap 담당
+ScaleX(scalex-k8s): 전체 멀티클러스터에 공통으로 전파해야 하는 리소스나 멀티클러스터 workload 전파 담당
 EdgeX/DataX/TwinX(*-k8s): 각 클러스터 내부 전용 리소스 담당
-같은 리소스는 TowerX/Karmada와 cluster-local ArgoCD가 동시에 관리하지 않음
+같은 리소스는 Karmada 전파 경로와 직접 cluster destination 경로가 동시에 관리하지 않음
 ```
 
 ---
@@ -468,11 +474,12 @@ EdgeX/DataX/TwinX(*-k8s): 각 클러스터 내부 전용 리소스 담당
 다만 다음은 실제 운영 전 별도 bootstrap 작업으로 남긴다.
 
 ```text
-1. 실제 GitHub repo 생성: scalex-k8s, twinx-k8s, datax-k8s, edgex-k8s
-2. TowerX ArgoCD Application이 scalex-k8s/federation path를 바라보도록 설정
-3. TwinX/DataX/EdgeX 각 ArgoCD가 자기 *-k8s repo를 바라보도록 설정
-4. AppProject/source/destination/resource whitelist 적용
-5. prune=false에서 시작 후 app별로 prune=true 승격
+1. 실제 GitHub repo 생성: tower-k8s, scalex-k8s, twinx-k8s, datax-k8s, edgex-k8s
+2. TowerX 단일 ArgoCD root Application이 tower-k8s를 바라보도록 설정
+3. TowerX ArgoCD child Application이 scalex-k8s는 Karmada API Server destination으로 sync하도록 설정
+4. TowerX ArgoCD child Application이 twinx/datax/edgex-k8s는 각 member cluster destination으로 sync하도록 설정
+5. AppProject/source/destination/resource whitelist 적용
+6. prune=false에서 시작 후 app별로 prune=true 승격
 ```
 
 기능 관점에서는 추가 핵심 검증은 필요하지 않다.
