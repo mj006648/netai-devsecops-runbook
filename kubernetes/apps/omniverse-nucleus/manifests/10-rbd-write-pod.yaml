@@ -1,0 +1,31 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rbd-smoke
+  namespace: omniverse-nucleus-poc
+  labels:
+    app.kubernetes.io/name: omniverse-nucleus-poc
+spec:
+  serviceAccountName: default
+  restartPolicy: Never
+  containers:
+    - name: smoke
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          set -eux
+          date -Is > /data/created-at.txt
+          echo "rbd smoke ok" >> /data/created-at.txt
+          cat /data/created-at.txt
+          df -h /data
+          sleep 1800
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: rbd-smoke
