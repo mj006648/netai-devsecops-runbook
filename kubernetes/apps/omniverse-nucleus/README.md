@@ -7,6 +7,31 @@
 > 자세한 재현 절차와 설계 판단은 [`RUNBOOK.md`](./RUNBOOK.md)를 먼저 읽는다.
 > `README.md`는 현재 상태/검증 결과 요약이고, `RUNBOOK.md`는 왜 이렇게 했는지와 NVIDIA Compose Stack을 Kubernetes로 옮긴 과정을 정리한 실행 런북이다.
 
+
+## 디렉터리 구조 정리
+
+```text
+kubernetes/apps/omniverse-nucleus/
+├── README.md
+├── RUNBOOK.md
+├── manifests/
+│   └── nucleus/                 # 실제 Nucleus 배포에 필요한 manifest 5개
+│       ├── 00-namespace.yaml
+│       ├── 10-headless-service.yaml
+│       ├── 10-internal-services.yaml
+│       ├── 10-loadbalancer-service.yaml
+│       └── 20-statefulset.yaml
+└── experiments/
+    └── rbd-smoke/               # 과거 RBD PVC 검증용. Nucleus 배포에는 필요 없음
+        ├── 00-namespace-pvc.yaml
+        ├── 10-rbd-write-pod.yaml
+        └── 20-rbd-readback-pod.yaml
+```
+
+- `manifests/nucleus/`: 다음에 실제로 참고/적용할 Nucleus manifest.
+- `experiments/rbd-smoke/`: RBD PVC가 붙고 데이터가 유지되는지 먼저 확인했던 실험 기록. 최종 Nucleus 배포에는 적용하지 않는다.
+- 실제 운영 원본은 `MiniX:argocd/minix/apps/omniverse-nucleus-poc/`이고, 이 runbook repo는 검토/재현용 사본이다.
+
 이 앱은 실제 NVIDIA Omniverse Nucleus 이미지를 배포하기 전, ArgoCD가 `StatefulSet + Rook-Ceph RBD PVC + Service` 구조를 정상적으로 만들 수 있는지 검증하기 위한 PoC이다.
 
 ## 현재 범위
@@ -97,7 +122,7 @@ curl http://127.0.0.1:8080/
 ### 남은 작업
 
 - kube-scheduler / kube-controller-manager CrashLoop 원인 복구
-- scheduler 복구 후 10-statefulset.yaml에서 nodeName: com3 제거
+- scheduler 복구 후 20-statefulset.yaml에서 nodeName: com3 제거
 - 실제 접속 도메인/IP와 TLS/Ingress 노출 방식 확정
 - readiness/liveness probe 추가
 - 실제 운영 전에 Nucleus 데이터 백업/복구 절차 확정
@@ -291,7 +316,7 @@ Server: nginx/1.28.1
 
 ## 부록: 2026-07-09 RBD smoke 기존 기록
 
-아래 내용은 이 디렉터리에 먼저 작성되어 있던 Rook-Ceph RBD smoke 검증 기록이다. 현재 최신 Nucleus manifest는 위 요약과 `RUNBOOK.md`, `manifests/` YAML 파일을 기준으로 본다.
+아래 내용은 이 디렉터리에 먼저 작성되어 있던 Rook-Ceph RBD smoke 검증 기록이다. 현재 최신 Nucleus manifest는 위 요약과 `RUNBOOK.md`, `manifests/nucleus/` YAML 파일을 기준으로 본다.
 
 > 목적: SmartX/eecs-k8s 앱 카탈로그에 넣기 전에, `ssh chang@master` 환경의 실제 Kubernetes 클러스터에서 **Rook-Ceph RBD PVC를 Nucleus DATA_ROOT로 사용할 수 있는지**를 먼저 검증한다.
 
@@ -588,3 +613,23 @@ scalex.io/omniverse/nucleus:
 ```
 
 Rook-Ceph를 명시 의존성으로 강하게 묶을지 여부는 TwinX 운영 구조를 보고 결정한다.
+
+### Sync wave 기준
+
+파일명 앞의 `00`, `10`, `20`은 사람이 읽기 쉽게 정렬하기 위한 prefix이다. ArgoCD의 실제 적용 순서는 파일명이 아니라 각 manifest의 annotation으로 명시한다.
+
+```yaml
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "<wave>"
+```
+
+현재 기준:
+
+| Wave | Manifest | 이유 |
+| --- | --- | --- |
+| `0` | `00-namespace.yaml` | namespace가 먼저 있어야 namespaced resource를 만들 수 있음 |
+| `1` | `10-headless-service.yaml`, `10-internal-services.yaml`, `10-loadbalancer-service.yaml` | Nucleus Pod가 뜨기 전에 내부 DNS/Service 이름을 먼저 준비 |
+| `2` | `20-statefulset.yaml` | Secret/PVC/Service 전제가 준비된 뒤 실제 Nucleus Pod 실행 |
+
+따라서 파일명 prefix는 문서 가독성용이고, 운영 기준은 `argocd.argoproj.io/sync-wave`이다.
