@@ -1,0 +1,58 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omniverse-nucleus
+  namespace: omniverse
+  labels:
+    app.kubernetes.io/name: omniverse-nucleus
+    app.kubernetes.io/part-of: omniverse
+  annotations:
+    metallb.io/loadBalancerIPs: 10.34.48.221
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: omniverse-nucleus
+  ports:
+  - name: web
+    port: 8080
+    targetPort: 80
+  - name: api
+    port: 3009
+    targetPort: 3009
+  - name: api2
+    port: 3019
+    targetPort: 3019
+  - name: svc-auth
+    port: 3106
+    targetPort: 3106
+  - name: lft
+    port: 3030
+    targetPort: 3030
+  - name: auth
+    port: 3100
+    targetPort: 3100
+  - name: login
+    port: 3180
+    targetPort: 3180
+  - name: auth-api
+    port: 8000
+    targetPort: 8000
+  - name: discovery
+    port: 3333
+    targetPort: 3333
+  - name: search
+    port: 3400
+    targetPort: 3400
+  - name: tagging
+    port: 3020
+    targetPort: 3020
+  - name: metrics
+    port: 3010
+    targetPort: 3010
+  - name: prom
+    port: 9500
+    targetPort: 9500
+  - name: resolver
+    port: 8891
+    targetPort: 8891
