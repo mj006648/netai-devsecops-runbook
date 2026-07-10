@@ -11,6 +11,7 @@
 | --- | --- |
 | [`RUNBOOK.md`](./RUNBOOK.md) | 전체 설계 판단, 재현 절차, 문제 해결, 운영 전 보강 항목 |
 | [`SMARTX_EECS_MIGRATION_PLAN.md`](./SMARTX_EECS_MIGRATION_PLAN.md) | eecs-k8s + c-k8s 구조로 이관하기 위한 구현 계획 |
+| [`SMARTX_EECS_EXECUTION.md`](./SMARTX_EECS_EXECUTION.md) | eecs-k8s/c-k8s 실제 작업 및 렌더링 검증 기록 |
 | [`manifests/nucleus/`](./manifests/nucleus/) | 신규 설치 기준 Nucleus Kubernetes manifest 사본 |
 
 ## 디렉터리 구조
