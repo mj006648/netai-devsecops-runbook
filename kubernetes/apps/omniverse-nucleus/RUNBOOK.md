@@ -401,17 +401,18 @@ twinx-k8s preset
 예상 feature 이름:
 
 ```text
-scalex.io/omniverse/nucleus
+org.ulagbulag.io/omniverse/nucleus
 ```
 
 예상 의존성:
 
 ```yaml
-scalex.io/omniverse/nucleus:
+org.ulagbulag.io/omniverse/nucleus:
   requires:
-    - scalex.io/storage/block
-    - scalex.io/ingress/loadbalancer
-    - scalex.io/secrets/external-secrets
+    - org.ulagbulag.io/cni
+    - org.ulagbulag.io/csi
+    - org.ulagbulag.io/csi/block
+    - org.ulagbulag.io/distributed-storage-cluster/ceph
 ```
 
 ## 15. 결론

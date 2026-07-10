@@ -204,27 +204,70 @@ nucleus:
 
 ## 4. Secret 처리
 
-NGC API key, Nucleus password, runtime secret 값은 Git에 커밋하지 않는다.
+Argo CD/SmartX 구조에서는 매번 노드에 들어가서 `kubectl create secret`을 치는 것보다 **Secret manifest 또는 Helm template로 같이 렌더링**하는 방식이 더 맞다.
 
-클러스터에 직접 Secret을 만들거나, 추후 External Secrets/OpenBao로 연결한다.
+1차 PoC에서는 다음 방식으로 간다.
 
-예시:
+```text
+eecs-k8s/apps/omniverse-nucleus/templates/secrets.yaml
+  -> Secret 리소스 템플릿 정의
 
-```bash
-kubectl -n omniverse create secret docker-registry nvcr-io \
-  --docker-server=nvcr.io \
-  --docker-username='$oauthtoken' \
-  --docker-password='<NGC_API_KEY>'
-
-kubectl -n omniverse create secret generic nucleus-passwords \
-  --from-literal=MASTER_PASSWORD='<관리자 비밀번호>'
-
-kubectl -n omniverse create secret generic nucleus-secrets \
-  --from-literal=SECRET_1='<값>' \
-  --from-literal=SECRET_2='<값>'
+c-k8s/patches/omniverse-nucleus/values.yaml
+  -> PoC용 실제 NGC key/password/runtime secret 값 주입
 ```
 
-> 실제 key/password는 문서나 Git에 남기지 않는다.
+즉, Secret도 `c-omniverse-nucleus` Argo CD Application 안에서 같이 생성되게 한다.
+
+### PoC용 values 예시
+
+`c-k8s/patches/omniverse-nucleus/values.yaml`에 아래 형태를 둔다.
+
+```yaml
+nucleus:
+  imagePullSecret:
+    create: true
+    name: nvcr-io
+    registry: nvcr.io
+    username: "$oauthtoken"
+    password: "<NGC_API_KEY>"
+
+  secrets:
+    passwords:
+      create: true
+      name: nucleus-passwords
+      stringData:
+        MASTER_PASSWORD: "<관리자 비밀번호>"
+
+    runtime:
+      create: true
+      name: nucleus-secrets
+      stringData:
+        SECRET_1: "<값>"
+        SECRET_2: "<값>"
+```
+
+### 보안 기준
+
+- 운영/공개 레포에서는 실제 key/password를 커밋하지 않는다.
+- 이번처럼 private PoC에서 빠르게 검증할 때만 실제 값을 넣을 수 있다.
+- 그래도 NGC API key는 개인 계정 권한이 걸리므로 **짧은 만료/최소 권한/실험 후 rotation**을 전제로 한다.
+- 장기 운영으로 넘어가면 `create: false`로 바꾸고 OpenBao + External Secrets가 만든 Secret을 참조한다.
+
+운영 전환 예시:
+
+```yaml
+nucleus:
+  imagePullSecret:
+    create: false
+    name: nvcr-io
+  secrets:
+    passwords:
+      create: false
+      name: nucleus-passwords
+    runtime:
+      create: false
+      name: nucleus-secrets
+```
 
 ## 5. 검증 순서
 
@@ -277,18 +320,30 @@ kubectl apply --dry-run=client -f /tmp/nucleus-render.yaml
 YAML schema 수준에서 적용 가능
 ```
 
-### 5.4 Secret 누출 확인
+### 5.4 Secret 위치 확인
+
+PoC에서 실제 Secret 값을 GitOps로 같이 넣는다면, 값이 있는 위치를 명확히 제한한다.
 
 ```bash
-grep -R "nvapi-" ./eecs-k8s ./c-k8s
-grep -R "<실제 비밀번호>" ./eecs-k8s ./c-k8s
+# 엔진에는 실제 key/password가 없어야 한다.
+grep -R "nvapi-" ./eecs-k8s
+
+# 런북에도 실제 key/password가 없어야 한다.
+grep -R "nvapi-" ./netai-devsecops-runbook
+
+# PoC preset에만 실제 값이 있을 수 있다.
+grep -R "nvapi-" ./c-k8s
 ```
 
 성공 기준:
 
 ```text
-아무것도 나오지 않아야 함
+eecs-k8s: 실제 key/password 없음
+netai-devsecops-runbook: 실제 key/password 없음
+c-k8s: private PoC에서 의도한 Secret manifest/values에만 존재
 ```
+
+`c-k8s`에 실제 값을 넣은 경우 실험 종료 후 key rotation 또는 Secret 제거 커밋을 남긴다.
 
 ### 5.5 Argo CD 적용 후 확인
 
