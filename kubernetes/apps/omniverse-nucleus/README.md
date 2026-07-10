@@ -6,9 +6,11 @@
 
 ## 무엇을 보면 되는가
 
+
 | 파일/디렉터리 | 역할 |
 | --- | --- |
 | [`RUNBOOK.md`](./RUNBOOK.md) | 전체 설계 판단, 재현 절차, 문제 해결, 운영 전 보강 항목 |
+| [`SMARTX_EECS_MIGRATION_PLAN.md`](./SMARTX_EECS_MIGRATION_PLAN.md) | eecs-k8s + c-k8s 구조로 이관하기 위한 구현 계획 |
 | [`manifests/nucleus/`](./manifests/nucleus/) | 신규 설치 기준 Nucleus Kubernetes manifest 사본 |
 
 ## 디렉터리 구조
@@ -17,6 +19,7 @@
 kubernetes/apps/omniverse-nucleus/
 ├── README.md
 ├── RUNBOOK.md
+├── SMARTX_EECS_MIGRATION_PLAN.md
 ├── manifests/
 │   └── nucleus/                         # 신규 설치 기준 Nucleus manifest
 │       ├── 00-storageclass.yaml          # Nucleus 전용 Retain RBD StorageClass
