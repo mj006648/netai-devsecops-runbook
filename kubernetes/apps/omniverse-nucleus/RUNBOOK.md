@@ -28,7 +28,7 @@
 
 - NVIDIA 실제 Nucleus 이미지가 pull 되는가?
 - Nucleus가 StatefulSet으로 떠도 되는가?
-- Nucleus DATA_ROOT를 RBD PVC로 마운트해도 동작하는가?
+- Nucleus 실제 데이터/로그 경로를 RBD PVC로 마운트해도 동작하는가?
 - Bare-metal 환경에서 MetalLB LoadBalancer IP로 접속 가능한가?
 - ArgoCD로 GitOps 관리 가능한가?
 
@@ -136,7 +136,7 @@ Rook-Ceph RBD image
 
 중요한 점:
 
-- Nucleus는 `/var/lib/omni/nucleus-data`라는 filesystem path를 본다.
+- 현재 Kubernetes manifest에서 실제 Nucleus 컨테이너들은 주로 `/omni/data`, `/omni/log`, `/omni/temp`, `/omni/scratch-meta-dump` 경로를 본다. NVIDIA Compose env의 기본 `DATA_ROOT=/var/lib/omni/nucleus-data` 개념과 다르게, live Pod에서는 `DATA_ROOT` env가 비어 있고 실제 mount path 기준으로 동작함을 확인했다.
 - 실제 물리 위치가 Ceph RBD인지 로컬 디스크인지는 컨테이너 입장에서는 중요하지 않다.
 - Kubernetes가 RBD block device를 노드에 attach하고 filesystem으로 mount해준다.
 - 단, RBD는 기본적으로 `ReadWriteOnce` 단일 writer로 보는 것이 안전하다.
@@ -148,11 +148,12 @@ Rook-Ceph RBD image
 argocd/minix/apps/omniverse-nucleus-poc/
 ├── README.md
 ├── RUNBOOK.md
-├── 00-namespace.yaml
-├── 00-headless-service.yaml
-├── 10-statefulset.yaml
-├── 15-internal-services.yaml
-└── 20-service.yaml
+├── manifests/
+│   ├── 00-namespace.yaml
+│   ├── 00-headless-service.yaml
+│   ├── 10-statefulset.yaml
+│   ├── 15-internal-services.yaml
+│   └── 20-service.yaml
 ```
 
 | 파일 | 역할 |
@@ -167,7 +168,7 @@ argocd/minix/apps/omniverse-nucleus-poc/
 
 ## 7.1 Manifest 상세와 다음에 수정할 값
 
-전체 YAML 본문은 런북에 중복 복붙하지 않고 같은 디렉터리의 실제 적용 원본을 기준으로 관리한다. 즉, ArgoCD가 실제로 읽는 원본은 아래 manifest 파일들이고, 런북은 각 파일이 무엇을 만들고 다음 사람이 어디를 바꿔야 하는지 설명한다.
+전체 YAML 본문은 런북에 중복 복붙하지 않고 `manifests/` 아래의 manifest 사본을 기준으로 관리한다. 즉, ArgoCD가 실제로 읽는 원본은 아래 `manifests/` 파일들이고, 런북은 각 파일이 무엇을 만들고 다음 사람이 어디를 바꿔야 하는지 설명한다.
 
 ### `00-namespace.yaml`
 
@@ -225,13 +226,13 @@ volumeClaimTemplates:
 
 - 실제 NVIDIA Nucleus container 12개를 실행한다.
 - `nvcr.io/nvidia/omniverse/*` 이미지를 사용한다.
-- Rook-Ceph RBD PVC를 만들고 `/var/lib/omni/nucleus-data`에 마운트한다.
+- Rook-Ceph RBD PVC를 만들고 실제 Nucleus 데이터/로그 경로인 `/omni/data`, `/omni/log`, 일부 `/omni/temp`, `/omni/scratch-meta-dump` 등에 마운트한다.
 - `imagePullSecrets: nvcr-io`로 NGC private registry 인증을 사용한다.
 
 현재 중요한 값:
 
 ```text
-DATA_ROOT=/var/lib/omni/nucleus-data
+persistent mount paths=/omni/data,/omni/log,/omni/temp,/omni/scratch-meta-dump
 SERVER_IP_OR_HOST=10.34.48.221
 WEB_PORT=8080
 SERVICE_API_PORT=3006
@@ -417,7 +418,7 @@ NVIDIA artifact의 `base_stack/nucleus-stack.env`에서 중요한 값:
 ACCEPT_EULA=1
 SECURITY_REVIEWED=1
 SERVER_IP_OR_HOST=10.34.48.221
-DATA_ROOT=/var/lib/omni/nucleus-data
+DATA_ROOT=/var/lib/omni/nucleus-data    # NVIDIA Compose env 기본 개념
 WEB_PORT=8080
 SERVICE_API_PORT=3006
 REGISTRY=nvcr.io/nvidia/omniverse
@@ -596,6 +597,63 @@ kubectl -n omniverse get svc omniverse-nucleus -o wide
 curl -fsS -m 10 http://10.34.48.221:8080/ | grep -o '<title>[^<]*</title>'
 ```
 
+
+## 11.1 Pod 삭제와 RBD 데이터 보존 기준
+
+2026-07-10 live 확인 결과, `nucleus-auth` 로그에서 `omniverse` 사용자 인증 성공을 확인했다.
+
+```text
+InternalCredentials.auth: username=omniverse
+status=OK
+```
+
+또한 PVC는 다음 상태였다.
+
+```text
+PVC: nucleus-data-omniverse-nucleus-0
+STATUS: Bound
+STORAGECLASS: rook-ceph-block
+VOLUME: pvc-67dc9fed-3f61-4cf3-88d2-b65a433956bb
+PV reclaimPolicy: Delete
+```
+
+실제 RBD mount는 다음 경로에서 확인했다.
+
+```text
+/omni/data                       -> /dev/rbd1
+/omni/log                        -> /dev/rbd1
+/omni/temp                       -> /dev/rbd1
+/omni/scratch-meta-dump          -> /dev/rbd1
+/var/lib/omni/nucleus-data/empty -> /dev/rbd1
+```
+
+`/omni/data`에는 Nucleus가 만든 실제 데이터 파일이 있다.
+
+```text
+/omni/data/usergroups.1.0
+/omni/data/meta.1.1
+/omni/data/content.1.1
+/omni/data/omniobjects.1.0
+/omni/data/__version_tag
+```
+
+데이터 보존 기준:
+
+| 상황 | 데이터 유지 여부 | 설명 |
+| --- | --- | --- |
+| Pod만 삭제 | 유지 | StatefulSet이 같은 PVC를 다시 붙인다. |
+| Pod가 장애로 재시작 | 유지 | 컨테이너/Pod lifecycle과 PVC lifecycle은 분리된다. |
+| StatefulSet 삭제, PVC 유지 | 유지 | PVC가 남아 있으면 재생성 시 같은 데이터를 다시 붙일 수 있다. |
+| PVC 삭제 | 삭제 가능성 높음 | 현재 PV reclaimPolicy가 `Delete`라 underlying RBD image도 삭제될 수 있다. |
+| namespace 삭제 | 삭제 가능성 높음 | namespace 안의 PVC가 삭제되면 RBD도 삭제될 수 있다. |
+
+운영에서는 실수로 PVC가 삭제되지 않도록 다음을 검토한다.
+
+- StatefulSet PVC retention policy 명시
+- ArgoCD prune 대상에서 PVC 보호
+- PV reclaimPolicy `Retain` 검토
+- Rook/Ceph snapshot 또는 Velero 백업 정책 수립
+
 ## 12. 운영화 전에 해야 할 일
 
 ### 필수
@@ -664,6 +722,6 @@ curl -fsS -D - http://10.34.48.221:8080/ | head
 
 - NVIDIA Enterprise Nucleus Compose Stack `2023.2.10`의 실제 이미지를 Kubernetes에서 실행할 수 있다.
 - Compose service 12개를 한 StatefulSet Pod의 12개 container로 옮기면 초기 PoC는 가능하다.
-- Rook-Ceph RBD PVC를 Nucleus DATA_ROOT로 사용할 수 있다.
+- Rook-Ceph RBD PVC를 Nucleus 실제 데이터/로그 경로로 사용할 수 있다.
 - MetalLB LoadBalancer IP를 통해 Nucleus Navigator에 접속할 수 있다.
 - 다만 이 구성은 아직 운영용이 아니라 SmartX catalog/preset 이관 전 검증 단계이다.
