@@ -143,7 +143,7 @@ eecs-k8s/apps/omniverse-nucleus/
 `eecs-k8s/apps/template/features.yaml`에 Nucleus feature를 추가한다.
 
 ```yaml
-scalex.io/omniverse/nucleus:
+org.ulagbulag.io/omniverse/nucleus:
   requires:
     - org.ulagbulag.io/cni
     - org.ulagbulag.io/csi
@@ -153,9 +153,9 @@ scalex.io/omniverse/nucleus:
 
 의미:
 
-- `scalex.io/omniverse/nucleus`를 켜면 Nucleus 앱이 설치 대상이 된다.
+- `org.ulagbulag.io/omniverse/nucleus`를 켜면 Nucleus 앱이 설치 대상이 된다.
 - Nucleus는 외부 접속과 스토리지가 필요하므로 CNI, CSI, block storage, Ceph를 선행 의존성으로 둔다.
-- feature 이름은 기존 `org.ulagbulag.io/*`와 구분하기 위해 우리 실험/ScaleX 네임스페이스인 `scalex.io/*`를 사용한다.
+- feature 이름은 기존 SmartX feature graph 관례와 맞추기 위해 `org.ulagbulag.io/*` 형태를 사용한다.
 
 `eecs-k8s/values.yaml`의 default feature 목록에도 같은 feature를 등록해야 SmartX 검증을 통과한다.
 
@@ -168,7 +168,7 @@ features:
   - org.ulagbulag.io/cni
   - org.ulagbulag.io/csi
   - org.ulagbulag.io/distributed-storage-cluster/ceph
-  - scalex.io/omniverse/nucleus
+  - org.ulagbulag.io/omniverse/nucleus
 ```
 
 ### 3.4 `c-k8s` patch 추가
@@ -360,7 +360,7 @@ NVIDIA compose services
 ## 7. 작업 단계
 
 1. `eecs-k8s/apps/omniverse-nucleus` chart 추가
-2. `eecs-k8s/apps/template/features.yaml`에 `scalex.io/omniverse/nucleus` 추가
+2. `eecs-k8s/apps/template/features.yaml`에 `org.ulagbulag.io/omniverse/nucleus` 추가
 3. `eecs-k8s/values.yaml` default feature 목록에 Nucleus feature 추가
 4. `c-k8s/values.yaml`에서 Nucleus feature 활성화
 5. `c-k8s/patches/omniverse-nucleus/values.yaml` 추가
