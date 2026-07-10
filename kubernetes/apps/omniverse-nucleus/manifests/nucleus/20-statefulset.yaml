@@ -817,7 +817,7 @@ spec:
     spec:
       accessModes:
       - ReadWriteOnce
-      storageClassName: rook-ceph-block
+      storageClassName: rook-ceph-block-nucleus-retain
       resources:
         requests:
           storage: 10Gi

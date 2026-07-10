@@ -1,63 +1,117 @@
-# Omniverse Nucleus Kubernetes PoC Runbook
+# Omniverse Nucleus Kubernetes Runbook
 
-> Runbook copy note: 이 디렉터리는 `MiniX`에 실제 ArgoCD로 적용한 Omniverse Nucleus manifest와 문서를 `netai-devsecops-runbook`에 옮긴 검토/재현용 사본이다.
-> 현재 실제 적용 원본은 `mj006648/MiniX:argocd/minix/apps/omniverse-nucleus-poc`이고, 이 runbook 사본은 MiniX commit `1be29969` 기준으로 동기화했다.
+이 문서는 NVIDIA Omniverse Nucleus를 Kubernetes 위에 올리는 PoC 결과와, 이후 SmartX/twinx-k8s 구조로 옮기기 위한 기준을 정리한다.
 
+> 최종 기준: **신규 설치는 처음부터 Nucleus 전용 Rook-Ceph RBD StorageClass `rook-ceph-block-nucleus-retain`을 사용한다.** 기존 MiniX live PoC에서 나중에 PV를 `Retain`으로 패치한 것은 과거 이행 기록일 뿐이며, 신규 설치 절차의 기본 흐름이 아니다.
 
-이 문서는 MiniX/TwinX 환경에서 NVIDIA Omniverse Nucleus를 Kubernetes 위에 올리기 위해 실제로 어떤 판단을 했고, NVIDIA 공식 Compose Stack을 어떤 식으로 Kubernetes manifest로 옮겼는지 기록한 런북이다.
+## 0. 현재 결론
 
-- 실제 적용 원본 경로: `mj006648/MiniX:argocd/minix/apps/omniverse-nucleus-poc/`
-- 런북 사본 경로: `mj006648/netai-devsecops-runbook:kubernetes/apps/omniverse-nucleus/`
-- ArgoCD Application: `omniverse-nucleus-poc`
-- Namespace: `omniverse`
-- 현재 외부 접속: `http://10.34.48.221:8080/`
-- 현재 스토리지: `rook-ceph-block` RBD PVC `10Gi`
+- Nucleus는 공식 Kubernetes chart가 아니라 NVIDIA Enterprise Nucleus Server Compose Stack으로 제공된다.
+- Kubernetes에서는 Compose Stack의 서비스 12개를 우선 하나의 StatefulSet Pod 안의 12개 container로 옮겨 검증했다.
+- 데이터는 노드 로컬 디스크가 아니라 Rook-Ceph RBD PVC에 저장한다.
+- 신규 설치 기준 manifest는 `manifests/nucleus/` 아래에 둔다.
+- RBD PVC write/readback은 선행 검증을 완료했으며, 최종 문서에는 Nucleus 배포에 필요한 manifest만 남긴다.
 
-> 주의: 이 구성은 NVIDIA가 공식으로 제공하는 Kubernetes Helm chart가 아니라, NVIDIA Enterprise Nucleus Server Compose Stack을 실험적으로 Kubernetes StatefulSet으로 옮긴 PoC이다. 운영 전에는 보안, 백업, TLS, scheduler, 리소스 request/limit, Secret 관리 방식을 보강해야 한다.
+## 1. 최종 권장 구조
 
-## 1. 왜 이 실험을 했는가
+```text
+ArgoCD Application omniverse-nucleus-poc
+  -> 00-storageclass.yaml
+     -> StorageClass rook-ceph-block-nucleus-retain
+        -> reclaimPolicy: Retain
+  -> 00-namespace.yaml
+     -> Namespace omniverse
+  -> 10-*.yaml
+     -> Headless/ClusterIP/LoadBalancer Services
+  -> 20-statefulset.yaml
+     -> StatefulSet omniverse-nucleus
+        -> Pod omniverse-nucleus-0
+        -> 12 NVIDIA Nucleus containers
+        -> PVC nucleus-data-omniverse-nucleus-0
+           -> Rook-Ceph RBD
+           -> /omni/data, /omni/log, /omni/temp, /omni/scratch-meta-dump
+```
 
-기존 목표는 다음 두 가지였다.
+### 왜 전용 StorageClass를 처음부터 쓰는가
 
-1. 로컬/단일 서버 Docker Compose 기반 Nucleus를 Kubernetes 위에서 실행할 수 있는지 확인한다.
-2. Nucleus 데이터를 노드 로컬 디스크가 아니라 Rook-Ceph RBD PVC에 저장할 수 있는지 확인한다.
+기본 `rook-ceph-block` StorageClass는 보통 `reclaimPolicy: Delete`로 운영된다. 이 경우 PVC를 실수로 삭제하면 동적으로 생성된 PV와 underlying RBD image까지 삭제될 수 있다.
 
-즉, 바로 `smartx-k8s`나 `twinx-k8s` preset 구조에 넣기 전에 먼저 순수 Kubernetes + ArgoCD + RBD 조합으로 실제 Nucleus가 뜨는지를 검증했다.
+Nucleus는 데이터 서버이므로 신규 설치에서는 처음부터 아래 StorageClass를 사용한다.
 
-검증하고 싶었던 핵심은 다음이다.
+```text
+StorageClass: rook-ceph-block-nucleus-retain
+provisioner: rook-ceph.rbd.csi.ceph.com
+pool: replicapool
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+```
 
-- NVIDIA 실제 Nucleus 이미지가 pull 되는가?
-- Nucleus가 StatefulSet으로 떠도 되는가?
-- Nucleus 실제 데이터/로그 경로를 RBD PVC로 마운트해도 동작하는가?
-- Bare-metal 환경에서 MetalLB LoadBalancer IP로 접속 가능한가?
-- ArgoCD로 GitOps 관리 가능한가?
+이 설정의 의미:
 
-## 2. NVIDIA 공식 방식은 무엇인가
+- PVC 삭제 실수 시 RBD image가 즉시 삭제되는 것을 막는다.
+- PVC 용량 확장을 허용한다.
+- Nucleus 전용 스토리지 정책을 기본 RBD StorageClass와 분리한다.
 
-NVIDIA Enterprise Nucleus Server는 기본적으로 Kubernetes용 chart가 아니라 Docker Compose package로 제공된다.
+주의: `Retain`은 Kubernetes 삭제 lifecycle 보호장치이지 백업이 아니다. Ceph cluster/pool 자체 장애까지 보호하려면 snapshot, off-cluster backup, RBD mirroring이 별도로 필요하다.
 
-NVIDIA 공식 문서 기준 흐름은 다음이다.
+## 2. 실제 파일 구조
 
-1. NVIDIA Developer Program 또는 Enterprise Entitlement Organization 권한이 있는 NGC 계정 준비
-2. NGC Catalog에서 Enterprise Nucleus Server / Nucleus Compose Stack 다운로드
-3. 서버에 artifact 압축 해제
-4. `base_stack/nucleus-stack.env` 수정
-5. `docker login nvcr.io` 수행
-6. `docker compose --env-file ... -f nucleus-stack-no-ssl.yml pull`
-7. `docker compose --env-file ... -f nucleus-stack-no-ssl.yml up -d`
-8. `http://<SERVER_IP_OR_HOST>:8080`으로 Nucleus Navigator 접속 확인
+```text
+kubernetes/apps/omniverse-nucleus/
+├── README.md
+├── RUNBOOK.md
+├── manifests/
+│   └── nucleus/
+│       ├── 00-storageclass.yaml
+│       ├── 00-namespace.yaml
+│       ├── 10-headless-service.yaml
+│       ├── 10-internal-services.yaml
+│       ├── 10-loadbalancer-service.yaml
+│       └── 20-statefulset.yaml
+```
 
-공식 문서에서 중요한 포인트는 다음이다.
+| 파일 | 역할 | 적용 여부 |
+| --- | --- | --- |
+| `00-storageclass.yaml` | Nucleus 전용 Retain RBD StorageClass | 신규 설치 필수 |
+| `00-namespace.yaml` | `omniverse` namespace 생성 | 필수 |
+| `10-headless-service.yaml` | StatefulSet용 headless service | 필수 |
+| `10-internal-services.yaml` | Compose service DNS를 Kubernetes Service DNS로 대체 | 필수 |
+| `10-loadbalancer-service.yaml` | MetalLB 외부 접속 IP/port 제공 | 환경에 맞게 수정 |
+| `20-statefulset.yaml` | NVIDIA Nucleus 12개 container + RBD PVC 정의 | 필수 |
 
-- Enterprise Nucleus Server software는 Docker Compose 및 configuration file 묶음으로 배포된다.
-- Compose file은 NVIDIA hosted Docker registry에서 Nucleus service container들을 가져온다.
-- `nucleus-stack.env`에서 `ACCEPT_EULA`, `SECURITY_REVIEWED`, `SERVER_IP_OR_HOST`, `MASTER_PASSWORD`, `SERVICE_PASSWORD`, `DATA_ROOT` 등을 설정한다.
-- `DATA_ROOT` 기본값은 `/var/lib/omni/nucleus-data`이다.
-- 기본 web port는 `8080`이다.
-- Docker login 시 username은 `$oauthtoken`, password는 NGC key를 사용한다.
-- Nucleus는 데이터 서버 성격이 강하므로 백업/복구와 Secret 관리를 별도로 설계해야 한다.
+파일명 앞의 `00`, `10`, `20`은 사람이 읽기 위한 정렬 prefix이다. ArgoCD의 실제 순서는 manifest의 annotation으로 제어한다.
 
-참고한 공식 문서:
+| Sync wave | Manifest | 이유 |
+| --- | --- | --- |
+| `0` | StorageClass, Namespace | PVC/Namespaced resource 전제 생성 |
+| `1` | Services | Pod 부팅 전에 내부 DNS 이름 준비 |
+| `2` | StatefulSet | Secret/PVC/Service 준비 후 실제 Nucleus 실행 |
+
+## 3. NVIDIA 공식 방식과 Kubernetes 변환
+
+NVIDIA 공식 배포 흐름은 Docker Compose이다.
+
+```text
+NGC artifact download
+  -> nucleus-stack.env 수정
+  -> docker login nvcr.io
+  -> docker compose pull
+  -> docker compose up -d
+```
+
+이번 PoC에서는 다음처럼 바꿨다.
+
+| NVIDIA Compose 방식 | Kubernetes PoC 방식 | 이유 |
+| --- | --- | --- |
+| `docker compose up` | ArgoCD + StatefulSet | GitOps 관리 |
+| Compose service 12개 | StatefulSet Pod 안의 container 12개 | Compose stack 전체를 먼저 검증 |
+| Docker bind/named volume | Rook-Ceph RBD PVC | 클러스터 스토리지 사용 |
+| Compose service name DNS | Kubernetes ClusterIP Service | `nucleus-api`, `nucleus-auth` 이름 유지 |
+| host `8080` | MetalLB LoadBalancer `10.34.48.221:8080` | 외부 접속 |
+| `.env` 평문 | Kubernetes env + Secret | GitOps/Secret 분리 |
+
+참고 공식 문서:
 
 - Planning Your Installation: https://docs.omniverse.nvidia.com/nucleus/latest/enterprise/installation/planning.html
 - Installing an Enterprise Nucleus Server: https://docs.omniverse.nvidia.com/nucleus/latest/enterprise/installation/install-ove-nucleus.html
@@ -65,294 +119,74 @@ NVIDIA 공식 문서 기준 흐름은 다음이다.
 - Backups and Data Restoration: https://docs.omniverse.nvidia.com/nucleus/latest/enterprise/backing-up-and-restoring-nucleus.html
 - NGC Enterprise Nucleus collection: https://catalog.ngc.nvidia.com/orgs/nvidia/omniverse/collections/enterprise-nucleus/-/artifacts
 
-## 3. 우리가 공식 방식에서 바꾼 것
-
-공식 방식은 Docker Compose이다. 우리는 Kubernetes에서 돌려야 하므로 다음과 같이 치환했다.
-
-| NVIDIA Compose 방식 | MiniX Kubernetes PoC 방식 | 이유 |
-| --- | --- | --- |
-| `docker compose up` | ArgoCD Application + StatefulSet | GitOps로 관리하기 위해 |
-| Compose service 12개 | StatefulSet Pod 안의 container 12개 | Compose의 tightly-coupled 서비스들을 한 번에 검증하기 위해 |
-| Docker named/bind volume | Rook-Ceph RBD PVC | Nucleus 데이터를 클러스터 스토리지에 저장하기 위해 |
-| Docker network service name | Kubernetes ClusterIP Service | `nucleus-api`, `nucleus-auth` 같은 DNS 이름 유지 |
-| host port 8080 | MetalLB LoadBalancer `10.34.48.221:8080` | Bare-metal 클러스터 외부 접속을 위해 |
-| `.env` 평문 설정 | Kubernetes env + Secret | GitOps/Kubernetes 방식으로 이관하기 위해 |
-| Compose local secret files | Kubernetes Secret | 이후 OpenBao/External-Secrets로 바꾸기 위해 |
-
-## 4. 왜 StatefulSet인가
+## 4. StatefulSet을 쓰는 이유
 
 Nucleus는 무상태 웹앱이 아니라 데이터 서버에 가깝다. 따라서 Deployment보다 StatefulSet이 맞다.
-
-StatefulSet을 선택한 이유:
 
 - Pod 이름이 안정적이다: `omniverse-nucleus-0`
 - PVC 이름이 안정적이다: `nucleus-data-omniverse-nucleus-0`
 - `volumeClaimTemplates`로 Pod 전용 RBD PVC를 만들 수 있다.
 - 단일 writer 데이터 서버 구조를 명확히 표현할 수 있다.
-- 나중에 백업/복구, 스냅샷, 마이그레이션 절차를 고정된 PVC 기준으로 만들 수 있다.
 
-현재는 `replicas: 1`이다. Nucleus를 단순히 replica 수만 늘려 HA로 만드는 것은 검증하지 않았다. Nucleus 자체의 HA/백업/복구 정책을 별도로 확인해야 한다.
+현재 PoC는 `replicas: 1`만 검증했다. Nucleus를 replica 수만 늘려 HA로 만드는 것은 검증하지 않았다.
 
 ## 5. 왜 Pod가 `12/12`인가
 
-`kubectl get pod` 출력의 `12/12`는 Pod 1개 안에 container가 12개 있고, 그 12개가 모두 Ready라는 뜻이다.
+`kubectl get pod`의 `12/12`는 Pod 1개 안에 container가 12개 있고, 12개 모두 Ready라는 뜻이다. NVIDIA Compose Stack의 12개 service를 하나의 StatefulSet Pod 안에 옮겼기 때문에 `1/1`이 아니라 `12/12`로 보인다.
 
-NVIDIA Compose Stack의 service 12개를 Kubernetes StatefulSet의 container 12개로 옮겼기 때문에 `1/1`이 아니라 `12/12`로 보인다.
-
-현재 container 목록:
-
-| Container | 역할 | Image |
-| --- | --- | --- |
-| `nucleus-api` | Nucleus core/API | `nvcr.io/nvidia/omniverse/nucleus-api:1.14.55` |
-| `nucleus-lft` | Large File Transfer | `nvcr.io/nvidia/omniverse/nucleus-lft:1.14.55` |
-| `nucleus-lft-lb` | LFT load balancing | `nvcr.io/nvidia/omniverse/nucleus-lft-lb:1.14.55` |
-| `nucleus-log-processor` | Nucleus log processing/metrics | `nvcr.io/nvidia/omniverse/nucleus-log-processor:1.14.55` |
-| `nucleus-resolver-cache` | Resolver cache | `nvcr.io/nvidia/omniverse/nucleus-resolver-cache:1.14.55` |
-| `utl-monpx` | Monitoring exporter | `nvcr.io/nvidia/omniverse/utl-monpx:1.14.55` |
-| `nucleus-discovery` | Service discovery | `nvcr.io/nvidia/omniverse/nucleus-discovery:1.5.6` |
-| `nucleus-auth` | Authentication | `nvcr.io/nvidia/omniverse/nucleus-auth:1.5.9` |
-| `nucleus-navigator` | Web UI/Navigator | `nvcr.io/nvidia/omniverse/nucleus-navigator:3.3.7` |
-| `nucleus-search` | Search | `nvcr.io/nvidia/omniverse/nucleus-search:3.2.14` |
-| `nucleus-thumbnails` | Thumbnail service | `nvcr.io/nvidia/omniverse/nucleus-thumbnails:1.5.15` |
-| `nucleus-tagging` | Tagging service | `nvcr.io/nvidia/omniverse/nucleus-tagging:3.1.36` |
-
-나중에 운영화할 때는 각 서비스를 별도 Deployment/StatefulSet으로 분리할 수도 있다. 다만 그 경우 Compose의 내부 DNS, shared volume, startup order, health check, port mapping을 모두 다시 설계해야 한다. 이번 PoC에서는 먼저 “공식 Compose Stack 전체가 Kubernetes에서 뜨는가”를 확인하는 것이 목적이라 한 Pod 안에 묶었다.
-
-## 6. 왜 Rook-Ceph RBD인가
-
-NVIDIA 문서에서는 Nucleus 데이터가 로컬/전용 서버 디스크 성격을 갖는 것을 전제로 한다. 또한 SMB/CIFS, NFS, iSCSI 같은 원격 mount 방식은 Nucleus의 transactional storage/database 특성 때문에 주의 또는 비지원으로 언급된다.
-
-그래서 Kubernetes에서는 shared filesystem보다 block PVC인 RBD가 더 적합하다고 판단했다.
-
-현재 구조:
+대표 container:
 
 ```text
-Rook-Ceph RBD image
-  -> Kubernetes PVC nucleus-data-omniverse-nucleus-0
-    -> Pod에 filesystem으로 마운트
-      -> /var/lib/omni/nucleus-data
-        -> Nucleus DATA_ROOT
+nucleus-api
+nucleus-lft
+nucleus-lft-lb
+nucleus-log-processor
+nucleus-resolver-cache
+utl-monpx
+nucleus-discovery
+nucleus-auth
+nucleus-navigator
+nucleus-search
+nucleus-thumbnails
+nucleus-tagging
 ```
 
-중요한 점:
+## 6. RBD 마운트 기준
 
-- 현재 Kubernetes manifest에서 실제 Nucleus 컨테이너들은 주로 `/omni/data`, `/omni/log`, `/omni/temp`, `/omni/scratch-meta-dump` 경로를 본다. NVIDIA Compose env의 기본 `DATA_ROOT=/var/lib/omni/nucleus-data` 개념과 다르게, live Pod에서는 `DATA_ROOT` env가 비어 있고 실제 mount path 기준으로 동작함을 확인했다.
-- 실제 물리 위치가 Ceph RBD인지 로컬 디스크인지는 컨테이너 입장에서는 중요하지 않다.
-- Kubernetes가 RBD block device를 노드에 attach하고 filesystem으로 mount해준다.
-- 단, RBD는 기본적으로 `ReadWriteOnce` 단일 writer로 보는 것이 안전하다.
-- 따라서 현재처럼 `replicas: 1` StatefulSet과 잘 맞는다.
-
-## 7. 파일별 역할
+Nucleus persistent 데이터는 RBD PVC를 filesystem으로 mount한 뒤 아래 경로에 저장된다.
 
 ```text
-argocd/minix/apps/omniverse-nucleus-poc/
-├── README.md
-├── RUNBOOK.md
-├── manifests/
-│   ├── 00-storageclass.yaml
-├── 00-namespace.yaml
-│   ├── 10-headless-service.yaml
-│   ├── 20-statefulset.yaml
-│   ├── 10-internal-services.yaml
-│   └── 10-loadbalancer-service.yaml
+/omni/data
+/omni/log
+/omni/temp
+/omni/scratch-meta-dump
+/var/lib/omni/nucleus-data/empty
 ```
 
-| 파일 | 역할 |
-| --- | --- |
-| `README.md` | 현재 상태, 검증 결과, 문제 해결 요약 |
-| `RUNBOOK.md` | 왜 이렇게 했는지, 재현 절차, NVIDIA 공식 방식과 차이 |
-| `00-namespace.yaml` | `omniverse` namespace 생성 |
-| `10-headless-service.yaml` | StatefulSet용 headless service |
-| `20-statefulset.yaml` | 실제 Nucleus 12개 container + RBD PVC 정의 |
-| `10-internal-services.yaml` | Compose service DNS를 Kubernetes Service로 대체 |
-| `10-loadbalancer-service.yaml` | MetalLB LoadBalancer 외부 노출 |
-
-## 7.1 Manifest 상세와 다음에 수정할 값
-
-전체 YAML 본문은 런북에 중복 복붙하지 않고 `manifests/nucleus/` 아래의 manifest 사본을 기준으로 관리한다. 즉, ArgoCD가 실제로 읽는 원본은 아래 `manifests/nucleus/` 파일들이고, 런북은 각 파일이 무엇을 만들고 다음 사람이 어디를 바꿔야 하는지 설명한다.
-
-### `00-namespace.yaml`
-
-생성 리소스:
+검증 당시 `/omni/data`에서 실제 Nucleus 데이터 파일을 확인했다.
 
 ```text
-kind: Namespace
-metadata.name: omniverse
+/omni/data/usergroups.1.0
+/omni/data/meta.1.1
+/omni/data/content.1.1
+/omni/data/omniobjects.1.0
+/omni/data/__version_tag
 ```
 
-역할:
+컨테이너 입장에서는 실제 물리 위치가 Ceph RBD인지 로컬 디스크인지 중요하지 않다. Kubernetes/Ceph CSI가 RBD block device를 노드에 attach하고 filesystem으로 mount한다. 다만 RBD는 기본적으로 `ReadWriteOnce` 단일 writer로 보는 것이 안전하므로 `replicas: 1` StatefulSet과 맞다.
 
-- Nucleus 전용 namespace를 만든다.
-- Secret, StatefulSet, Service가 모두 이 namespace에 생성된다.
+## 7. Secret과 NGC 인증
 
-다음에 바꿀 수 있는 값:
+NVIDIA image pull에는 `nvcr.io` 인증이 필요하다.
 
-- namespace 이름을 바꾸려면 모든 manifest의 `metadata.namespace`도 같이 바꿔야 한다.
-- 현재는 `omniverse` 유지가 권장된다.
-
-### `10-headless-service.yaml`
-
-생성 리소스:
-
-```text
-kind: Service
-metadata.name: omniverse-nucleus-headless
-spec.clusterIP: None
+```bash
+kubectl -n omniverse create secret docker-registry nvcr-io \
+  --docker-server=nvcr.io \
+  --docker-username='$oauthtoken' \
+  --docker-password='<NGC_API_KEY>'
 ```
 
-역할:
-
-- StatefulSet `serviceName`으로 사용한다.
-- Pod identity와 DNS를 안정적으로 잡기 위한 headless service이다.
-
-다음에 바꿀 수 있는 값:
-
-- 보통 변경하지 않는다.
-- StatefulSet 이름을 바꾸면 selector label만 같이 맞춘다.
-
-### `20-statefulset.yaml`
-
-생성 리소스:
-
-```text
-kind: StatefulSet
-metadata.name: omniverse-nucleus
-spec.replicas: 1
-volumeClaimTemplates:
-  storageClassName: rook-ceph-block
-  size: 10Gi
-```
-
-역할:
-
-- 실제 NVIDIA Nucleus container 12개를 실행한다.
-- `nvcr.io/nvidia/omniverse/*` 이미지를 사용한다.
-- Rook-Ceph RBD PVC를 만들고 실제 Nucleus 데이터/로그 경로인 `/omni/data`, `/omni/log`, 일부 `/omni/temp`, `/omni/scratch-meta-dump` 등에 마운트한다.
-- `imagePullSecrets: nvcr-io`로 NGC private registry 인증을 사용한다.
-
-현재 중요한 값:
-
-```text
-persistent mount paths=/omni/data,/omni/log,/omni/temp,/omni/scratch-meta-dump
-SERVER_IP_OR_HOST=10.34.48.221
-WEB_PORT=8080
-SERVICE_API_PORT=3006
-storageClassName=rook-ceph-block
-storage=10Gi
-nodeName=com3    # 임시 우회값
-```
-
-다음에 반드시 확인/수정할 값:
-
-| 항목 | 현재 값 | 다음 작업 |
-| --- | --- | --- |
-| `SERVER_IP_OR_HOST` | `10.34.48.221` | MetalLB IP 또는 DNS에 맞게 변경 |
-| `storageClassName` | `rook-ceph-block` | 현재 live PVC와 맞추기 위해 유지. 신규 운영 설치/마이그레이션 시 `rook-ceph-block-nucleus-retain` 검토 |
-| PVC size | `10Gi` | 운영 용량으로 증설 |
-| `nodeName` | `com3` | scheduler 복구 후 제거 |
-| image tag | NVIDIA Compose Stack `2023.2.10` 기준 | 새 버전 사용 시 Compose artifact와 함께 재검증 |
-| Secret refs | `nvcr-io`, `nucleus-secrets`, `nucleus-passwords` | 운영 전 ExternalSecrets로 변경 |
-
-중요:
-
-- `nodeName: com3`는 운영 설정이 아니라 현재 클러스터 scheduler 문제를 우회하기 위한 임시값이다.
-- 운영 전에는 `nodeName`을 제거하고 `nodeSelector`, `affinity`, `tolerations`, `resources` 기반으로 배치해야 한다.
-
-### `10-internal-services.yaml`
-
-생성 리소스:
-
-```text
-kind: Service
-metadata.name: nucleus-api
-metadata.name: nucleus-lft
-metadata.name: nucleus-lft-lb
-metadata.name: nucleus-log-processor
-metadata.name: nucleus-resolver-cache
-metadata.name: nucleus-discovery
-metadata.name: nucleus-auth
-metadata.name: nucleus-navigator
-metadata.name: nucleus-search
-metadata.name: nucleus-thumbnails
-metadata.name: nucleus-tagging
-metadata.name: utl-monpx
-```
-
-역할:
-
-- Docker Compose의 service name DNS를 Kubernetes Service DNS로 대체한다.
-- 예를 들어 Compose에서 `nucleus-api:3006`으로 붙던 것을 Kubernetes에서도 같은 이름으로 붙을 수 있게 한다.
-- 내부 bootstrap 문제를 피하기 위해 `publishNotReadyAddresses: true`를 사용한다.
-
-다음에 바꿀 수 있는 값:
-
-- 외부 노출용이 아니므로 대부분 변경하지 않는다.
-- container port나 service name을 바꾸면 StatefulSet env와 같이 맞춰야 한다.
-- `nucleus-api`의 `3006` 포트는 내부용으로만 유지하고 외부 LoadBalancer에는 열지 않는다.
-
-### `10-loadbalancer-service.yaml`
-
-생성 리소스:
-
-```text
-kind: Service
-type: LoadBalancer
-metadata.name: omniverse-nucleus
-annotation: metallb.io/loadBalancerIPs: 10.34.48.221
-```
-
-역할:
-
-- 브라우저에서 접속할 수 있는 외부 IP를 제공한다.
-- 현재 URL은 `http://10.34.48.221:8080/`이다.
-- 외부 `8080`은 Pod 내부 Navigator `80`으로 연결한다.
-
-현재 중요한 값:
-
-```text
-metallb.io/loadBalancerIPs=10.34.48.221
-port=8080
-targetPort=80
-```
-
-다음에 반드시 확인/수정할 값:
-
-| 항목 | 현재 값 | 다음 작업 |
-| --- | --- | --- |
-| LoadBalancer IP | `10.34.48.221` | 사용 가능한 MetalLB IP로 변경 |
-| web port | `8080` | 운영 정책에 맞게 80/443/Ingress로 변경 가능 |
-| targetPort | `80` | Navigator UI가 뜨는 포트이므로 유지 |
-| TLS | 없음 | 운영 시 Ingress/Gateway/TLS 검토 |
-
-주의:
-
-- `10.34.48.220`은 ArgoCD에서 이미 사용 중이어서 Nucleus는 `10.34.48.221`을 사용했다.
-- MetalLB에서는 `spec.loadBalancerIP`와 `metallb.io/loadBalancerIPs`를 동시에 쓰지 않는다. 현재 manifest는 annotation만 사용한다.
-
-
-### Sync wave 기준
-
-파일명 앞의 `00`, `10`, `20`은 사람이 읽기 쉽게 정렬하기 위한 prefix이다. ArgoCD의 실제 적용 순서는 파일명이 아니라 각 manifest의 annotation으로 명시한다.
-
-```yaml
-metadata:
-  annotations:
-    argocd.argoproj.io/sync-wave: "<wave>"
-```
-
-현재 기준:
-
-| Wave | Manifest | 이유 |
-| --- | --- | --- |
-| `0` | `00-storageclass.yaml`, `00-namespace.yaml` | namespace가 먼저 있어야 namespaced resource를 만들 수 있음 |
-| `1` | `10-headless-service.yaml`, `10-internal-services.yaml`, `10-loadbalancer-service.yaml` | Nucleus Pod가 뜨기 전에 내부 DNS/Service 이름을 먼저 준비 |
-| `2` | `20-statefulset.yaml` | Secret/PVC/Service 전제가 준비된 뒤 실제 Nucleus Pod 실행 |
-
-따라서 파일명 prefix는 문서 가독성용이고, 운영 기준은 `argocd.argoproj.io/sync-wave`이다.
-
-### Git에 올리지 않는 것
-
-아래 값들은 manifest 원본에 직접 넣지 않는다.
+Git에 넣지 않는 값:
 
 ```text
 NGC API Key
@@ -365,477 +199,34 @@ SAML metadata 실제 값
 NVIDIA Compose artifact 원본
 ```
 
-대신 다음 runtime Secret 또는 ExternalSecret으로 주입한다.
+PoC runtime Secret:
 
 ```text
-nvcr-io
-nucleus-secrets
-nucleus-passwords
-```
-
-## 8. 실제 재현 절차
-
-### 8.1 NGC artifact 다운로드
-
-작업 서버에서 NGC CLI로 Compose Stack artifact를 받았다.
-
-```bash
-ngc registry resource download-version nvidia/omniverse/nucleus-compose-stack:2023.2.10
-```
-
-다운로드/압축해제 결과는 Git에 넣지 않는다.
-
-```text
-.artifacts/ngc/nucleus-compose-stack_v2023.2.10/
-.artifacts/nucleus-stack-2023.2.10/
-```
-
-Git에 넣지 않는 이유:
-
-- NVIDIA artifact는 외부 배포 대상이 아니다.
-- NGC 권한/라이선스 범위 내에서 받아야 한다.
-- Compose artifact와 secret material을 repo에 섞으면 안 된다.
-
-### 8.2 Docker/NGC 인증
-
-NVIDIA image pull에는 `nvcr.io` 인증이 필요하다.
-
-공식 방식:
-
-```bash
-docker login nvcr.io
-# Username: $oauthtoken
-# Password: NGC API Key
-```
-
-Kubernetes에서는 Docker login 대신 imagePullSecret을 만든다. 여기서 사용자가 실제 NGC key를 입력해야 하는 위치는 `<NGC_API_KEY>` 한 곳이다. 이 값은 Git에 절대 커밋하지 않는다.
-
-```bash
-kubectl -n omniverse create secret docker-registry nvcr-io \
-  --docker-server=nvcr.io \
-  --docker-username='$oauthtoken' \
-  --docker-password='<NGC_API_KEY>'
-```
-
-입력 기준:
-
-| 값 | 입력 내용 | Git 커밋 여부 |
-| --- | --- | --- |
-| `--docker-server` | `nvcr.io` | 가능 |
-| `--docker-username` | `$oauthtoken` | 가능 |
-| `--docker-password` | NGC Personal/API Key | 금지 |
-
-주의:
-
-- API key는 Git에 넣지 않는다.
-- README, RUNBOOK, YAML manifest에도 실제 key를 쓰지 않는다.
-- 채팅/터미널 기록에 노출된 키는 테스트 후 revoke/rotate한다.
-- 운영 전에는 OpenBao + External-Secrets로 관리한다.
-
-### 8.3 Compose env에서 필요한 값 확인
-
-NVIDIA artifact의 `base_stack/nucleus-stack.env`에서 중요한 값:
-
-```text
-ACCEPT_EULA=1
-SECURITY_REVIEWED=1
-SERVER_IP_OR_HOST=10.34.48.221
-DATA_ROOT=/var/lib/omni/nucleus-data    # NVIDIA Compose env 기본 개념
-WEB_PORT=8080
-SERVICE_API_PORT=3006
-REGISTRY=nvcr.io/nvidia/omniverse
-CORE_VERSION=1.14.55
-DISCOVERY_VERSION=1.5.6
-AUTH_VERSION=1.5.9
-NAV3_VERSION=3.3.7
-SEARCH_VERSION=3.2.14
-THUMBNAILING_VERSION=1.5.15
-TAGGING_VERSION=3.1.36
-```
-
-Kubernetes manifest에서는 이 값들을 `20-statefulset.yaml`의 container env와 image tag로 옮겼다.
-
-### 8.4 Secret 생성
-
-PoC에서는 다음 Secret을 클러스터에 직접 만들었다.
-
-```text
-nvcr-io             # nvcr.io pull secret
+nvcr-io             # nvcr.io imagePullSecret
 nucleus-secrets     # auth signing key, discovery token, salts, SAML blank metadata
 nucleus-passwords   # admin/service password
 ```
 
-운영에서는 직접 생성하지 말고 ExternalSecret으로 바꿔야 한다.
+운영 전에는 직접 생성한 Secret을 OpenBao + External-Secrets로 바꾼다.
 
-### 8.5 Manifest 적용
+## 8. 접속과 계정
 
-ArgoCD가 이 경로를 읽어 적용한다.
-
-```text
-argocd/minix/apps/omniverse-nucleus-poc/
-```
-
-수동 확인 명령:
-
-```bash
-kubectl -n argocd get app omniverse-nucleus-poc -o wide
-kubectl -n omniverse get sts,pvc,pod,svc -o wide
-kubectl -n omniverse describe pod omniverse-nucleus-0
-```
-
-### 8.6 접속 확인
-
-```bash
-curl -fsS -D - http://10.34.48.221:8080/ | head
-```
-
-정상이라면 `Omniverse Navigator` HTML이 응답한다.
-
-브라우저:
+현재 PoC 접속 주소:
 
 ```text
 http://10.34.48.221:8080/
 ```
 
-## 9. Kubernetes 변환 중 중요했던 차이점
+기본 관리자 계정은 NVIDIA Compose 기본값에 맞춘 `omniverse`이다. 비밀번호는 Git에 적지 않고 `nucleus-passwords` Secret의 `master-password`에서 온다.
 
-### 9.1 Compose DNS와 Kubernetes Service 차이
-
-Compose에서는 같은 network 안의 service 이름으로 바로 통신한다.
-
-예:
-
-```text
-nucleus-log-processor -> nucleus-api:3006
-nucleus-api -> nucleus-resolver-cache
-```
-
-Kubernetes에서는 이 이름들을 ClusterIP Service로 만들어줘야 한다. 그래서 `10-internal-services.yaml`을 추가했다.
-
-### 9.2 Ready 전 Endpoint 문제
-
-Kubernetes Service는 기본적으로 Ready Pod만 Endpoint로 등록한다. 그런데 Nucleus container들은 bootstrap 중 서로 먼저 붙어야 한다.
-
-문제:
-
-```text
-nucleus-api가 nucleus-resolver-cache에 붙어야 Ready가 됨
-하지만 Pod가 Ready가 아니어서 Service endpoint가 비어 있음
-```
-
-해결:
-
-```yaml
-publishNotReadyAddresses: true
-```
-
-내부용 Service에 이 옵션을 넣어 bootstrap circular dependency를 풀었다.
-
-### 9.3 `nucleus-api:3006` 포트 문제
-
-Compose에서는 container port가 같은 network에서 바로 보인다. Kubernetes Service는 `ports`에 명시한 포트만 접근 가능하다.
-
-문제 로그:
-
-```text
-attempting to connect to ws://nucleus-api:3006
-ConnectionRefusedError: Connect call failed
-```
-
-해결:
-
-- `nucleus-api` 내부 ClusterIP Service에 `service-api` port `3006` 추가
-- 외부 LoadBalancer에는 3006을 열지 않음
-
-### 9.4 Web 8080이 metrics로 붙던 문제
-
-처음에는 LoadBalancer `8080 -> targetPort 8080`으로 잡았다. 그런데 Pod 내부 8080은 `utl-monpx` metrics 쪽이었다.
-
-Nucleus Navigator UI는 container port `80`에서 응답했다.
-
-해결:
-
-```yaml
-ports:
-  - name: web
-    port: 8080
-    targetPort: 80
-```
-
-그래서 외부 URL은 그대로 `http://10.34.48.221:8080/`이고, 내부 target만 Navigator의 80으로 보낸다.
-
-### 9.5 MetalLB IP 문제
-
-처음 `10.34.48.220`을 쓰려고 했지만 이미 ArgoCD LoadBalancer가 사용 중이었다.
-
-현재 사용:
-
-```text
-10.34.48.221
-```
-
-또한 MetalLB에서는 `spec.loadBalancerIP`와 `metallb.io/loadBalancerIPs` annotation을 동시에 쓰면 Pending이 발생할 수 있어, 현재 manifest는 annotation만 사용한다.
-
-## 10. 현재 restart가 있었던 이유
-
-현재 Pod 상태에서 restart count가 보이는 이유는 전체 Pod가 실패한 것이 아니라 `nucleus-log-processor` container가 초기 부팅 중 2번 재시작했기 때문이다.
-
-확인된 이전 로그:
-
-```text
-attempting to connect to ws://nucleus-api:3006
-ConnectionRefusedError: Connect call failed
-Detach cmd failed with 1
-```
-
-해석:
-
-- `nucleus-log-processor`가 시작 직후 `nucleus-api:3006`에 붙으려고 했다.
-- 그 순간 `nucleus-api`가 아직 3006을 받을 준비가 끝나지 않았다.
-- `nucleus-log-processor`가 exit 1로 종료되고 kubelet이 재시작했다.
-- 이후 `nucleus-api`가 준비되면서 정상 Running/Ready가 되었다.
-
-현재 모든 container가 Ready라면 이 초기 restart는 치명적인 문제는 아니다. 다만 운영 전에는 startupProbe/readinessProbe 또는 init/startup ordering을 더 정리하는 것이 좋다.
-
-## 11. 현재 검증 상태
-
-마지막 확인 기준:
-
-```text
-ArgoCD Application: omniverse-nucleus-poc / Synced / Healthy
-StatefulSet: omniverse-nucleus / 1/1 Ready
-Pod: omniverse-nucleus-0 / 12/12 Running
-PVC: nucleus-data-omniverse-nucleus-0 / rook-ceph-block / 10Gi / Bound
-Service: omniverse-nucleus / LoadBalancer / 10.34.48.221
-Web: http://10.34.48.221:8080/ -> Omniverse Navigator
-```
-
-검증 명령:
+비밀번호 조회:
 
 ```bash
-kubectl -n argocd get app omniverse-nucleus-poc -o wide
-kubectl -n omniverse get pod omniverse-nucleus-0 -o wide
-kubectl -n omniverse get svc omniverse-nucleus -o wide
-curl -fsS -m 10 http://10.34.48.221:8080/ | grep -o '<title>[^<]*</title>'
+kubectl -n omniverse get secret nucleus-passwords \
+  -o jsonpath='{.data.master-password}' | base64 -d; echo
 ```
 
-
-## 11.1 Pod 삭제와 RBD 데이터 보존 기준
-
-2026-07-10 live 확인 결과, `nucleus-auth` 로그에서 `omniverse` 사용자 인증 성공을 확인했다.
-
-```text
-InternalCredentials.auth: username=omniverse
-status=OK
-```
-
-또한 PVC는 다음 상태였다.
-
-```text
-PVC: nucleus-data-omniverse-nucleus-0
-STATUS: Bound
-STORAGECLASS: rook-ceph-block
-VOLUME: pvc-67dc9fed-3f61-4cf3-88d2-b65a433956bb
-PV reclaimPolicy: Delete
-```
-
-실제 RBD mount는 다음 경로에서 확인했다.
-
-```text
-/omni/data                       -> /dev/rbd1
-/omni/log                        -> /dev/rbd1
-/omni/temp                       -> /dev/rbd1
-/omni/scratch-meta-dump          -> /dev/rbd1
-/var/lib/omni/nucleus-data/empty -> /dev/rbd1
-```
-
-`/omni/data`에는 Nucleus가 만든 실제 데이터 파일이 있다.
-
-```text
-/omni/data/usergroups.1.0
-/omni/data/meta.1.1
-/omni/data/content.1.1
-/omni/data/omniobjects.1.0
-/omni/data/__version_tag
-```
-
-데이터 보존 기준:
-
-| 상황 | 데이터 유지 여부 | 설명 |
-| --- | --- | --- |
-| Pod만 삭제 | 유지 | StatefulSet이 같은 PVC를 다시 붙인다. |
-| Pod가 장애로 재시작 | 유지 | 컨테이너/Pod lifecycle과 PVC lifecycle은 분리된다. |
-| StatefulSet 삭제, PVC 유지 | 유지 | PVC가 남아 있으면 재생성 시 같은 데이터를 다시 붙일 수 있다. |
-| PVC 삭제 | 삭제 가능성 높음 | 현재 PV reclaimPolicy가 `Delete`라 underlying RBD image도 삭제될 수 있다. |
-| namespace 삭제 | 삭제 가능성 높음 | namespace 안의 PVC가 삭제되면 RBD도 삭제될 수 있다. |
-
-운영에서는 실수로 PVC가 삭제되지 않도록 다음을 검토한다.
-
-- StatefulSet PVC retention policy 명시
-- ArgoCD prune 대상에서 PVC 보호
-- PV reclaimPolicy `Retain` 검토
-- Rook/Ceph snapshot 또는 Velero 백업 정책 수립
-
-
-## 11.2 Ceph/RBD 장애까지 고려한 데이터 보호 계층
-
-결론부터 말하면, `StorageClass reclaimPolicy: Retain`만으로는 충분하지 않다. 이것은 PVC 삭제 시 RBD image를 지우지 않게 하는 Kubernetes lifecycle 보호장치이지, Ceph cluster 자체가 망가지는 상황을 해결하지 않는다.
-
-데이터 보호는 아래 4계층으로 나눠야 한다.
-
-
-### Nucleus 전용 StorageClass
-
-신규 운영 설치 또는 PVC 재생성 마이그레이션부터는 기본 `rook-ceph-block` 대신 Nucleus 전용 StorageClass를 사용하는 것이 좋다.
-
-```text
-StorageClass: rook-ceph-block-nucleus-retain
-reclaimPolicy: Retain
-allowVolumeExpansion: true
-provisioner: rook-ceph.rbd.csi.ceph.com
-pool: replicapool
-```
-
-이 StorageClass는 PVC 삭제 실수 시 RBD image가 즉시 삭제되는 것을 막기 위한 것이다.
-
-현재 PoC manifest의 StatefulSet은 live PVC와의 호환을 위해 `storageClassName: rook-ceph-block`을 유지한다. Kubernetes StatefulSet의 `volumeClaimTemplates`는 생성 후 변경이 까다롭기 때문에, 이미 떠 있는 Nucleus에서 이 값을 Git으로 바로 바꾸면 ArgoCD sync 실패 또는 재생성 절차가 필요할 수 있다.
-
-운영 신규 설치라면 첫 Sync 전에 `20-statefulset.yaml`의 `storageClassName`을 아래처럼 바꾸는 방향이 좋다.
-
-```yaml
-volumeClaimTemplates:
-- spec:
-    storageClassName: rook-ceph-block-nucleus-retain
-```
-
-기존 PVC를 전용 StorageClass로 옮기려면 단순 patch가 아니라 snapshot/restore 또는 새 PVC 마이그레이션 절차로 진행한다.
- 단, 이미 생성된 PVC `nucleus-data-omniverse-nucleus-0`는 생성 당시 `rook-ceph-block`을 사용했으므로 StorageClass 이름이 자동으로 바뀌지는 않는다. 현재 live PV는 별도로 `Retain`으로 patch 완료했다.
-
-### 1단계: Pod/StatefulSet lifecycle 보호
-
-현재 StatefulSet에는 다음 설정을 둔다.
-
-```yaml
-persistentVolumeClaimRetentionPolicy:
-  whenDeleted: Retain
-  whenScaled: Retain
-```
-
-의미:
-
-- StatefulSet을 지우거나 scale down해도 PVC를 자동 삭제하지 않는다.
-- Pod가 재시작되거나 재생성되어도 같은 PVC를 다시 붙인다.
-
-### 2단계: PVC/PV 삭제 보호
-
-Kubernetes StorageClass 공식 동작 기준으로, 동적 생성 PV는 StorageClass의 `reclaimPolicy`를 따른다. 지정하지 않으면 기본값은 `Delete`이다. 따라서 운영용 Nucleus는 전용 StorageClass를 `Retain`으로 만드는 것이 좋다.
-
-예시:
-
-```yaml
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: rook-ceph-block-retain
-provisioner: rook-ceph.rbd.csi.ceph.com
-reclaimPolicy: Retain
-allowVolumeExpansion: true
-parameters:
-  clusterID: rook-ceph
-  pool: replicapool
-  imageFormat: "2"
-  imageFeatures: layering
-  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
-  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
-  csi.storage.k8s.io/controller-publish-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/controller-publish-secret-namespace: rook-ceph
-  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
-  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
-```
-
-주의:
-
-- 이미 만들어진 PV는 StorageClass를 수정해도 자동으로 바뀌지 않는다.
-- 현재 live Nucleus PV는 아래 명령으로 `Retain`으로 패치했다.
-
-```bash
-PV=$(kubectl -n omniverse get pvc nucleus-data-omniverse-nucleus-0 -o jsonpath='{.spec.volumeName}')
-kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
-kubectl get pv "$PV" -o jsonpath='{.metadata.name} {.spec.persistentVolumeReclaimPolicy}{"\n"}'
-```
-
-### 3단계: Ceph 내부 장애 보호
-
-Rook 예시의 RBD pool은 보통 다음처럼 구성한다.
-
-```yaml
-spec:
-  failureDomain: host
-  replicated:
-    size: 3
-```
-
-의미:
-
-- 서로 다른 host의 OSD 3개에 복제본을 둔다.
-- 단일 디스크/OSD/노드 장애는 Ceph가 복제본으로 버틸 수 있다.
-- 그러나 Ceph pool 자체가 손상되거나 여러 host가 동시에 손상되면 이 계층만으로는 부족하다.
-
-### 4단계: Snapshot / off-cluster backup / DR
-
-Ceph cluster 자체 장애까지 대비하려면 RBD snapshot 또는 외부 백업이 필요하다. Rook/Ceph CSI는 VolumeSnapshotClass와 VolumeSnapshot으로 RBD snapshot을 만들고, snapshot에서 새 PVC로 복구하는 방식을 제공한다.
-
-예시 흐름:
-
-```text
-VolumeSnapshotClass 생성
-  -> VolumeSnapshot 생성(source PVC: nucleus-data-omniverse-nucleus-0)
-  -> READYTOUSE 확인
-  -> 장애 시 snapshot을 dataSource로 하는 새 PVC 생성
-```
-
-사이트/클러스터 전체 장애까지 고려하면 RBD mirroring 또는 Velero/Kopia/Restic 같은 외부 백업도 필요하다. Rook RBD mirroring은 여러 Ceph cluster 사이에서 RBD image를 비동기 복제하는 DR 방식이다.
-
-운영 권장안:
-
-| 계층 | 권장 설정 | 목적 |
-| --- | --- | --- |
-| StatefulSet | `persistentVolumeClaimRetentionPolicy: Retain` | StatefulSet 삭제/scale down 시 PVC 보존 |
-| PV | `persistentVolumeReclaimPolicy: Retain` | PVC 삭제 실수 시 RBD 즉시 삭제 방지 |
-| StorageClass | Nucleus 전용 `rook-ceph-block-retain` | 새 PV가 처음부터 Retain으로 생성되게 함 |
-| Ceph pool | `replicated.size: 3`, `failureDomain: host` | 단일 노드/OSD 장애 대응 |
-| Snapshot | RBD VolumeSnapshot 정기 생성 | 논리 삭제/업데이트 사고 복구 |
-| Off-cluster backup | Velero/Kopia/Restic/Object storage/NAS 등 | Ceph cluster 자체 장애 대응 |
-| DR | RBD mirroring | 다른 Ceph cluster로 재해복구 |
-
-참고 공식 문서:
-
-- Kubernetes StorageClass reclaimPolicy: https://kubernetes.io/docs/concepts/storage/storage-classes/#reclaim-policy
-- Rook Ceph RBD block storage: https://rook.io/docs/rook/latest-release/Storage-Configuration/Block-Storage-RBD/block-storage/
-- Rook Ceph CSI snapshots: https://rook.io/docs/rook/latest-release/Storage-Configuration/Ceph-CSI/ceph-csi-snapshot/
-- Rook RBD mirroring/DR: https://rook.io/docs/rook/latest-release/Storage-Configuration/Block-Storage-RBD/rbd-mirroring/
-
-## 11.3 Nucleus 계정/비밀번호 변경 절차
-
-현재 기본 관리자 계정은 `omniverse`이고, 비밀번호는 `nucleus-passwords` Secret의 `master-password`에서 온다. 서비스 계정들은 `service-password`를 사용한다. 실제 비밀번호는 Git에 넣지 않는다.
-
-현재 구조:
-
-```text
-Secret nucleus-passwords
-├── master-password      -> omniverse 관리자 계정 비밀번호
-└── service-password     -> tags/search/thumbnails 등 내부 서비스 계정 비밀번호
-
-20-statefulset.yaml
-└── nucleus-auth container
-    ├── NUCLEUS_MASTER_PASSWORD <- secretKeyRef master-password
-    ├── NUCLEUS_SERVICE_PASSWORD <- secretKeyRef service-password
-    └── CREDENTIAL_USERS         <- 로그인 가능한 사용자 목록
-```
-
-### 관리자 비밀번호 변경
+관리자 비밀번호 변경:
 
 ```bash
 kubectl -n omniverse patch secret nucleus-passwords \
@@ -845,77 +236,167 @@ kubectl -n omniverse patch secret nucleus-passwords \
 kubectl -n omniverse rollout restart statefulset/omniverse-nucleus
 ```
 
-주의:
+새 사용자 예시:
 
-- 실제 값은 `<NEW_ADMIN_PASSWORD>` 자리에 입력한다.
-- Git/README/RUNBOOK/YAML에는 실제 비밀번호를 쓰지 않는다.
-- 운영에서는 OpenBao + External-Secrets로 `nucleus-passwords`를 생성하게 바꾼다.
+1. Secret에 password key 추가
+2. `20-statefulset.yaml`의 `nucleus-auth` env에 secretKeyRef 추가
+3. `CREDENTIAL_USERS` JSON에 사용자 추가
+4. ArgoCD sync 또는 StatefulSet restart
 
-### `netai` 같은 사용자 추가
+실제 비밀번호는 `<NETAI_PASSWORD>` 같은 placeholder만 문서/manifest에 두고, 값은 Secret Store에 넣는다.
 
-예: `netai` 사용자를 추가하고 싶다면 비밀번호는 Secret에만 넣고, manifest에는 secretKeyRef와 사용자명만 넣는다.
+## 9. 데이터 보호 기준
 
-1. Secret에 새 password key 추가:
+| 상황 | 데이터 보존 기대 | 필요한 보호장치 |
+| --- | --- | --- |
+| Pod 재시작/삭제 | 유지 | StatefulSet + 같은 PVC 재부착 |
+| StatefulSet 삭제/scale down | 유지 | `persistentVolumeClaimRetentionPolicy: Retain` |
+| PVC 실수 삭제 | RBD image 보존 기대 | StorageClass/PV `reclaimPolicy: Retain` |
+| 단일 OSD/노드 장애 | Ceph 복제로 유지 기대 | Ceph pool `replicated.size: 3`, `failureDomain: host` |
+| Ceph pool/cluster 손상 | 보장 불가 | VolumeSnapshot, off-cluster backup, RBD mirroring |
+| 사이트/클러스터 전체 손실 | 보장 불가 | 별도 클러스터/오브젝트 스토리지/NAS 백업 |
+
+운영 권장 계층:
+
+1. StatefulSet PVC retention policy
+2. Nucleus 전용 Retain StorageClass
+3. Ceph replicated pool
+4. 정기 RBD VolumeSnapshot
+5. off-cluster backup
+6. 필요 시 RBD mirroring 기반 DR
+
+공식 참고:
+
+- Kubernetes StorageClass reclaimPolicy: https://kubernetes.io/docs/concepts/storage/storage-classes/#reclaim-policy
+- Rook Ceph RBD block storage: https://rook.io/docs/rook/latest-release/Storage-Configuration/Block-Storage-RBD/block-storage/
+- Rook Ceph CSI snapshots: https://rook.io/docs/rook/latest-release/Storage-Configuration/Ceph-CSI/ceph-csi-snapshot/
+- Rook RBD mirroring/DR: https://rook.io/docs/rook/latest-release/Storage-Configuration/Block-Storage-RBD/rbd-mirroring/
+
+## 10. 기존 MiniX live PoC 이행 노트
+
+현재 MiniX live PoC는 Nucleus 전용 StorageClass를 만들기 전에 먼저 `rook-ceph-block`으로 PVC가 생성되었다. 그래서 live StatefulSet의 `volumeClaimTemplates.storageClassName`은 바로 바꾸지 않았다.
+
+이유:
+
+- StatefulSet `volumeClaimTemplates` 변경은 기존 PVC에 자동 반영되지 않는다.
+- 기존 PVC의 StorageClass 이름도 자동 변경되지 않는다.
+- Git에서 바로 바꾸면 ArgoCD sync 실패 또는 재생성/마이그레이션 절차가 필요할 수 있다.
+
+대신 live PV는 아래처럼 `Retain`으로 패치했다.
 
 ```bash
-kubectl -n omniverse patch secret nucleus-passwords \
-  --type merge \
-  -p '{"stringData":{"netai-password":"<NETAI_PASSWORD>"}}'
+PV=$(kubectl -n omniverse get pvc nucleus-data-omniverse-nucleus-0 -o jsonpath='{.spec.volumeName}')
+kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+kubectl get pv "$PV" -o jsonpath='{.metadata.name} {.spec.persistentVolumeReclaimPolicy}{"\n"}'
 ```
 
-2. `20-statefulset.yaml`의 `nucleus-auth` container env에 추가:
+따라서 구분은 다음과 같다.
+
+| 대상 | StorageClass | 보호 상태 |
+| --- | --- | --- |
+| 기존 MiniX live PVC | `rook-ceph-block` | PV를 직접 `Retain`으로 패치 |
+| 신규 설치/운영 권장 | `rook-ceph-block-nucleus-retain` | 처음부터 Retain PV 생성 |
+
+기존 PVC를 전용 StorageClass로 옮기려면 snapshot/restore 또는 새 PVC 마이그레이션 절차로 진행한다.
+
+## 11. 트러블슈팅 기록
+
+### `nucleus-log-processor` 초기 restart
+
+초기 부팅 중 `nucleus-log-processor`가 `nucleus-api:3006`에 너무 빨리 접근하면서 2번 재시작했다.
+
+```text
+attempting to connect to ws://nucleus-api:3006
+ConnectionRefusedError: Connect call failed
+```
+
+이후 `nucleus-api`가 준비되면서 정상 Ready가 되었다. 운영 전에는 startupProbe/readinessProbe 또는 startup ordering을 더 정리한다.
+
+### 내부 DNS/Endpoint 문제
+
+Nucleus container들은 bootstrap 중 서로의 service name으로 먼저 붙어야 한다. Kubernetes Service는 기본적으로 Ready Pod만 endpoint로 넣기 때문에 circular bootstrap 문제가 생길 수 있다.
+
+해결:
 
 ```yaml
-- name: NUCLEUS_NETAI_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: nucleus-passwords
-      key: netai-password
+publishNotReadyAddresses: true
 ```
 
-3. 같은 container의 `CREDENTIAL_USERS` JSON에 사용자 추가:
+내부 ClusterIP Service들에 이 옵션을 넣었다.
 
-```json
-{
-  "username": "netai",
-  "password": "$(NUCLEUS_NETAI_PASSWORD)",
-  "profile": { "admin": true }
-}
+### `nucleus-api:3006` 포트
+
+Compose에서는 같은 network 안의 container port가 바로 보이지만 Kubernetes Service는 선언한 port만 접근 가능하다. 따라서 내부 `nucleus-api` Service에 `service-api` port `3006`을 추가했다. 이 포트는 외부 LoadBalancer에는 열지 않는다.
+
+### Web 8080이 metrics로 붙던 문제
+
+Pod 내부에서 `utl-monpx`가 8080을 쓰고 Navigator UI는 80을 쓴다. 그래서 외부 Service는 `8080 -> targetPort 80`으로 둔다.
+
+```yaml
+ports:
+  - name: web
+    port: 8080
+    targetPort: 80
 ```
 
-4. ArgoCD sync 또는 StatefulSet 재시작:
+## 12. 검증 명령
 
 ```bash
-kubectl -n omniverse rollout restart statefulset/omniverse-nucleus
+kubectl -n argocd get app omniverse-nucleus-poc -o wide
+kubectl -n omniverse get sts,pvc,pod,svc -o wide
+kubectl -n omniverse get pod omniverse-nucleus-0 \
+  -o jsonpath='{range .status.containerStatuses[*]}{.name}{" ready="}{.ready}{" restart="}{.restartCount}{"\n"}{end}'
+kubectl -n omniverse logs omniverse-nucleus-0 -c nucleus-api --tail=100
+kubectl -n omniverse logs omniverse-nucleus-0 -c nucleus-auth --tail=100
+curl -fsS -D - http://10.34.48.221:8080/ | head
 ```
 
-주의:
+정상 기준:
 
-- `netai/<NETAI_PASSWORD>`처럼 실제 비밀번호를 Git에 직접 쓰지 않는다.
-- 문서와 manifest에는 `<NETAI_PASSWORD>` 또는 secretKeyRef만 둔다.
-- 여러 사용자를 운영할 거면 Nucleus 내장 사용자보다 OIDC/Keycloak 연동을 검토하는 것이 좋다.
+```text
+ArgoCD Application: Synced / Healthy
+StatefulSet: omniverse-nucleus 1/1 Ready
+Pod: omniverse-nucleus-0 12/12 Running
+Service: omniverse-nucleus LoadBalancer 10.34.48.221
+Web: Omniverse Navigator 응답
+```
 
-## 12. 운영화 전에 해야 할 일
+## 13. 운영화 전에 해야 할 일
 
-### 필수
-
-- kube-scheduler / kube-controller-manager 불안정 원인 해결
-- `20-statefulset.yaml`의 임시 `nodeName: com3` 제거
-- Secret 직접 생성 방식 제거
-- OpenBao + External-Secrets로 `nvcr-io`, `nucleus-secrets`, `nucleus-passwords` 관리
-- 운영 DNS/TLS 결정
-- backup/restore 절차 수립
-- PVC 용량 산정
+- kube-scheduler / kube-controller-manager 안정화
+- `nodeName: com3` 제거
 - resource requests/limits 재산정
 - startupProbe/readinessProbe/livenessProbe 추가
+- OpenBao + External-Secrets로 Secret 관리 전환
+- 운영 DNS/TLS/Ingress 또는 Gateway 결정
+- PVC 용량 산정 및 expansion 정책 확인
+- RBD snapshot/restore 절차 문서화
+- off-cluster backup 또는 RBD mirroring 검토
+- Nucleus OIDC/Keycloak 연동 여부 검토
 
-### SmartX 구조로 옮길 때
+## 14. SmartX 구조로 옮길 때
 
-현재 PoC는 MiniX ArgoCD app path에 직접 manifest로 들어가 있다. 다음 단계에서는 SmartX 구조에 맞춰 다음 중 하나로 옮긴다.
+현재 PoC는 순수 Kubernetes manifest로 검증했다. 다음 단계에서는 SmartX 방식에 맞춰 엔진/catalog와 cluster preset을 분리한다.
 
-1. `smartx-k8s` 엔진에 `apps/omniverse-nucleus` catalog 추가
-2. `twinx-k8s` preset의 `values.yaml`에서 feature 활성화
-3. `twinx-k8s/patches/omniverse-nucleus/values.yaml`에 cluster별 IP, storageClass, domain, secret reference만 둠
+예상 방향:
+
+```text
+smartx-k8s 또는 eecs-k8s 엔진
+  -> apps/omniverse-nucleus/
+     -> manifest.yaml
+     -> values.yaml
+     -> templates/statefulset.yaml
+     -> templates/services.yaml
+     -> templates/storageclass.yaml
+
+twinx-k8s preset
+  -> values.yaml에서 feature 활성화
+  -> patches/omniverse-nucleus/values.yaml
+     -> loadBalancerIP
+     -> storageClassName
+     -> domain/TLS
+     -> secretRef
+```
 
 예상 feature 이름:
 
@@ -933,61 +414,13 @@ scalex.io/omniverse/nucleus:
     - scalex.io/secrets/external-secrets
 ```
 
-이렇게 하면 `mobilex-k8s`처럼 cluster preset은 차이점만 들고, 실제 배포 방식은 engine/catalog 쪽에서 관리할 수 있다.
-
-## 13. 빠른 점검 명령 모음
-
-```bash
-# ArgoCD 상태
-kubectl -n argocd get app omniverse-nucleus-poc -o wide
-
-# Kubernetes 리소스
-kubectl -n omniverse get sts,pvc,pod,svc -o wide
-
-# 12개 container ready/restart 확인
-kubectl -n omniverse get pod omniverse-nucleus-0 \
-  -o jsonpath='{range .status.containerStatuses[*]}{.name}{" ready="}{.ready}{" restart="}{.restartCount}{"\n"}{end}'
-
-# Nucleus API/Auth 로그
-kubectl -n omniverse logs omniverse-nucleus-0 -c nucleus-api --tail=100
-kubectl -n omniverse logs omniverse-nucleus-0 -c nucleus-auth --tail=100
-kubectl -n omniverse logs omniverse-nucleus-0 -c nucleus-log-processor --tail=100
-
-# Web 접속
-curl -fsS -D - http://10.34.48.221:8080/ | head
-```
-
-## 14. 결론
+## 15. 결론
 
 이번 PoC에서 확인한 결론은 다음이다.
 
 - NVIDIA Enterprise Nucleus Compose Stack `2023.2.10`의 실제 이미지를 Kubernetes에서 실행할 수 있다.
-- Compose service 12개를 한 StatefulSet Pod의 12개 container로 옮기면 초기 PoC는 가능하다.
+- Compose service 12개를 한 StatefulSet Pod의 12개 container로 옮기는 초기 방식은 동작한다.
 - Rook-Ceph RBD PVC를 Nucleus 실제 데이터/로그 경로로 사용할 수 있다.
-- MetalLB LoadBalancer IP를 통해 Nucleus Navigator에 접속할 수 있다.
-- 다만 이 구성은 아직 운영용이 아니라 SmartX catalog/preset 이관 전 검증 단계이다.
-
-## 디렉터리 구조 정리
-
-```text
-kubernetes/apps/omniverse-nucleus/
-├── README.md
-├── RUNBOOK.md
-├── manifests/
-│   └── nucleus/                 # 실제 Nucleus 배포에 필요한 manifest 5개
-│       ├── 00-storageclass.yaml
-├── 00-namespace.yaml
-│       ├── 10-headless-service.yaml
-│       ├── 10-internal-services.yaml
-│       ├── 10-loadbalancer-service.yaml
-│       └── 20-statefulset.yaml
-└── experiments/
-    └── rbd-smoke/               # 과거 RBD PVC 검증용. Nucleus 배포에는 필요 없음
-        ├── 00-namespace-pvc.yaml
-        ├── 10-rbd-write-pod.yaml
-        └── 20-rbd-readback-pod.yaml
-```
-
-- `manifests/nucleus/`: 다음에 실제로 참고/적용할 Nucleus manifest.
-- `experiments/rbd-smoke/`: RBD PVC가 붙고 데이터가 유지되는지 먼저 확인했던 실험 기록. 최종 Nucleus 배포에는 적용하지 않는다.
-- 실제 운영 원본은 `MiniX:argocd/minix/apps/omniverse-nucleus-poc/`이고, 이 runbook repo는 검토/재현용 사본이다.
+- MetalLB LoadBalancer IP를 통해 Nucleus Navigator와 Isaac Sim client 접속이 가능하다.
+- 신규 설치/운영 이관은 처음부터 `rook-ceph-block-nucleus-retain` StorageClass를 써야 한다.
+- 다만 Ceph 자체 장애에 대비하려면 Retain만으로 부족하며 snapshot/off-cluster backup/DR 설계가 필요하다.
