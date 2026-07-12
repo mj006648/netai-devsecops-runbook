@@ -16,12 +16,12 @@ c-k8s
   -> feature 활성화 + patches/omniverse-nucleus/values.yaml 작성
 ```
 
-실제 Kubernetes 배포는 아직 하지 않았다.
+실제 Kubernetes 배포까지 완료했다.
 
 ```text
-kubectl apply: 하지 않음
-Argo CD sync: 하지 않음
-c-k8s push: 아직 하지 않음
+eecs-k8s/main: Nucleus app catalog push 완료
+c-k8s/main: C 클러스터 preset push 완료
+C cluster: StatefulSet/PVC/Service/HTTP 응답 확인 완료
 ```
 
 ## 2. eecs-k8s 작업
@@ -97,10 +97,11 @@ org.ulagbulag.io/omniverse/nucleus:
 
 ```text
 local branch: ops
-remote push: 아직 안 함
+remote branch: ops push 완료
+main branch: ops 내용을 fast-forward merge 후 push 완료
 ```
 
-원격 `ops` 브랜치가 없어서 로컬에서 최신 `origin/main` 기준으로 `ops` 브랜치를 만들었다.
+원격 `ops` 브랜치가 없어서 로컬에서 최신 `origin/main` 기준으로 `ops` 브랜치를 만들었고, 검증 후 `main`에도 동일 커밋을 반영했다.
 
 ### 3.1 feature 활성화
 
@@ -226,32 +227,68 @@ placeholder_remaining: False
 
 ```text
 eecs-k8s/main: push 완료
-c-k8s/ops: 로컬 변경만 있음, push 안 함
-실제 C 클러스터 배포: 안 함
-Argo CD sync: 안 함
+c-k8s/ops: push 완료
+c-k8s/main: push 완료
+실제 C 클러스터 배포: 완료
+Nucleus HTTP 응답: 확인 완료
 ```
 
-c-k8s 로컬 변경 상태:
+관련 커밋:
 
 ```text
-M  values.yaml
-?? patches/omniverse-nucleus/values.yaml
+eecs-k8s/main
+  3bbfdde feat: add omniverse nucleus app
+  4c1ab24 fix: align nucleus secret keys
+
+c-k8s/main
+  1042776 feat: enable omniverse nucleus
 ```
 
-## 6. 다음 단계
+## 6. C 클러스터 배포 검증
 
-1. `c-k8s/patches/omniverse-nucleus/values.yaml`의 실제 Secret 값을 Git에 올릴지 최종 확인한다.
-2. `c-k8s/ops` 브랜치에 커밋한다.
-3. `c-k8s/ops` 브랜치를 push한다.
-4. Tower Argo CD에서 root app이 `c-omniverse-nucleus` Application을 생성하는지 확인한다.
-5. `c-omniverse-nucleus` diff/sync를 확인한다.
-6. C 클러스터에서 다음을 확인한다.
+검증 일시: 2026-07-12
+
+검증 대상:
+
+```text
+cluster context: kubernetes-admin@ops.site-c.openark
+namespace: omniverse
+statefulset: omniverse-nucleus
+pod: omniverse-nucleus-0
+service: omniverse-nucleus
+external IP: 10.33.143.10
+```
+
+검증 결과:
+
+| 항목 | 결과 |
+| --- | --- |
+| Pod | `omniverse-nucleus-0` Running |
+| Container readiness | 12/12 Ready |
+| StatefulSet | 1/1 Ready |
+| PVC | `nucleus-data-omniverse-nucleus-0` Bound |
+| StorageClass | `ceph-block-noreplicas` |
+| PVC size | 10Gi |
+| Service type | LoadBalancer |
+| External IP | `10.33.143.10` |
+| HTTP check | `http://10.33.143.10:8080/` -> 200 OK |
+| UI title check | `Omniverse Navigator` 응답 확인 |
+
+확인 명령:
 
 ```bash
-kubectl -n omniverse get secret
-kubectl -n omniverse get pod,pvc,svc -o wide
-kubectl -n omniverse logs pod/omniverse-nucleus-0 -c nucleus-api
+kubectl -n omniverse get pod omniverse-nucleus-0 -o wide
+kubectl -n omniverse get sts omniverse-nucleus
+kubectl -n omniverse get pvc nucleus-data-omniverse-nucleus-0
+kubectl -n omniverse get svc omniverse-nucleus
+curl -fsS -D - http://10.33.143.10:8080/ | head
 ```
 
-7. `10.33.143.10:8080`으로 Nucleus Navigator 접속을 확인한다.
-8. Isaac Sim에서 Nucleus 접속을 확인한다.
+현재 관찰된 restart는 `nucleus-api` 컨테이너 1회다. 재검증 시 Pod는 Running이고 12개 컨테이너가 모두 Ready 상태였으므로 현재 차단 이슈는 아니다.
+
+## 7. 남은 확인 사항
+
+1. Isaac Sim에서 `10.33.143.10` Nucleus 접속 및 로그인 재확인
+2. `netai` 사용자 자동 생성이 필요한 경우 초기화 Job/API 절차 추가
+3. 운영 전 Nucleus 전용 `Retain` RBD StorageClass로 전환 여부 결정
+4. Secret을 계속 GitOps 값으로 둘지, 운영 단계에서 External Secrets/OpenBao로 이관할지 결정
