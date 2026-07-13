@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-07-13 | Hardware / Provisioning | [Supermicro E300 Ubuntu 24.04 PXE/UEFI 복구](hardware/provisioning/supermicro-e300-ubuntu-24-04-pxe-uefi-recovery-2026-07-13.md) | KISS PXE network/HWE package 실패, stale UEFI NVRAM entry와 GRUB 등록 오류, Subiquity 전체 재시작 및 disk boot 검증 |
 | 2026-07-01 | Hardware / Power | [SYS-210P DC PSU 장애 및 AC 전환 문의](hardware/power/supermicro-sys-210p-dc-psu-2026-07-01.md) | edgebox3/4 power-off, S-1200-48 external AC-to-48V DC PSU 불안정, Supermicro 공식 AC conversion 확인 항목 |
 | 2026-07-01 | Kubernetes / Networking | [TwinX Cilium GitOps 및 Hubble relay 복구](kubernetes/networking/twinx-cilium-hubble-gitops-2026-07-01.md) | Cilium GitOps ownership 전환, Hubble relay/metrics 활성화, certgen Job, relay hostNetwork 복구, edgebox3/4 known exception |
 | 2026-06-29 | Kubernetes / Cluster Lifecycle | [TwinX 단일 Control Plane 전환 계획](kubernetes/cluster-lifecycle/twinx-single-control-plane-transition-2026-06-29.md) | control1만 남기고 control2/control3를 제거하기 위한 preflight, etcd snapshot, 단계별 제거, 중단 기준 |
