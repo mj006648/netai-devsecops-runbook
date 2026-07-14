@@ -373,6 +373,22 @@ device:
 
 실제 CEL attribute key는 대상 클러스터의 NVIDIA DRA driver가 생성한 `ResourceSlice`를 읽고 확정한다. repo에 임의 attribute schema를 하드코딩하지 않는다.
 
+### 5.3.1 MVP GPU 독점 할당 정책
+
+현재 MVP의 확정 정책은 다음과 같다.
+
+```text
+물리 GPU 1개 = 실행 중인 Isaac Sim 인스턴스 1개
+```
+
+- 인스턴스마다 선택한 GPU UUID를 지정하는 독립 DRA `ResourceClaim`을 만든다.
+- 해당 GPU에 할당된 Claim이 있으면 UI는 `Allocated`로 표시하고 두 번째 인스턴스 생성을 거부한다.
+- GPU 공유, time-slicing, MPS, MIG, vGPU는 현재 MVP와 SmartX 1차 이관 범위에서 제외한다.
+- 향후 공유가 필요하면 L40S처럼 여유 VRAM이 큰 호환 GPU 한 장에서 별도 feature flag로 부하·VRAM·WebRTC 지연·장애 격리를 검증한 뒤 도입한다.
+- A100처럼 RT Core가 없어 Isaac Sim WebRTC 정책에 맞지 않는 GPU는 공유 여부와 관계없이 선택 불가로 유지한다.
+
+이 정책은 사용자별 세션 안정성과 GPU 반환 동작을 우선한다. GPU가 부족해지기 전에는 유휴 세션 자동 종료가 물리 GPU 공유보다 우선한다.
+
 ### 5.4 이미지 선택
 
 원본은 Harbor/Docker Hub catalog를 조회해 Create modal에서 image를 선택할 수 있다.
@@ -475,6 +491,8 @@ Node metadata
 
 `nvidia-smi`를 UI Pod가 SSH로 실행하거나 각 노드에서 직접 수집하지 않는다.
 
+UI는 `ResourceSlice`의 모든 device를 `(driver, pool, device)` key로 펼치고, 모든 namespace의 `ResourceClaim.status.allocation.devices.results`와 비교해 이미 할당된 GPU를 제외한다. `Node`의 Ready/unschedulable 상태도 함께 반영한다. 화면의 가용 표시는 안내이며 생성 순간의 최종 중복 할당 판정은 scheduler와 DRA allocator가 담당한다.
+
 WebRTC 호환 여부는 검증된 GPU capability 정책으로 계산한다. 원본은 NVENC가 없는 GPU 제품군을 WebRTC 대상에서 제외하므로, 우리 클러스터의 실제 GPU 제품별 지원 여부를 먼저 검증하고 allow/deny 정책을 정한다.
 
 UI API는 최소 다음 정보를 반환한다.
@@ -485,6 +503,7 @@ UI API는 최소 다음 정보를 반환한다.
   "device": "<driver-device-id>",
   "uuid": "<gpu-uuid>",
   "product": "L40S",
+  "status": "Available",
   "allocatable": true,
   "compatibleWithWebRTC": true
 }
@@ -718,7 +737,7 @@ services: get, list, create, delete
 pods: get, list
 events: get, list
 resourceclaimtemplates: get, list, create, delete
-resourceclaims: get, list
+resourceclaims: get, list, create, delete
 ```
 
 ### 12.2 ClusterRole read-only
@@ -727,6 +746,7 @@ resourceclaims: get, list
 nodes: get, list
 deviceclasses: get, list
 resourceslices: get, list
+resourceclaims across namespaces: get, list
 ```
 
 ### 12.3 제거할 권한
@@ -945,7 +965,7 @@ kubectl get nodes -o wide
 
 ### Phase 4 — 최소 Isaac UI 구현
 
-1. GPU inventory API
+1. cluster-wide GPU inventory API와 Available/Allocated/Unavailable 계산
 2. 인스턴스 create/list/detail/delete API
 3. GPU 선택 화면
 4. Stream IP 표시
