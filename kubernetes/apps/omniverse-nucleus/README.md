@@ -10,8 +10,8 @@
 | 파일/디렉터리 | 역할 |
 | --- | --- |
 | [`RUNBOOK.md`](./RUNBOOK.md) | 전체 설계 판단, 재현 절차, 문제 해결, 운영 전 보강 항목 |
-| [`SMARTX_EECS_MIGRATION_PLAN.md`](./SMARTX_EECS_MIGRATION_PLAN.md) | eecs-k8s + c-k8s 구조로 이관하기 위한 구현 계획 |
-| [`SMARTX_EECS_EXECUTION.md`](./SMARTX_EECS_EXECUTION.md) | eecs-k8s/c-k8s 실제 작업 및 렌더링 검증 기록 |
+| [`SMARTX_EECS_MIGRATION_PLAN.md`](./SMARTX_EECS_MIGRATION_PLAN.md) | 완료된 eecs-k8s + c-k8s 이관을 재현/변경하기 위한 파일별 구현 가이드 |
+| [`SMARTX_EECS_EXECUTION.md`](./SMARTX_EECS_EXECUTION.md) | eecs-k8s/c-k8s commit과 C 클러스터 12/12 Ready, PVC, LoadBalancer, HTTP 200 실제 완료 증거 |
 | [`manifests/nucleus/`](./manifests/nucleus/) | 신규 설치 기준 Nucleus Kubernetes manifest 사본 |
 
 ## 디렉터리 구조
@@ -21,6 +21,7 @@ kubernetes/apps/omniverse-nucleus/
 ├── README.md
 ├── RUNBOOK.md
 ├── SMARTX_EECS_MIGRATION_PLAN.md
+├── SMARTX_EECS_EXECUTION.md
 ├── manifests/
 │   └── nucleus/                         # 신규 설치 기준 Nucleus manifest
 │       ├── 00-storageclass.yaml          # Nucleus 전용 Retain RBD StorageClass
@@ -31,7 +32,34 @@ kubernetes/apps/omniverse-nucleus/
 │       └── 20-statefulset.yaml
 ```
 
-## 현재 검증된 것
+## C 클러스터 SmartX 배포 상태
+
+Nucleus는 계획 단계가 아니라 실제 이관·배포 완료 상태다.
+
+```text
+eecs-k8s/main: 3bbfdde, 4c1ab24
+c-k8s/main: 1042776
+C cluster Pod: 12/12 Ready
+StatefulSet: 1/1 Ready
+PVC: Bound, 10Gi, ceph-block-noreplicas
+LoadBalancer: 10.33.143.10
+Navigator: HTTP 200 OK
+```
+
+Secret 원문은 이 문서에 기록하지 않는다.
+
+## C 클러스터 빠른 확인
+
+```bash
+kubectl -n omniverse get sts,pvc,pod,svc -o wide
+kubectl -n omniverse get pod omniverse-nucleus-0 \
+  -o jsonpath='{range .status.containerStatuses[*]}{.name}{" ready="}{.ready}{" restart="}{.restartCount}{"\n"}{end}'
+curl -fsS -D - http://10.33.143.10:8080/ | head
+```
+
+세부 명령과 당시 출력은 [`SMARTX_EECS_EXECUTION.md`](./SMARTX_EECS_EXECUTION.md)를 기준으로 한다.
+
+## MiniX legacy PoC 검증 상태
 
 - NVIDIA NGC `nvidia/omniverse/nucleus-compose-stack:2023.2.10` 기반 실제 Nucleus 이미지 사용
 - Compose Stack의 12개 서비스를 Kubernetes StatefulSet의 12개 container로 실행
@@ -51,7 +79,7 @@ kubernetes/apps/omniverse-nucleus/
 
 현재 MiniX live PoC는 이미 `rook-ceph-block`으로 PVC가 생성되어 있어 바로 StorageClass를 바꾸지 않았다. 기존 PVC를 전용 StorageClass로 옮기려면 StatefulSet 단순 patch가 아니라 snapshot/restore 또는 새 PVC 마이그레이션으로 처리한다.
 
-## 빠른 확인 명령
+## MiniX legacy PoC 빠른 확인
 
 ```bash
 kubectl -n argocd get app omniverse-nucleus-poc -o wide

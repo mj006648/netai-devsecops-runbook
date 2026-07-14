@@ -156,14 +156,14 @@ eecs-k8s/apps/omniverse-nucleus/templates/secrets.yaml
 ```text
 nvcr.io imagePullSecret: MiniX에서 성공한 nvcr-io Secret 기반
 runtime secret: MiniX에서 성공한 nucleus-secrets 기반
-Nucleus password: 0070으로 설정
+Nucleus password: private preset에서 설정했으며 값은 이 문서에 기록하지 않음
 ```
 
 실제 NGC API key와 runtime secret 값은 이 문서에 기록하지 않는다.
 
 ### 3.4 username 관련 메모
 
-Nucleus password는 `0070`으로 설정했다. 다만 현재 Compose-to-Kubernetes 변환 템플릿은 `master-password`, `service-password`만 설정하고, `netai` 사용자를 자동 생성하는 필드는 확인하지 못했다.
+Nucleus password는 private preset에서 설정했으며 값은 이 문서에 기록하지 않는다.
 
 따라서 다음 단계에서 확인이 필요하다.
 

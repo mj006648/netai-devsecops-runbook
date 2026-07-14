@@ -1,21 +1,58 @@
 # Omniverse Isaac SaaS SmartX 이관 문서
 
-이 디렉터리는 `SmartX-Team/Omniverse/isaac-saas`를 우리 SmartX/eecs-k8s 구조에 맞게 이관하기 위한 문서다.
+이 디렉터리는 원본 `SmartX-Team/Omniverse/isaac-saas`를 필요한 기능만 남긴 `isaac-twinx` MVP로 축소하고, MiniX에서 실제 검증한 뒤 SmartX `eecs-k8s` 공통 app catalog와 GPU cluster preset으로 옮기는 전 과정을 분리해 기록한다.
 
 ## 문서 역할
 
-| 파일 | 역할 |
-| --- | --- |
-| [`ISAAC_UI_MVP_SCOPE.md`](./ISAAC_UI_MVP_SCOPE.md) | 현재 구현의 단일 기준 문서. 원본 분석, 유지/변경/제거 범위, GPU 선택, 이미지/Nucleus/Extension, SmartX 반영, 검증 절차 |
-| [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md) | 기존 링크 호환을 위한 이전 안내. 상세 설계는 포함하지 않음 |
-| [`MINIX_GPU_DRA_POC_2026-07-13.md`](./MINIX_GPU_DRA_POC_2026-07-13.md) | MiniX Kubernetes 1.34.3 업그레이드, GPU Operator DRA 전환, RTX 3090 정확 선택 검증 실행 기록 |
-| [`MINIX_ISAAC_SIM_E2E_2026-07-14.md`](./MINIX_ISAAC_SIM_E2E_2026-07-14.md) | MiniX Harbor 설치, Isaac Sim 6.0 이미지, DRA 인스턴스, Nucleus 설정, WebRTC 실제 통합 실행 기록 |
+| 파일 | 역할 | 언제 읽는가 |
+| --- | --- | --- |
+| [`ISAAC_UI_MVP_SCOPE.md`](./ISAAC_UI_MVP_SCOPE.md) | 제품/설계 기준. 원본에서 무엇을 유지·변경·제거했는지, UI·GPU 선택·image·Nucleus·Extension 경계를 설명 | 무엇을 만들었고 왜 기능을 뺐는지 이해할 때 |
+| [`MINIX_GPU_DRA_POC_2026-07-13.md`](./MINIX_GPU_DRA_POC_2026-07-13.md) | MiniX Kubernetes 1.34.3 업그레이드, GPU Operator DRA 전환, RTX 3090 exact selection 실행 기록 | 클러스터/DRA 전제를 확인할 때 |
+| [`MINIX_ISAAC_SIM_E2E_2026-07-14.md`](./MINIX_ISAAC_SIM_E2E_2026-07-14.md) | Harbor, Isaac Sim 6.0 image, DRA instance, Nucleus, WebRTC endpoint의 실제 통합 실행 증거 | standalone 구현이 실제로 동작했는지 확인할 때 |
+| [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md) | 개인 `smartx-k8s`/`twinx-k8s` chart·preset 렌더와 MiniX 적용 결과 | 실제 eecs/c 변경 전 SmartX 구조 검증 결과를 볼 때 |
+| [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md) | 실제 구현 가이드. eecs-k8s/c-k8s의 어느 파일에 어떤 코드를 넣고 왜 넣는지, 검증·rollback까지 설명 | 실제 이관 코드를 작성하거나 검토할 때 |
 
-## 읽는 순서
+## 권장 읽는 순서
 
-1. 목표 기능과 구현 범위는 `ISAAC_UI_MVP_SCOPE.md`를 읽는다.
-2. Kubernetes 업그레이드와 GPU DRA 사전 검증은 `MINIX_GPU_DRA_POC_2026-07-13.md`를 읽는다.
-3. Harbor, 실제 이미지, Nucleus, WebRTC 통합 결과는 `MINIX_ISAAC_SIM_E2E_2026-07-14.md`를 읽는다.
-4. 기존 `SMARTX_MIGRATION_PLAN.md` 링크는 이전 안내용이므로 별도로 읽지 않아도 된다.
+### 전체 흐름을 처음 이해할 때
 
-설계 기준은 `ISAAC_UI_MVP_SCOPE.md`, 클러스터 전제는 GPU DRA PoC, 실제 통합 증거는 Isaac Sim E2E 실행 기록을 기준으로 한다.
+1. `ISAAC_UI_MVP_SCOPE.md`
+2. `MINIX_GPU_DRA_POC_2026-07-13.md`
+3. `MINIX_ISAAC_SIM_E2E_2026-07-14.md`
+4. `SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`
+5. `SMARTX_MIGRATION_PLAN.md`
+
+### 바로 eecs-k8s/c-k8s 이관 작업을 할 때
+
+1. `SMARTX_MIGRATION_PLAN.md`에서 저장소·파일·values 경계를 확인한다.
+2. `SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`에서 이미 검증한 commit과 render 결과를 확인한다.
+3. `MINIX_ISAAC_SIM_E2E_2026-07-14.md`에서 live 성공 기준을 확인한다.
+4. 기능 범위에 의문이 있을 때만 `ISAAC_UI_MVP_SCOPE.md`로 돌아간다.
+
+## 문서 간 중복 방지 원칙
+
+```text
+MVP_SCOPE      = 무엇을 만들고 왜 뺐는가
+DRA_POC        = Kubernetes/GPU 기반이 준비됐는가
+MINIX_E2E      = standalone 앱과 image가 실제로 실행됐는가
+REHEARSAL      = SmartX chart/preset 모양으로도 동작했는가
+MIGRATION_PLAN = 실제 eecs-k8s/cluster preset에 어떤 코드를 넣는가
+```
+
+같은 실행 결과를 여러 문서에 복사하지 않는다. 구현 가이드는 실행 증거 문서로 링크하고, 실행 증거는 제품 범위를 다시 설명하지 않는다.
+
+## 현재 상태
+
+```text
+MiniX Kubernetes 1.34.3 + NVIDIA DRA: 검증 완료
+isaac-twinx portal: 구현/테스트/배포 완료
+Isaac Sim 6.0 image + Extension 9개: build/push/Running 완료
+Nucleus runtime 연결 설정: 확인 완료
+WebRTC network endpoint: 준비 확인
+개인 SmartX/TwinX chart/preset 리허설: 완료
+실제 eecs-k8s/c-k8s Isaac 반영: 아직 하지 않음
+GUI WebRTC 영상/입력: 사용자 확인 대기
+instance 삭제/GPU 반환: 사용자 확인 후 수행
+```
+
+Nucleus 자체의 eecs-k8s/c-k8s 이관과 C 클러스터 배포는 이미 완료됐으며, 관련 문서는 [`../omniverse-nucleus/`](../omniverse-nucleus/)에 있다.
