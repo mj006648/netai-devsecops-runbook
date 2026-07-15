@@ -270,7 +270,7 @@ Dockerfile은 해당 repo를 다음 경로 아래에 clone한다.
 
 개발 중 빠른 Extension 수정이 필요한 경우에만 PVC 또는 read-only volume mount 방식을 사용한다.
 
-모든 Extension을 자동으로 등록하지 않고 allowlist 또는 `EXT_PREFIX`로 필요한 Extension만 활성화한다.
+선정한 Extension 9개만 이미지에 포함해 Kit 검색 경로에 등록하고, 자동 활성화는 하지 않는다. 사용자가 Extension Manager에서 필요한 Extension만 직접 활성화한다.
 
 ---
 
@@ -410,6 +410,7 @@ instance.image.tag 또는 digest
 
 ```text
 nucleus.server
+nucleus.projectPath
 nucleus.credentialSecret.name
 nucleus.credentialSecret.userKey
 nucleus.credentialSecret.passwordKey
@@ -425,7 +426,8 @@ nucleus.credentialSecret.passwordKey
 
 - build 시 commit/tag 고정
 - runtime Git pull 비활성화
-- 필요한 Extension만 allowlist
+- 필요한 Extension 9개만 allowlist에 포함하고 자동 활성화하지 않음
+- Nucleus를 사용하는 Extension은 하드코딩 URI 대신 OMNI_SERVER와 OMNI_PROJECT_PATH 사용
 - image tag보다 digest pin 권장
 - Extension 변경은 새 이미지 build와 rollout으로 반영
 
@@ -580,6 +582,7 @@ ACCEPT_EULA
 PRIVACY_CONSENT
 NVIDIA_DRIVER_CAPABILITIES
 OMNI_SERVER
+OMNI_PROJECT_PATH
 START_WEBRTC
 ISAACSIM_HOST 또는 public endpoint argument
 ```
@@ -845,6 +848,7 @@ instance:
 
 nucleus:
   server: omniverse://<nucleus-endpoint>/
+  projectPath: Projects/demonstration
   credentialSecret:
     name: nucleus-cred
     userKey: OMNI_USER
@@ -1050,7 +1054,7 @@ kubectl -n omniverse get deploy,svc,pod -l group=dt-sim
 4. ResourceSlice attribute key와 device name 형식
 5. GPU 노드별 제품/UUID/NVENC 호환성
 6. 사용할 Isaac Sim base image의 최종 version/digest
-7. 포함할 Extension 목록과 고정 commit
+7. 대상 runtime image가 고정 Extension 9개와 로컬 Nucleus path override를 포함하는지
 8. Isaac UI와 Isaac Sim을 push할 Harbor project
 9. LoadBalancer IP pool 범위와 동시 인스턴스 상한
 10. Native WebRTC client만 제공할지 browser client도 제공할지

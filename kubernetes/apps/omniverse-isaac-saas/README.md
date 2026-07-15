@@ -47,12 +47,13 @@ MIGRATION_PLAN = 실제 eecs-k8s/cluster preset에 어떤 코드를 넣는가
 MiniX Kubernetes 1.34.3 + NVIDIA DRA: 검증 완료
 isaac-twinx portal: 구현/테스트/배포 완료
 Isaac Sim 6.0 image + Extension 9개: build/push/Running 완료
-Nucleus runtime 연결 설정: 확인 완료
-WebRTC network endpoint: 준비 확인
+Nucleus endpoint/Secret 주입과 포트 도달성: 확인 완료
+Nucleus Content Browser read/write: 새 이미지 재빌드 후 확인 필요
+WebRTC 2.0.0 영상/입력: 사용자 확인 완료
+MiniX 10.34.48.222 Create/Delete: 실험을 위해 임시 활성화
 개인 SmartX/TwinX chart/preset 리허설: 완료
 실제 eecs-k8s/c-k8s Isaac 반영: 아직 하지 않음
-GUI WebRTC 영상/입력: 사용자 확인 대기
-instance 삭제/GPU 반환: 사용자 확인 후 수행
+instance 삭제/GPU 반환: 아직 수행하지 않음
 ```
 
 Nucleus 자체의 eecs-k8s/c-k8s 이관과 C 클러스터 배포는 이미 완료됐으며, 관련 문서는 [`../omniverse-nucleus/`](../omniverse-nucleus/)에 있다.

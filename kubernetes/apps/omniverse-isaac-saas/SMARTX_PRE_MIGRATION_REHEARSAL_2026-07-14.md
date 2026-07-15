@@ -40,8 +40,8 @@ EndpointSlice: Ready
 실제 eecs-k8s/c-k8s 변경: 하지 않음
 kind-twinx Argo CD sync: control plane이 내려가 있어 하지 않음
 MiniX 적용 방식: Helm render 결과를 kubectl apply
-GUI WebRTC 영상/입력: 사용자 확인 대기
-instance 삭제/GPU 반환: 사용자 확인 후 수행 예정
+GUI WebRTC 2.0.0 영상/입력: 사용자 확인 완료
+instance 삭제/GPU 반환: 아직 수행하지 않음
 ```
 
 ---
@@ -50,9 +50,9 @@ instance 삭제/GPU 반환: 사용자 확인 후 수행 예정
 
 | 역할 | 저장소 | branch | 검증 commit |
 | --- | --- | --- | --- |
-| 포털·Isaac Sim source | `mj006648/isaac-twinx` | `main` | `333c1a8` 기준 portal image |
-| 개인 SmartX engine | `mj006648/smartx-k8s` | `main` | `964c4c1` |
-| 개인 TwinX preset | `mj006648/twinx-k8s` | `default` | `2a616de` |
+| 포털·Isaac Sim source | `mj006648/isaac-twinx` | `main` | `c171142` source + GHCR portal image |
+| 개인 SmartX engine | `mj006648/smartx-k8s` | `main` | `31f3682` |
+| 개인 TwinX preset | `mj006648/twinx-k8s` | `default` | `fcecab9` |
 | 실행 기록 | `mj006648/netai-devsecops-runbook` | `main` | 이 문서 |
 
 외부 저장소는 변경하지 않았다.
@@ -378,26 +378,38 @@ Nucleus endpoint config 확인
 fatal log 0
 ```
 
-아직 증명하지 않은 것:
+2026-07-15 사용자 확인:
 
 ```text
-실제 영상 프레임 표시
-키보드/마우스 입력 전달
-사용자 체감 latency
+Isaac Sim WebRTC Streaming Client 2.0.0
+Stream IP 10.34.48.224
+영상 표시 정상
+키보드/마우스 입력 정상
 ```
 
-이는 GUI WebRTC Streaming Client가 필요하다.
+정량적인 latency 측정은 이번 범위에 포함하지 않았다.
 
 ---
 
 ## 13. write/delete 상태
 
-외부 포털은 계속 read-only다.
+초기 리허설 당시 외부 포털은 read-only였다.
 
 ```text
 WRITE_ENABLED=false
 public create POST: HTTP 403
 ```
+
+2026-07-15 사용자의 MiniX 실험 요청에 따라 개인 TwinX preset만 임시로 변경했다.
+
+```text
+ui.writeEnabled: true
+AUTH_ENABLED=false
+portal: 10.34.48.222
+live /api/config writeEnabled: true
+```
+
+공통 SmartX chart 기본값은 false로 유지한다. 현재 설정은 인증 없는 실험용이므로 create/delete와 GPU 반환 검증이 끝나면 preset을 false로 되돌린다.
 
 사용자 WebRTC 확인을 위해 현재 instance를 의도적으로 유지했다.
 
@@ -425,12 +437,12 @@ Isaac Sim GPU process 종료
 - 포털은 preset에 GPU 목록이 없어도 live inventory를 표시한다.
 - 포털 교체가 기존 동적 instance를 자동 prune하지 않는다.
 - WebRTC network endpoint가 준비된다.
+- WebRTC 2.0.0 client에서 실제 영상과 입력이 동작한다.
 
 ### 미증명
 
 - 실제 eecs-k8s/c-k8s branch에서의 merge/sync
 - 실제 GPU 대상 클러스터의 Argo CD multi-source credential
-- GUI WebRTC 영상/입력
 - delete/GPU 반환
 - Keycloak 인증 후 사용자별 mutation 권한
 - 운영 Harbor TLS/OpenBao/External Secrets
@@ -456,17 +468,15 @@ GPU node/UUID는 교체 대상이 아니다. 처음부터 patch에 없으며 liv
 
 ## 16. 다음 작업
 
-1. 사용자가 WebRTC GUI에서 영상과 입력을 확인한다.
-2. 확인 후 instance를 삭제한다.
-3. ResourceClaim 삭제와 GPU 반환을 기록한다.
-4. 실제 GPU 대상 cluster preset을 확정한다.
-5. [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)에 따라 eecs-k8s chart를 반영한다.
-6. 대상 cluster preset patch를 반영한다.
-7. Tower Argo CD에서 root/app sync와 ownership을 확인한다.
-8. 실행 결과를 별도 execution 문서에 기록한다.
-
+1. 현재 instance를 삭제한다.
+2. ResourceClaim 삭제와 GPU 반환을 기록한다.
+3. 실제 GPU 대상 cluster preset을 확정한다.
+4. [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)에 따라 eecs-k8s chart를 반영한다.
+5. 대상 cluster preset patch를 반영한다.
+6. Tower Argo CD에서 root/app sync와 ownership을 확인한다.
+7. 실행 결과를 별도 execution 문서에 기록한다.
 ---
 
 ## 17. 한 문장 결론
 
-개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit과 fresh-clone Helm render, MiniX 실제 apply, live DRA inventory, 기존 Isaac Sim/WebRTC endpoint 유지까지 검증했으며, GUI WebRTC와 delete/GPU 반환을 끝낸 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.
+개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit과 fresh-clone Helm render, MiniX 실제 apply, live DRA inventory, 기존 Isaac Sim/WebRTC endpoint 유지까지 검증했으며, GUI WebRTC를 확인했고, delete/GPU 반환을 끝낸 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.

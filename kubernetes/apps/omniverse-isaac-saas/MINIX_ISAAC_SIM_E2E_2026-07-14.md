@@ -273,7 +273,9 @@ images/isaac-sim/
 │   ├── set_4k.py
 │   └── wander.py
 └── overrides/
-    └── gist.netai.video.extension.toml
+    ├── gist.netai.video.extension.toml
+    ├── gist.streamer.extension.py
+    └── gist.timetravel.extension.py
 
 scripts/prepare_isaac_extensions.py
 tests/test_isaac_image.py
@@ -301,7 +303,7 @@ base digest: sha256:68735a60b6c15c85e0dd0098570c6d2cc79e928f2d068ce2790aa43284ac
 ```text
 repository: https://github.com/SmartX-Team/Omniverse.git
 commit: f2606b43c437d1e3b70e16edb011fc3b237bb2e4
-active extensions: 9
+selected extensions: 9
 ```
 
 포함된 extension:
@@ -327,7 +329,7 @@ Deprecated extension은 제외했다.
 ```text
 Isaac Sim 6.0 official container
 ROS Jazzy packages
-NetAI active extensions 9개
+선정한 NetAI extensions 9개
 Xvfb와 기본 그래픽 runtime library
 Nucleus config 생성 로직
 선택형 startup USD/camera 로직
@@ -356,6 +358,7 @@ Pod runtime 환경:
 
 ```text
 OMNI_SERVER
+OMNI_PROJECT_PATH
 OMNI_USER
 OMNI_PASS
 ```
@@ -548,6 +551,7 @@ DRA_API_VERSION=resource.k8s.io/v1
 DRA_DRIVER=gpu.nvidia.com
 DRA_DEVICE_CLASS=gpu.nvidia.com
 OMNI_SERVER=omniverse://10.34.48.221/
+OMNI_PROJECT_PATH=Projects/demonstration
 NUCLEUS_SECRET_NAME=nucleus-cred
 ```
 
@@ -728,6 +732,87 @@ OmniHub warning 제거 또는 비활성화 필요성 판단
 
 따라서 이번 문서에서는 “Nucleus runtime config가 주입됐다”까지를 검증 완료로 보고, 실제 asset read/write 성공으로 과장하지 않는다.
 
+
+### 13.1 2026-07-15 Nucleus/Extension 연결 정책 보정
+
+실행 중인 Pod와 개인 저장소를 다시 확인해 다음을 구분했다.
+
+~~~text
+Extension source 9개 image 포함: 확인
+/isaac-sim/exts symlink 등록: 9개 확인
+custom Extension 자동 startup: 0개
+Nucleus config/credential 주입: 확인
+Isaac Pod에서 Nucleus 주요 TCP port 도달: 확인
+Nucleus Content Browser read/write: 아직 미검증
+~~~
+
+자동 startup 0개는 오류가 아니라 확정 정책이다. Extension은 검색 가능하게 등록만 하고 사용자가 필요한 것만 Extension Manager에서 활성화한다.
+
+원본 Extension 중 다음 두 개에는 과거 Nucleus URI가 하드코딩되어 있었다.
+
+~~~text
+gist.streamer
+gist.timetravel
+~~~
+
+개인 isaac-twinx 소스에서는 이를 제거하고 다음 런타임 값으로 조합하도록 변경했다.
+
+~~~text
+OMNI_SERVER=omniverse://<cluster-nucleus>/
+OMNI_PROJECT_PATH=Projects/demonstration
+~~~
+
+Extension payload는 Git에 직접 커밋하지 않으므로, 두 Python override를 images/isaac-sim/overrides에 두고 prepare_isaac_extensions.py가 고정 upstream commit을 materialize할 때 다시 적용하도록 했다.
+
+entrypoint는 다음 동작을 수행한다.
+
+1. OMNI_SERVER를 정규화한다.
+2. credential을 0600 Nucleus client config에 기록한다.
+3. Nucleus root와 project URL을 Isaac Sim 6.0 Content Browser folder에 추가한다.
+4. Isaac asset root를 cluster Nucleus 경로로 전달한다.
+5. custom Extension을 자동 활성화하지 않는다.
+
+이 소스 수정은 기존 실행 중인 r3 digest에 자동 반영되지 않는다. 새 Isaac Sim image를 빌드하고 Harbor에 immutable digest로 push한 뒤 새 인스턴스로 다음을 확인해야 한다.
+
+~~~text
+Content Browser에서 Nucleus root/project 표시
+Nucleus folder 목록 조회
+USD open
+USD save/write
+gist.streamer 또는 gist.timetravel 수동 enable 후 새 OMNI_SERVER 사용
+~~~
+
+WebRTC는 Isaac Sim WebRTC Streaming Client 2.0.0으로 10.34.48.224에 접속해 영상과 입력이 정상 동작하는 것을 사용자가 확인했다.
+
+개인 GitHub 반영:
+
+~~~text
+mj006648/isaac-twinx main: c171142
+GitHub Actions Build portal image: success
+mj006648/smartx-k8s main: 31f3682
+mj006648/twinx-k8s default: fcecab9
+~~~
+
+개인 SmartX chart에는 nucleus.projectPath를 추가해 OMNI_PROJECT_PATH로 포털에 전달하고, TwinX preset에는 Projects/demonstration을 설정했다. master의 Helm 4.2.3에서 chart lint, app render, SmartX root render와 Kubernetes server dry-run이 모두 성공했다.
+
+새 GHCR portal image는 생성됐지만, Nucleus entrypoint/Extension override가 들어간 대형 Isaac Sim runtime image는 별도 Harbor 재빌드가 필요하다.
+
+MiniX live portal 적용 결과:
+
+~~~text
+portal: http://10.34.48.222
+image: ghcr.io/mj006648/isaac-twinx:sha-c171142a33d6e5fd2daee018338e4d7adde99168
+WRITE_ENABLED=true
+OMNI_PROJECT_PATH=Projects/demonstration
+Deployment rollout: success
+/api/config writeEnabled: true
+/healthz: ok
+~~~
+
+이 활성화는 사용자의 create/delete 및 GPU 반환 실험을 위한 임시 설정이다. AUTH_ENABLED=false이므로 외부 운영 환경에는 그대로 사용하지 않는다.
+
+
+
 ---
 
 ## 14. 테스트와 검증 명령
@@ -744,7 +829,7 @@ kubectl kustomize deploy/minix >/tmp/isaac-twinx-rendered.yaml
 최종 결과:
 
 ```text
-29 passed
+32 passed
 entrypoint bash syntax passed
 MiniX kustomize render passed
 ```
@@ -954,4 +1039,4 @@ SmartX 반영 전 `ISAAC_UI_MVP_SCOPE.md`의 feature graph와 실제 `eecs-k8s` 
 
 ## 21. 한 문장 요약
 
-MiniX Kubernetes 1.34.3에서 private Harbor의 고정 Isaac Sim 6.0 이미지, NVIDIA DRA RTX 3090 정확 선택, Nucleus runtime config, 인스턴스별 LoadBalancer와 WebRTC Stream IP, 사용자 표시까지 실제 `Running` 상태로 검증했고, 개인 SmartX chart/preset 리허설도 완료했으며, 다음 단계는 사용자 GUI WebRTC 확인과 delete/GPU 반환 증거를 추가한 뒤 실제 GPU 대상 cluster의 eecs-k8s/preset Argo CD 이관을 수행하는 것이다.
+MiniX Kubernetes 1.34.3에서 private Harbor의 고정 Isaac Sim 6.0 이미지, NVIDIA DRA RTX 3090 정확 선택, Nucleus runtime config, 인스턴스별 LoadBalancer와 WebRTC Stream IP, 사용자 표시까지 실제 `Running` 상태로 검증했고, 개인 SmartX chart/preset 리허설도 완료했으며, GUI WebRTC 2.0.0 영상과 입력도 확인했으며, 다음 단계는 delete/GPU 반환 증거를 추가한 뒤 실제 GPU 대상 cluster의 eecs-k8s/preset Argo CD 이관을 수행하는 것이다.

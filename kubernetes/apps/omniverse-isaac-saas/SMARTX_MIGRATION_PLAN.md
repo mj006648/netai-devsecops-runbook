@@ -291,7 +291,7 @@ spec:
 | --- | --- |
 | `metadata.name` | SmartX app catalog에서 앱을 유일하게 식별 |
 | `group: ops` | 운영 인프라 성격의 포털 |
-| `phase: alpha` | 아직 GUI WebRTC와 delete/GPU 반환 최종 검증이 남아 있음 |
+| `phase: alpha` | GUI WebRTC는 확인했지만 delete/GPU 반환과 실제 조직 클러스터 이관이 남아 있음 |
 | `namespace: omniverse` | Nucleus와 같은 서비스 영역을 사용하되 리소스 이름은 분리 |
 | `patched: true` | cluster preset의 `patches/omniverse-isaac-saas/values.yaml`을 결합 |
 | `autoPrune: true` | chart에서 제거한 포털 리소스를 정리. 포털이 만든 동적 인스턴스는 Argo manifest가 아니므로 prune 대상이 아님 |
@@ -326,6 +326,7 @@ dra:
 
 nucleus:
   server: ""
+  projectPath: Projects/demonstration
   credentialSecret:
     name: nucleus-cred
     userKey: OMNI_USER
@@ -354,6 +355,7 @@ nucleus:
 | `instance.streamCommand` | runtime env | Isaac Sim streaming launcher |
 | `dra.*` | 포털 환경변수 | ResourceClaim API/driver/class |
 | `nucleus.server` | `OMNI_SERVER` | Isaac Sim이 연결할 Nucleus URI |
+| `nucleus.projectPath` | `OMNI_PROJECT_PATH` | Content Browser와 Nucleus 사용 Extension이 조회할 상대 경로 |
 | `nucleus.credentialSecret.*` | 포털 환경변수 | 동적 Deployment에 넣을 Secret name/key |
 | `webrtc.incompatibleProducts` | inventory 정책 | NVENC가 없는 A100 등을 Launch 불가 표시 |
 | `rbac.clusterInventory` | ClusterRole 조건 | cluster-wide Node/ResourceSlice 조회 허용 |
@@ -621,6 +623,7 @@ dra:
 
 nucleus:
   server: omniverse://<NUCLEUS_LOADBALANCER_IP>/
+  projectPath: Projects/demonstration
   credentialSecret:
     name: <NUCLEUS_CREDENTIAL_SECRET_NAME>
     userKey: OMNI_USER
@@ -695,6 +698,7 @@ chart는 포털 Deployment에 다음 정보만 전달한다.
 
 ```text
 OMNI_SERVER
+OMNI_PROJECT_PATH
 NUCLEUS_SECRET_NAME
 NUCLEUS_USER_KEY
 NUCLEUS_PASSWORD_KEY
@@ -707,6 +711,7 @@ ISAAC_SIM_IMAGE
 
 ```text
 OMNI_SERVER=<preset의 Nucleus URI>
+OMNI_PROJECT_PATH=<preset의 Nucleus 상대 경로>
 OMNI_USER=valueFrom.secretKeyRef
 OMNI_PASS=valueFrom.secretKeyRef
 선택 GPU의 DRA ResourceClaim 사용
@@ -723,8 +728,8 @@ Isaac Sim image에는 다음이 들어간다.
 NVIDIA Isaac Sim 6.0 base runtime
 WebRTC/headless launcher
 SmartX Extension 9개, lock commit 기준
-Extension 등록/검증 entrypoint
-Nucleus endpoint를 runtime config로 반영하는 처리
+Extension 등록/검증 entrypoint(자동 활성화 없음)
+Nucleus endpoint와 project path를 runtime config/Content Browser에 반영하는 처리
 ```
 
 Nucleus 주소와 계정 값 자체는 image에 bake하지 않는다. 같은 image를 여러 클러스터에서 재사용하고 preset/Secret만 바꾼다.
@@ -1068,10 +1073,15 @@ WebRTC TCP endpoint와 EndpointSlice readiness
 Nucleus runtime URI 설정
 ```
 
-아직 사람 확인이 필요한 것:
+사람 확인 완료:
 
 ```text
-GUI WebRTC client에서 영상과 입력 확인
+WebRTC 2.0.0 client 영상과 입력
+```
+
+아직 남은 live 확인:
+
+```text
 인스턴스 Delete 실행
 ResourceClaim 삭제와 GPU Available 반환 확인
 ```
