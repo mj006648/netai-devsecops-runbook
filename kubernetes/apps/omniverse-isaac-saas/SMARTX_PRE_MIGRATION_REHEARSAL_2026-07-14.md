@@ -437,8 +437,8 @@ deleted minix-e2e image: r3 digest
 같은 날 Nucleus 실데이터 browse/read/write를 확인한 뒤 Content Browser 역할을 분리한 r5로 갱신했다. r4로 실행 중인 `test1`은 사용자 시험을 위해 유지하고, 포털의 새 instance 기본 image만 r5 immutable digest로 변경했다.
 
 ```text
-TwinX preset commit: 1dc3109
-portal source/image: d91f6a5 / ghcr.io/mj006648/isaac-twinx:sha-d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
+TwinX preset commit: 20a4fba
+portal source/image: d194e2c / ghcr.io/mj006648/isaac-twinx:sha-d194e2c6346b4cf73ac32233d918526abe40b9e5
 new instance image: 10.34.48.223/omniverse/isaac-sim@sha256:cbd29a70ce7d743430ed6794db4aa673cd31fe1141783025f014c2092a9cda68
 Nucleus direct browse/read/write: Result.OK
 Content Browser: Isaac asset root와 Omniverse > NetAI Nucleus mounted server 분리

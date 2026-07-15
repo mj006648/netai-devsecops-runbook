@@ -860,9 +860,9 @@ r5 build/push/runtime pull과 개인 저장소 반영값은 다음과 같다.
 isaac-twinx commit: 30dc739bde3b29ea507600acb0371a6efae7805e
 image tag: 10.34.48.223/omniverse/isaac-sim:6.0-netai-f2606b4-r5
 image digest: sha256:cbd29a70ce7d743430ed6794db4aa673cd31fe1141783025f014c2092a9cda68
-twinx-k8s preset commit: 1dc3109
-portal source commit: d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
-portal image: ghcr.io/mj006648/isaac-twinx:sha-d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
+twinx-k8s preset commit: 20a4fba
+portal source commit: d194e2c6346b4cf73ac32233d918526abe40b9e5
+portal image: ghcr.io/mj006648/isaac-twinx:sha-d194e2c6346b4cf73ac32233d918526abe40b9e5
 ```
 
 live portal을 갱신하는 과정에서 app chart를 `--namespace` 없이 수동 렌더해 ClusterRoleBinding subject가 `default/isaac-twinx`로 바뀌었다. Pod health는 정상이었지만 `omniverse/isaac-twinx`가 `nodes`와 `resourceslices.resource.k8s.io`를 list할 수 없어 `/api/gpus`와 `/api/instances`가 503을 반환했다.
@@ -888,6 +888,45 @@ test1: Running, restart 0, r4 유지
 ```
 
 SmartX/Argo CD에서는 `manifest.yaml`의 destination namespace가 `omniverse`이므로 정상 sync 시 같은 값이 사용된다. 수동 `helm template` 리허설에서도 반드시 `--namespace omniverse`를 넣는다.
+
+### 13.3 2026-07-15 Content Browser 자동 연결 보정
+
+사용자 GUI에서 `Omniverse`를 펼쳐도 `NetAI Nucleus`가 자동으로 표시되지 않고, 수동 `Add New Connection`에 `omniverse://10.34.48.221`을 넣으면 연결되는 현상을 확인했다.
+
+Nucleus 데이터 부재나 권한 문제는 아니었다.
+
+```text
+동일 Pod Omni Client root list: Result.OK, 4 entries
+Robots list: Result.OK, 50 entries
+Environments list: Result.OK, 13 entries
+Projects/demonstration list: Result.OK
+Nucleus auth log: status OK
+```
+
+실패 원인은 두 가지 런타임 설정 경계였다.
+
+1. Isaac Sim 6.0 컨테이너의 `OMNICLIENT_HUB_EXE=/usr/local/bin/hub`가 config 파일을 만들기 전에 종료하며 재연결을 반복했다.
+2. r5 entrypoint가 쓴 `user.config.json`에는 mounted server가 있었지만 Streaming Kit가 시작 설정으로 소비하지 않아 UI에 자동 등록되지 않았다.
+
+적용한 값:
+
+```text
+OMNICLIENT_HUB_MODE=disabled
+OMNICLIENT_USE_HUB=0
+--/exts/omni.kit.window.content_browser/mounted_servers/NetAI Nucleus=omniverse://10.34.48.221
+```
+
+첫 두 값은 실패한 Hub 대신 Client Library의 직접 Nucleus 연결을 사용한다. 마지막 값은 Content Browser 3.1.8이 실제로 읽는 Carb settings 경로를 Kit 실행 인자로 전달한다. 확장 코드의 `_get_mounted_servers()`와 `_init_view()`가 이 dictionary를 읽고 첫 server를 자동 연결하는 것도 컨테이너 소스로 확인했다.
+
+live `test` Deployment에 같은 env/arg를 적용해 Pod만 재시작했다. 기존 ResourceClaim과 `10.34.48.224` Service는 유지됐고 Hub 실패 로그는 사라졌다. 이후 Launch에도 들어가도록 portal resource generator와 테스트에 반영했다.
+
+```text
+portal source commit: d194e2c6346b4cf73ac32233d918526abe40b9e5
+portal image: ghcr.io/mj006648/isaac-twinx:sha-d194e2c6346b4cf73ac32233d918526abe40b9e5
+TwinX preset commit: 20a4fba
+pytest: 32 passed
+live portal APIs: /api/gpus 200, /api/instances 200
+```
 
 ---
 
