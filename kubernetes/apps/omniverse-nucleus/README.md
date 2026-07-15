@@ -12,6 +12,7 @@
 | [`RUNBOOK.md`](./RUNBOOK.md) | 전체 설계 판단, 재현 절차, 문제 해결, 운영 전 보강 항목 |
 | [`SMARTX_EECS_MIGRATION_PLAN.md`](./SMARTX_EECS_MIGRATION_PLAN.md) | 완료된 eecs-k8s + c-k8s 이관을 재현/변경하기 위한 파일별 구현 가이드 |
 | [`SMARTX_EECS_EXECUTION.md`](./SMARTX_EECS_EXECUTION.md) | eecs-k8s/c-k8s commit과 C 클러스터 12/12 Ready, PVC, LoadBalancer, HTTP 200 실제 완료 증거 |
+| [`TWINX_EXECUTION_2026-07-15.md`](./TWINX_EXECUTION_2026-07-15.md) | TwinX-Ops raw app `argocd/omniverse/apps/omniverse-nucleus-twinx/install.yaml` 실행, LB `10.38.38.245`, RBD 10Gi Retain, 12/12 Running/Healthy, Argo 표시 불일치 기록 |
 | [`manifests/nucleus/`](./manifests/nucleus/) | 신규 설치 기준 Nucleus Kubernetes manifest 사본 |
 
 ## 디렉터리 구조
@@ -22,6 +23,7 @@ kubernetes/apps/omniverse-nucleus/
 ├── RUNBOOK.md
 ├── SMARTX_EECS_MIGRATION_PLAN.md
 ├── SMARTX_EECS_EXECUTION.md
+├── TWINX_EXECUTION_2026-07-15.md
 ├── manifests/
 │   └── nucleus/                         # 신규 설치 기준 Nucleus manifest
 │       ├── 00-storageclass.yaml          # Nucleus 전용 Retain RBD StorageClass
@@ -47,6 +49,23 @@ Navigator: HTTP 200 OK
 ```
 
 Secret 원문은 이 문서에 기록하지 않는다.
+
+## TwinX 배포 상태
+
+TwinX는 `eecs-k8s`/`c-k8s` 코드를 변경하지 않고 `TwinX-Ops`의 `argocd/omniverse` 아래 raw app으로 실행했다.
+
+```text
+raw app: argocd/omniverse/apps/omniverse-nucleus-twinx/install.yaml
+namespace: omniverse
+LoadBalancer: 10.38.38.245
+PVC: RBD 10Gi Retain
+Pod: 12/12 Running/Healthy
+기존 oos-sim: 변경 없음
+기존 외부 Nucleus 10.38.38.32: 변경 없음
+eecs-k8s/c-k8s: 코드 변경 없음, 계획만 유지
+```
+
+세부 실행 기록은 [`TWINX_EXECUTION_2026-07-15.md`](./TWINX_EXECUTION_2026-07-15.md)를 기준으로 한다.
 
 ## C 클러스터 빠른 확인
 

@@ -12,6 +12,7 @@
 | [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md) | 개인 `smartx-k8s`/`twinx-k8s` chart·preset 렌더와 MiniX 적용 결과 | 실제 eecs/c 변경 전 SmartX 구조 검증 결과를 볼 때 |
 | [`TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md`](./TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md) | 실제 TwinX GPU/MIG inventory와 `TwinX-Ops/argocd/omniverse` 읽기 전용 포털 준비·안전 검증 기록 | 이기종 GPU/MIG와 TwinX Argo 배포 경계를 확인할 때 |
 | [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md) | 실제 구현 가이드. eecs-k8s/c-k8s의 어느 파일에 어떤 코드를 넣고 왜 넣는지, 검증·rollback까지 설명 | 실제 이관 코드를 작성하거나 검토할 때 |
+| [`../omniverse-nucleus/TWINX_EXECUTION_2026-07-15.md`](../omniverse-nucleus/TWINX_EXECUTION_2026-07-15.md) | TwinX-Ops raw app으로 새 `omniverse` namespace에 Nucleus를 실행한 기록. 기존 `oos-sim`과 외부 Nucleus `10.38.38.32` 비변경 경계 포함 | TwinX Isaac 실행 환경의 Nucleus 경계를 확인할 때 |
 
 ## 권장 읽는 순서
 
@@ -23,6 +24,7 @@
 4. `SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`
 5. `TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md`
 6. `SMARTX_MIGRATION_PLAN.md`
+7. Nucleus 경계가 필요하면 `../omniverse-nucleus/TWINX_EXECUTION_2026-07-15.md`
 
 ### 바로 eecs-k8s/c-k8s 이관 작업을 할 때
 
@@ -59,7 +61,10 @@ MiniX 10.34.48.222 Create/Delete: 실험을 위해 임시 활성화
 개인 SmartX/TwinX chart/preset 리허설: 완료
 TwinX control1 일반 GPU/MIG 자동 inventory source: 검증 완료
 TwinX-Ops 읽기 전용 raw manifest와 내부 Harbor image: push 완료
-TwinX Argo CD sync와 live 웹 확인: 사용자 수동 sync 대기
+TwinX Isaac preview Argo CD sync와 live 웹 확인: 완료, 10.38.38.243 read-only inventory
+TwinX Nucleus raw app: omniverse namespace, LB 10.38.38.245, RBD 10Gi Retain, Pod 12/12 Running/Healthy; 기존 oos-sim 및 외부 Nucleus 10.38.38.32 비변경; eecs-k8s/c-k8s 코드 변경 없음
+isaac-twinx source/origin/deployed portal image: bd7d6f0 일치, 37 tests passed
+TwinX portal -> 신규 Nucleus 10.38.38.245 실제 launch/delete 전환: 아직 하지 않음, 현재 WRITE_ENABLED=false 및 기존 10.38.38.32 설정 유지
 실제 eecs-k8s/c-k8s Isaac 반영: 아직 하지 않음
 instance 삭제/GPU 반환: 사용자 UI Delete 후 검증 완료
 기존 minix-e2e instance와 구버전 isaac-twinx-e2e 포털: 삭제 완료
@@ -67,4 +72,4 @@ live portal API/RBAC: ClusterRoleBinding 대상 namespace를 omniverse로 교정
 현재 test1: r4로 계속 실행 중, 새 instance부터 r5 사용
 ```
 
-Nucleus 자체의 eecs-k8s/c-k8s 이관과 C 클러스터 배포는 이미 완료됐으며, 관련 문서는 [`../omniverse-nucleus/`](../omniverse-nucleus/)에 있다.
+Nucleus 자체의 eecs-k8s/c-k8s 이관과 C 클러스터 배포는 이미 완료됐으며, 관련 문서는 [`../omniverse-nucleus/`](../omniverse-nucleus/)에 있다. TwinX에서는 `eecs-k8s`/`c-k8s`를 변경하지 않고 `TwinX-Ops` raw app으로 새 `omniverse` namespace에 Nucleus를 실행했으며, 기존 `oos-sim`과 외부 Nucleus `10.38.38.32`는 변경하지 않았다. 세부 기록은 [`../omniverse-nucleus/TWINX_EXECUTION_2026-07-15.md`](../omniverse-nucleus/TWINX_EXECUTION_2026-07-15.md)를 기준으로 한다.
