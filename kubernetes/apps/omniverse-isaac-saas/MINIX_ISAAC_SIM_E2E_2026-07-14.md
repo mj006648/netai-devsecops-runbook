@@ -860,9 +860,9 @@ r5 build/push/runtime pull과 개인 저장소 반영값은 다음과 같다.
 isaac-twinx commit: 30dc739bde3b29ea507600acb0371a6efae7805e
 image tag: 10.34.48.223/omniverse/isaac-sim:6.0-netai-f2606b4-r5
 image digest: sha256:cbd29a70ce7d743430ed6794db4aa673cd31fe1141783025f014c2092a9cda68
-twinx-k8s preset commit: 459e34d
-portal source commit: 146b39b5141ccf234c4c6ac3e3b6d210b255ab3f
-portal image: ghcr.io/mj006648/isaac-twinx:sha-146b39b5141ccf234c4c6ac3e3b6d210b255ab3f
+twinx-k8s preset commit: 1dc3109
+portal source commit: d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
+portal image: ghcr.io/mj006648/isaac-twinx:sha-d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
 ```
 
 live portal을 갱신하는 과정에서 app chart를 `--namespace` 없이 수동 렌더해 ClusterRoleBinding subject가 `default/isaac-twinx`로 바뀌었다. Pod health는 정상이었지만 `omniverse/isaac-twinx`가 `nodes`와 `resourceslices.resource.k8s.io`를 list할 수 없어 `/api/gpus`와 `/api/instances`가 503을 반환했다.

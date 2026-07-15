@@ -50,7 +50,7 @@ instance 삭제/GPU 반환: 사용자 UI Delete 후 검증 완료
 
 | 역할 | 저장소 | branch | 검증 commit |
 | --- | --- | --- | --- |
-| 포털·Isaac Sim source | `mj006648/isaac-twinx` | `main` | `c171142` source + GHCR portal image |
+| 포털·Isaac Sim source | `mj006648/isaac-twinx` | `main` | `d91f6a5` source + GHCR portal image |
 | 개인 SmartX engine | `mj006648/smartx-k8s` | `main` | `31f3682` |
 | 개인 TwinX preset | `mj006648/twinx-k8s` | `default` | `4565d2c` |
 | 실행 기록 | `mj006648/netai-devsecops-runbook` | `main` | 이 문서 |
@@ -437,8 +437,8 @@ deleted minix-e2e image: r3 digest
 같은 날 Nucleus 실데이터 browse/read/write를 확인한 뒤 Content Browser 역할을 분리한 r5로 갱신했다. r4로 실행 중인 `test1`은 사용자 시험을 위해 유지하고, 포털의 새 instance 기본 image만 r5 immutable digest로 변경했다.
 
 ```text
-TwinX preset commit: 459e34d
-portal source/image: 146b39b / ghcr.io/mj006648/isaac-twinx:sha-146b39b5141ccf234c4c6ac3e3b6d210b255ab3f
+TwinX preset commit: 1dc3109
+portal source/image: d91f6a5 / ghcr.io/mj006648/isaac-twinx:sha-d91f6a5d53ee6ad8bf953ed8cdcd931855c3236b
 new instance image: 10.34.48.223/omniverse/isaac-sim@sha256:cbd29a70ce7d743430ed6794db4aa673cd31fe1141783025f014c2092a9cda68
 Nucleus direct browse/read/write: Result.OK
 Content Browser: Isaac asset root와 Omniverse > NetAI Nucleus mounted server 분리
