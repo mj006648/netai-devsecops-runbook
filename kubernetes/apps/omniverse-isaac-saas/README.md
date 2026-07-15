@@ -46,16 +46,18 @@ MIGRATION_PLAN = 실제 eecs-k8s/cluster preset에 어떤 코드를 넣는가
 ```text
 MiniX Kubernetes 1.34.3 + NVIDIA DRA: 검증 완료
 isaac-twinx portal: 구현/테스트/배포 완료
-Isaac Sim 6.0 r4 image + Extension 9개: build/push/runtime pull 검증 완료
+Isaac Sim 6.0 r5 image + Extension 9개: build/push/runtime pull 검증 완료
 Nucleus endpoint/Secret 주입과 포트 도달성: 확인 완료
-Nucleus runtime path 보정: r4 digest와 개인 TwinX preset/live portal 반영 완료
-Nucleus Content Browser read/write: r4로 새 instance 생성 후 사용자 확인 필요
+Nucleus asset browse/read/write: 실행 Pod의 Omniverse Client로 확인 완료
+Nucleus Content Browser 분리: Isaac asset root는 read-only Isaac Sim collection, 서버 root는 r5의 Omniverse > NetAI Nucleus로 분리
 WebRTC 2.0.0 영상/입력: 사용자 확인 완료
 MiniX 10.34.48.222 Create/Delete: 실험을 위해 임시 활성화
 개인 SmartX/TwinX chart/preset 리허설: 완료
 실제 eecs-k8s/c-k8s Isaac 반영: 아직 하지 않음
 instance 삭제/GPU 반환: 사용자 UI Delete 후 검증 완료
 기존 minix-e2e instance와 구버전 isaac-twinx-e2e 포털: 삭제 완료
+live portal API/RBAC: ClusterRoleBinding 대상 namespace를 omniverse로 교정, /api/gpus와 /api/instances 200 확인
+현재 test1: r4로 계속 실행 중, 새 instance부터 r5 사용
 ```
 
 Nucleus 자체의 eecs-k8s/c-k8s 이관과 C 클러스터 배포는 이미 완료됐으며, 관련 문서는 [`../omniverse-nucleus/`](../omniverse-nucleus/)에 있다.

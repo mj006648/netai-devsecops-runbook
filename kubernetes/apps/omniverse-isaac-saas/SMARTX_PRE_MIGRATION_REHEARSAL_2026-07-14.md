@@ -434,6 +434,18 @@ deleted minix-e2e image: r3 digest
 
 기존 instance 삭제와 GPU 반환을 확인했다. 초기 수동 E2E 검증용 `isaac-twinx-e2e` Deployment/ClusterIP Service도 최신 포털이 대체하므로 삭제했다. 새 instance를 만들면 r4 image와 `OMNI_PROJECT_PATH=Projects/demonstration`이 함께 적용된다.
 
+같은 날 Nucleus 실데이터 browse/read/write를 확인한 뒤 Content Browser 역할을 분리한 r5로 갱신했다. r4로 실행 중인 `test1`은 사용자 시험을 위해 유지하고, 포털의 새 instance 기본 image만 r5 immutable digest로 변경했다.
+
+```text
+TwinX preset commit: 459e34d
+portal source/image: 146b39b / ghcr.io/mj006648/isaac-twinx:sha-146b39b5141ccf234c4c6ac3e3b6d210b255ab3f
+new instance image: 10.34.48.223/omniverse/isaac-sim@sha256:cbd29a70ce7d743430ed6794db4aa673cd31fe1141783025f014c2092a9cda68
+Nucleus direct browse/read/write: Result.OK
+Content Browser: Isaac asset root와 Omniverse > NetAI Nucleus mounted server 분리
+```
+
+수동 Helm 적용 중 `--namespace omniverse`를 빠뜨려 ClusterRoleBinding subject가 잠시 `default` namespace를 가리켰고 포털 inventory API가 503을 반환했다. namespace를 명시해 재렌더·적용한 뒤 `resourceslices` list 권한과 `/api/gpus`, `/api/instances` 200을 다시 확인했다. 이는 chart의 `.Release.Namespace`가 잘못된 것이 아니라 수동 렌더 명령의 namespace 누락이었다.
+
 ---
 
 ## 14. 이 리허설이 증명한 것과 증명하지 않은 것
@@ -479,7 +491,7 @@ GPU node/UUID는 교체 대상이 아니다. 처음부터 patch에 없으며 liv
 
 ## 16. 다음 작업
 
-1. r4로 새 instance를 생성해 Nucleus Content Browser read/write를 확인한다.
+1. 새 r5 instance에서 `Omniverse > NetAI Nucleus` 표시와 USD 열기/저장을 사용자 GUI로 확인한다.
 2. 실제 GPU 대상 cluster preset을 확정한다.
 3. [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)에 따라 eecs-k8s chart를 반영한다.
 4. 대상 cluster preset patch를 반영한다.
@@ -490,4 +502,4 @@ GPU node/UUID는 교체 대상이 아니다. 처음부터 patch에 없으며 liv
 
 ## 17. 한 문장 결론
 
-개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit, fresh-clone Helm render, MiniX 실제 apply, live DRA inventory, WebRTC 영상/입력과 delete/GPU 반환까지 검증했으며, r4 Nucleus read/write를 확인한 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.
+개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit, Helm render, MiniX 실제 apply, live DRA inventory, WebRTC 영상/입력, delete/GPU 반환, Nucleus browse/read/write와 r5 mounted-server 설정까지 검증했으며, 새 r5 GUI 표시를 확인한 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.
