@@ -10,6 +10,7 @@
 | [`MINIX_GPU_DRA_POC_2026-07-13.md`](./MINIX_GPU_DRA_POC_2026-07-13.md) | MiniX Kubernetes 1.34.3 업그레이드, GPU Operator DRA 전환, RTX 3090 exact selection 실행 기록 | 클러스터/DRA 전제를 확인할 때 |
 | [`MINIX_ISAAC_SIM_E2E_2026-07-14.md`](./MINIX_ISAAC_SIM_E2E_2026-07-14.md) | Harbor, Isaac Sim 6.0 image, DRA instance, Nucleus, WebRTC endpoint의 실제 통합 실행 증거 | standalone 구현이 실제로 동작했는지 확인할 때 |
 | [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md) | 개인 `smartx-k8s`/`twinx-k8s` chart·preset 렌더와 MiniX 적용 결과 | 실제 eecs/c 변경 전 SmartX 구조 검증 결과를 볼 때 |
+| [`TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md`](./TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md) | 실제 TwinX GPU/MIG inventory와 `TwinX-Ops/argocd/omniverse` 읽기 전용 포털 준비·안전 검증 기록 | 이기종 GPU/MIG와 TwinX Argo 배포 경계를 확인할 때 |
 | [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md) | 실제 구현 가이드. eecs-k8s/c-k8s의 어느 파일에 어떤 코드를 넣고 왜 넣는지, 검증·rollback까지 설명 | 실제 이관 코드를 작성하거나 검토할 때 |
 
 ## 권장 읽는 순서
@@ -20,14 +21,16 @@
 2. `MINIX_GPU_DRA_POC_2026-07-13.md`
 3. `MINIX_ISAAC_SIM_E2E_2026-07-14.md`
 4. `SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`
-5. `SMARTX_MIGRATION_PLAN.md`
+5. `TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md`
+6. `SMARTX_MIGRATION_PLAN.md`
 
 ### 바로 eecs-k8s/c-k8s 이관 작업을 할 때
 
 1. `SMARTX_MIGRATION_PLAN.md`에서 저장소·파일·values 경계를 확인한다.
 2. `SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`에서 이미 검증한 commit과 render 결과를 확인한다.
-3. `MINIX_ISAAC_SIM_E2E_2026-07-14.md`에서 live 성공 기준을 확인한다.
-4. 기능 범위에 의문이 있을 때만 `ISAAC_UI_MVP_SCOPE.md`로 돌아간다.
+3. `TWINX_CONTROL1_GPU_MIG_PREVIEW_2026-07-15.md`에서 실제 이기종 GPU/MIG와 Argo 안전 경계를 확인한다.
+4. `MINIX_ISAAC_SIM_E2E_2026-07-14.md`에서 live 성공 기준을 확인한다.
+5. 기능 범위에 의문이 있을 때만 `ISAAC_UI_MVP_SCOPE.md`로 돌아간다.
 
 ## 문서 간 중복 방지 원칙
 
@@ -36,6 +39,7 @@ MVP_SCOPE      = 무엇을 만들고 왜 뺐는가
 DRA_POC        = Kubernetes/GPU 기반이 준비됐는가
 MINIX_E2E      = standalone 앱과 image가 실제로 실행됐는가
 REHEARSAL      = SmartX chart/preset 모양으로도 동작했는가
+TWINX_PREVIEW  = 실제 이기종 GPU/MIG cluster에 안전하게 올릴 모양인가
 MIGRATION_PLAN = 실제 eecs-k8s/cluster preset에 어떤 코드를 넣는가
 ```
 
@@ -53,6 +57,9 @@ Nucleus Content Browser 분리: Isaac asset root는 read-only Isaac Sim collecti
 WebRTC 2.0.0 영상/입력: 사용자 확인 완료
 MiniX 10.34.48.222 Create/Delete: 실험을 위해 임시 활성화
 개인 SmartX/TwinX chart/preset 리허설: 완료
+TwinX control1 일반 GPU/MIG 자동 inventory source: 검증 완료
+TwinX-Ops 읽기 전용 raw manifest와 내부 Harbor image: push 완료
+TwinX Argo CD sync와 live 웹 확인: 사용자 수동 sync 대기
 실제 eecs-k8s/c-k8s Isaac 반영: 아직 하지 않음
 instance 삭제/GPU 반환: 사용자 UI Delete 후 검증 완료
 기존 minix-e2e instance와 구버전 isaac-twinx-e2e 포털: 삭제 완료
