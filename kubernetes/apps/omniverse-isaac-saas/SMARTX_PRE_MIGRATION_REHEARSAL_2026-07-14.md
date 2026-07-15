@@ -52,7 +52,7 @@ instance 삭제/GPU 반환: 아직 수행하지 않음
 | --- | --- | --- | --- |
 | 포털·Isaac Sim source | `mj006648/isaac-twinx` | `main` | `c171142` source + GHCR portal image |
 | 개인 SmartX engine | `mj006648/smartx-k8s` | `main` | `31f3682` |
-| 개인 TwinX preset | `mj006648/twinx-k8s` | `default` | `fcecab9` |
+| 개인 TwinX preset | `mj006648/twinx-k8s` | `default` | `4565d2c` |
 | 실행 기록 | `mj006648/netai-devsecops-runbook` | `main` | 이 문서 |
 
 외부 저장소는 변경하지 않았다.
@@ -423,6 +423,16 @@ Isaac Sim GPU process 종료
 ```
 
 이 검증 전에는 현재 `minix-e2e` instance를 제거하지 않는다.
+
+2026-07-15에는 개인 TwinX preset의 runtime image를 Nucleus path 보정 r4 digest로 갱신하고 live portal을 rollout했다.
+
+```text
+TwinX preset commit: 4565d2c
+new instance image: 10.34.48.223/omniverse/isaac-sim@sha256:70399e7db9883341bae8539c8485ac5b17702cdb3a15ea218c687ccc1780c50f
+current minix-e2e image: r3 digest 유지
+```
+
+기존 instance는 자동 교체하지 않았다. 사용자가 Delete/GPU 반환을 확인한 뒤 새 instance를 만들면 r4 image와 `OMNI_PROJECT_PATH=Projects/demonstration`이 함께 적용된다.
 
 ---
 
