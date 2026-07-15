@@ -41,7 +41,7 @@ EndpointSlice: Ready
 kind-twinx Argo CD sync: control plane이 내려가 있어 하지 않음
 MiniX 적용 방식: Helm render 결과를 kubectl apply
 GUI WebRTC 2.0.0 영상/입력: 사용자 확인 완료
-instance 삭제/GPU 반환: 아직 수행하지 않음
+instance 삭제/GPU 반환: 사용자 UI Delete 후 검증 완료
 ```
 
 ---
@@ -411,28 +411,28 @@ live /api/config writeEnabled: true
 
 공통 SmartX chart 기본값은 false로 유지한다. 현재 설정은 인증 없는 실험용이므로 create/delete와 GPU 반환 검증이 끝나면 preset을 false로 되돌린다.
 
-사용자 WebRTC 확인을 위해 현재 instance를 의도적으로 유지했다.
+사용자 WebRTC 확인을 위해 당시 instance를 의도적으로 유지했다.
 
-따라서 아직 수행하지 않았다.
+2026-07-15 사용자 UI Delete로 다음 항목을 모두 완료했다.
 
 ```text
-instance Delete
-ResourceClaim 삭제
-GPU Available 반환
-Isaac Sim GPU process 종료
+instance Delete: 완료
+ResourceClaim 삭제: 완료
+GPU Available 반환: 완료
+Isaac Sim GPU process 종료: 완료
 ```
 
-이 검증 전에는 현재 `minix-e2e` instance를 제거하지 않는다.
+검증에 사용한 `minix-e2e` instance는 삭제했으며 ResourceClaim 0개, GPU process 0개, GPU inventory 1 total / 1 available 상태를 확인했다.
 
 2026-07-15에는 개인 TwinX preset의 runtime image를 Nucleus path 보정 r4 digest로 갱신하고 live portal을 rollout했다.
 
 ```text
 TwinX preset commit: 4565d2c
 new instance image: 10.34.48.223/omniverse/isaac-sim@sha256:70399e7db9883341bae8539c8485ac5b17702cdb3a15ea218c687ccc1780c50f
-current minix-e2e image: r3 digest 유지
+deleted minix-e2e image: r3 digest
 ```
 
-기존 instance는 자동 교체하지 않았다. 사용자가 Delete/GPU 반환을 확인한 뒤 새 instance를 만들면 r4 image와 `OMNI_PROJECT_PATH=Projects/demonstration`이 함께 적용된다.
+기존 instance 삭제와 GPU 반환을 확인했다. 초기 수동 E2E 검증용 `isaac-twinx-e2e` Deployment/ClusterIP Service도 최신 포털이 대체하므로 삭제했다. 새 instance를 만들면 r4 image와 `OMNI_PROJECT_PATH=Projects/demonstration`이 함께 적용된다.
 
 ---
 
@@ -448,12 +448,13 @@ current minix-e2e image: r3 digest 유지
 - 포털 교체가 기존 동적 instance를 자동 prune하지 않는다.
 - WebRTC network endpoint가 준비된다.
 - WebRTC 2.0.0 client에서 실제 영상과 입력이 동작한다.
+- 포털 Delete가 동적 Deployment, Service, ResourceClaim을 제거한다.
+- instance 삭제 후 DRA GPU가 Available로 반환되고 GPU process가 종료된다.
 
 ### 미증명
 
 - 실제 eecs-k8s/c-k8s branch에서의 merge/sync
 - 실제 GPU 대상 클러스터의 Argo CD multi-source credential
-- delete/GPU 반환
 - Keycloak 인증 후 사용자별 mutation 권한
 - 운영 Harbor TLS/OpenBao/External Secrets
 
@@ -478,15 +479,15 @@ GPU node/UUID는 교체 대상이 아니다. 처음부터 patch에 없으며 liv
 
 ## 16. 다음 작업
 
-1. 현재 instance를 삭제한다.
-2. ResourceClaim 삭제와 GPU 반환을 기록한다.
-3. 실제 GPU 대상 cluster preset을 확정한다.
-4. [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)에 따라 eecs-k8s chart를 반영한다.
-5. 대상 cluster preset patch를 반영한다.
-6. Tower Argo CD에서 root/app sync와 ownership을 확인한다.
-7. 실행 결과를 별도 execution 문서에 기록한다.
+1. r4로 새 instance를 생성해 Nucleus Content Browser read/write를 확인한다.
+2. 실제 GPU 대상 cluster preset을 확정한다.
+3. [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)에 따라 eecs-k8s chart를 반영한다.
+4. 대상 cluster preset patch를 반영한다.
+5. Tower Argo CD에서 root/app sync와 ownership을 확인한다.
+6. 실행 결과를 별도 execution 문서에 기록한다.
+7. MiniX mutation 시험 종료 후 `ui.writeEnabled=false`로 되돌린다.
 ---
 
 ## 17. 한 문장 결론
 
-개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit과 fresh-clone Helm render, MiniX 실제 apply, live DRA inventory, 기존 Isaac Sim/WebRTC endpoint 유지까지 검증했으며, GUI WebRTC를 확인했고, delete/GPU 반환을 끝낸 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.
+개인 `smartx-k8s` 공통 chart와 `twinx-k8s` preset 분리는 push된 commit, fresh-clone Helm render, MiniX 실제 apply, live DRA inventory, WebRTC 영상/입력과 delete/GPU 반환까지 검증했으며, r4 Nucleus read/write를 확인한 뒤 같은 파일 경계를 실제 eecs-k8s와 GPU cluster preset에 옮기면 된다.
