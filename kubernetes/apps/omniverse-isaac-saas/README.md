@@ -60,8 +60,12 @@ TwinX 일반 GPU/MIG 자동 inventory: 검증 완료
 TwinX Isaac portal: 10.38.38.243, WRITE_ENABLED=true, Argo CD Synced/Healthy
 TwinX Nucleus: 10.38.38.245, RBD 10Gi Retain, Pod 12/12 Running/Healthy
 보호 대상: 기존 oos-sim 및 외부 Nucleus 10.38.38.32 비변경
-isaac-twinx source/origin: 47dcfee, 38 tests passed
+isaac-twinx source/origin: 1e94ca4, 42 tests passed
+TwinX-Ops portal revision: c04b787, Argo CD Synced/Healthy
+TwinX portal image: sha256:67fc3848cab38bb3503b71bdfc08b1d64e4702e9b95bbdd043287cbe1f0e9254
 TwinX Isaac image: sha256:c3a5b1b3402f3f2d6185fccee158023da59e99748ce096c33d5a2404fdea9bb7
+GPU UI: physical GPU index/PCI 표시, 메모리 GiB 통일
+Isaac 상태: Pending -> Initializing(120초) -> Running, L40S WebRTC 사용자 확인 완료
 TwinX L40S index 7 + sv4000-1 A6000 동시 launch: 완료
 신규 Nucleus 실제 인증: 두 Isaac Pod의 omni.client stat Result.OK
 Extension 9개: image 포함, 두 Pod의 Kit 검색 경로 등록 확인; 자동 활성화는 하지 않음

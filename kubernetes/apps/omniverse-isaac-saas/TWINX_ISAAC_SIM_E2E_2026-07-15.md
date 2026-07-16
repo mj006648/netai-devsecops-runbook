@@ -347,3 +347,131 @@ MiniX 또는 TwinX의 과거 Nucleus IP
 
 실제 파일별 이관 코드는 [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)를 기준으로 한다.
 
+## 13. 2026-07-16 포털 표시와 WebRTC 준비 상태 보정
+
+실사용 중 확인된 혼동을 줄이기 위해 포털 source와 TwinX 배포를 갱신했다.
+
+```text
+isaac-twinx: 1e94ca4 feat: clarify GPU launch status
+TwinX-Ops:   c04b787 feat: update TwinX portal
+portal image digest: sha256:67fc3848cab38bb3503b71bdfc08b1d64e4702e9b95bbdd043287cbe1f0e9254
+source tests: 42 passed
+Argo CD: Synced / Healthy
+Deployment: 1/1 Ready
+```
+
+GPU 표시는 ResourceSlice의 DRA 내부 device 이름이 아니라 실제 `index`와 `pcieBusID`를 사용한다.
+메모리는 provider가 `46068Mi`, `49140Mi`, `24Gi`, `4864Mi`처럼 서로 다른 단위로 제공해도
+포털에서 binary GiB로 정규화한다.
+
+```text
+l40s · GPU #7 · NVIDIA L40S · 45 GiB · e1:00.0
+```
+
+Kubernetes의 Pod Ready는 Isaac Sim WebRTC 준비 완료를 뜻하지 않는다. RTX, extension, Nucleus,
+StreamSDK 초기화에 추가 시간이 필요하므로 상태를 다음처럼 구분했다.
+
+```text
+Pending -> Initializing -> Running
+STREAM_INITIALIZATION_SECONDS=120
+WebRTC is starting. Please wait 1–2 minutes.
+```
+
+포털은 15초마다 자동 갱신한다. L40S 인스턴스는 초기 접속 때 실패했지만 1~2분 대기 후 같은 Stream
+IP에서 WebRTC 영상 연결이 정상 동작했다. 따라서 이 사례의 공통 원인은 DRA/GPU/LB 실패가 아니라
+Pod Ready보다 늦은 WebRTC 준비 시점이었다. A6000의 구형 driver 호환성은 이 결과와 별도 검증 대상으로
+남긴다.
+
+배포 직후 브라우저가 이전 `index.html`/`app.js`를 표시한 사례가 있었고, 브라우저 캐시 초기화 후 새
+GPU index, PCI, GiB, Initializing UI가 정상 표시됐다.
+
+## 14. Isaac Sim이 사용할 Nucleus 서버 교체
+
+### 14.1 변경 범위
+
+Nucleus 주소는 Isaac Sim image에 bake하지 않는다. 공통 source와 image는 런타임 `OMNI_SERVER`를
+읽으므로 Nucleus 서버만 바꾸는 경우 image rebuild는 필요 없다.
+
+현재 TwinX raw app에서 주 변경 파일은 하나다.
+
+```text
+SmartX-Team/TwinX-Ops
+argocd/omniverse/apps/isaac-twinx-preview/install.yaml
+```
+
+현재 runtime 설정의 역할:
+
+```text
+OMNI_SERVER=omniverse://10.38.38.245/       Nucleus endpoint
+OMNI_PROJECT_PATH=Projects/demonstration    extension 기본 상대 경로
+NUCLEUS_SECRET_NAME=nucleus-twinx-client-auth
+NUCLEUS_USER_KEY=OMNI_USER
+NUCLEUS_PASSWORD_KEY=OMNI_PASS
+```
+
+새 Nucleus가 기존 계정과 동일한 프로젝트 경로를 사용하면 `OMNI_SERVER`만 교체한다.
+
+```yaml
+- name: OMNI_SERVER
+  value: "omniverse://<new-nucleus>/"
+```
+
+다른 프로젝트 root를 사용하면 `OMNI_PROJECT_PATH`도 바꾼다. 계정이 다르면 Secret 원문을 Git에
+추가하지 않고 기존 Secret 값을 안전하게 갱신하거나, 새 Secret을 만든 뒤 이름/key 참조만 manifest에서
+바꾼다.
+
+### 14.2 source에서 값을 소비하는 위치
+
+다음 코드는 수정 대상이 아니라 preset 값이 전달되는 경로다.
+
+```text
+src/isaac_twinx/config.py
+  OMNI_SERVER, OMNI_PROJECT_PATH, Secret 참조를 읽음
+
+src/isaac_twinx/resources.py
+  새 Isaac Deployment에 env와 mounted_servers/NetAI Nucleus 실행 인자를 생성
+
+images/isaac-sim/entrypoint.sh
+images/isaac-sim/overrides/gist.*.extension.py
+  하드코딩 주소 없이 OMNI_SERVER와 OMNI_PROJECT_PATH 사용
+```
+
+### 14.3 적용 시 주의
+
+포털 Deployment를 Argo CD로 rollout한 뒤 생성한 **새 인스턴스**부터 변경된 Nucleus를 사용한다.
+이미 실행 중인 Isaac Deployment에는 이전 env/실행 인자가 남으므로 포털에서 삭제 후 다시 생성하거나,
+해당 Deployment를 명시적으로 갱신·재시작해야 한다. Secret의 env 값도 Pod 시작 시 읽으므로 credential을
+바꾼 인스턴스는 재생성이 필요하다.
+
+검증할 항목:
+
+```text
+portal Deployment의 OMNI_SERVER가 새 URI인지 확인
+새 Isaac Deployment args의 mounted_servers/NetAI Nucleus 확인
+새 Isaac Pod env의 OMNI_SERVER 확인
+Secret 값은 출력하지 않고 Secret name/key 참조만 확인
+Pod 내부 omni.client stat(OMNI_SERVER) == Result.OK
+Content Browser > Omniverse > NetAI Nucleus 자동 등록 확인
+```
+
+### 14.4 SmartX 이관 후 변경 위치
+
+`eecs-k8s` 공통 chart에는 Nucleus 값을 하드코딩하지 않고 schema와 env mapping만 둔다. 실제 서버는
+GPU cluster preset에서 정한다.
+
+```text
+eecs-k8s/apps/omniverse-isaac-saas/values.yaml
+  nucleus.server의 안전한 공통 기본값/schema
+
+eecs-k8s/apps/omniverse-isaac-saas/templates/deployment.yaml
+  nucleus.server -> OMNI_SERVER 변환
+
+<cluster>-k8s/patches/omniverse-isaac-saas/values.yaml
+  nucleus.server
+  nucleus.projectPath
+  nucleus.passwordSecret.name/key
+```
+
+따라서 이관 후 서버 교체도 cluster preset의 `nucleus.server` 한 곳이 기본 변경점이다. 공통 chart나
+Isaac Sim image를 서버마다 다시 만들지 않는다.
+
