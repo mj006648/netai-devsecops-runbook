@@ -6,6 +6,334 @@
 
 ---
 
+## 0A. 2026-07-16 최신 구현 기준
+
+### 0A.0 이번 단계의 전제와 목표
+
+이번 단계에서는 **C 클러스터에 DGX Spark 노드가 이미 join되어 있고 Ready 상태**라고 가정한다. 실제 join 완료 여부를 기다리는 작업이 아니라, 조인 완료 후 바로 재현할 수 있는 설치·검증 계획을 먼저 확정한다.
+
+최종 순서는 다음과 같다.
+
+```text
+Kubernetes 1.34.3
+  -> NVIDIA GPU Operator
+  -> NVIDIA DRA GPU Driver
+  -> GPU/MIG/DRA 리소스 확인
+  -> Nucleus 유지 또는 별도 Nucleus 배포
+  -> isaac-twinx UI 배포
+  -> GPU 선택
+  -> Isaac Sim 인스턴스 생성
+  -> WebRTC 연결 및 삭제/GPU 반환 검증
+  -> eecs-k8s 공통 chart + c-k8s preset으로 정리
+```
+
+기존 C 클러스터의 `oos-sim` 네임스페이스, 기존 연구원 워크로드, 외부 Nucleus endpoint는 이 작업의 소유 범위가 아니다. 기존 Nucleus를 삭제하거나 재설치하지 않고, 필요한 경우 `omniverse` 네임스페이스에 별도 리소스로 배포한다.
+
+### 0A.0.1 C 클러스터 GPU 사전조건
+
+DGX Spark가 조인된 뒤 다음 항목을 순서대로 확인한다.
+
+```bash
+kubectl version
+kubectl get nodes -o wide
+kubectl get nodes --show-labels
+kubectl get pods -n gpu-operator
+kubectl get clusterpolicy -A
+kubectl get crd | grep -E 'nvidia|resource'
+```
+
+확인 기준:
+
+| 단계 | 확인할 것 | 실패 시 조치 |
+| --- | --- | --- |
+| Kubernetes | C 클러스터가 목표 버전 `v1.34.3`인지 | Kubespray 업그레이드 계획 적용 후 재검증 |
+| Node | DGX Spark가 `Ready`인지 | kubelet/container runtime/CNI 상태 확인 |
+| GPU Operator | NVIDIA device plugin, toolkit, feature discovery가 정상인지 | GPU Operator 설치 또는 버전 호환성 수정 |
+| GPU 리소스 | `nvidia.com/gpu` 또는 GPU Operator가 제공하는 리소스가 allocatable인지 | 드라이버·toolkit·operator 로그 확인 |
+| MIG | MIG device/profile이 노출되는지 | MIG strategy와 실제 GPU profile 확인 |
+| DRA | `resource.k8s.io` API, `DeviceClass`, `ResourceSlice`가 존재하는지 | NVIDIA DRA Driver 설치 및 kubelet/controller 상태 확인 |
+
+GPU Operator와 DRA Driver는 서로 대체 관계가 아니다. GPU Operator는 노드 드라이버, container toolkit, device plugin, node labeling 등 GPU 실행 기반을 제공하고, DRA Driver는 Kubernetes ResourceClaim 기반으로 특정 GPU 또는 MIG 자원을 선택·할당할 수 있게 한다. 따라서 둘 다 설치·검증한 뒤 Isaac UI의 DRA 기능을 켠다.
+
+초기 배포에서는 DRA가 완전히 검증되기 전까지 기존 `nvidia.com/gpu: 1` 경로를 fallback으로 남긴다. DRA가 정상 확인되면 `ResourceClaimTemplate` 기반 선택을 활성화한다.
+
+### 0A.0.2 GPU Operator 및 DRA 설치 원칙
+
+설치 소유권은 C 클러스터의 ArgoCD/eecs-k8s 구조에 맞춘다. 임시로 `kubectl apply`하여 운영 리소스를 우회하지 않고, 다음 순서로 manifest/application을 준비한다.
+
+```text
+1. Kubernetes 1.34.3 호환성 확인
+2. NVIDIA GPU Operator chart/version 확인
+3. GPU Operator 설치 또는 기존 설치 상태 확인
+4. NVIDIA DRA Driver chart/application 추가
+5. DeviceClass/ResourceSlice 및 실제 allocatable GPU 확인
+6. 그 다음에 omniverse-nucleus와 isaac-twinx 배포
+```
+
+DRA Driver는 eecs-k8s의 기존 `apps/nvidia-gpu-dra` 패턴을 재사용한다. c-k8s에서는 기능 활성화와 클러스터별 값만 patch로 지정한다. 설치가 끝나기 전에는 `org.ulagbulag.io/omniverse/isaac-saas/dra` feature를 활성화하지 않는다.
+
+
+이 절은 기존 계획을 현재 검증된 `isaac-twinx` 코드와 최신 SmartX 엔진 구조에 맞춰 해석하기 위한
+기준이다. 아래 기준과 기존 본문이 다르면 이 절과 실제 `isaac-twinx` source를 우선한다.
+
+### 현재 source/image 기준
+
+```text
+isaac-twinx source: 3013986
+source tests: 42 passed
+portal image used by MiniX/TwinX: sha256:67fc3848cab38bb3503b71bdfc08b1d64e4702e9b95bbdd043287cbe1f0e9254
+Isaac Sim runtime image: TwinX E2E verified immutable digest recorded in TWINX_ISAAC_SIM_E2E
+```
+
+현재 포털의 실제 범위는 `isaac-ui` 전체 기능을 복제하는 것이 아니다.
+
+```text
+포함:
+  - Kubernetes/DRA GPU inventory
+  - 일반 GPU와 MIG inventory
+  - 실제 GPU index/PCI 정보가 있으면 UI에 표시
+  - memory quantity를 GiB로 정규화
+  - GPU UUID 선택
+  - 선택 GPU 한 장에 대한 ResourceClaim
+  - Isaac Sim Deployment 생성
+  - 인스턴스별 WebRTC TCP/UDP LoadBalancer Service
+  - 사용자 이름, Stream IP, 노드/GPU, 삭제와 GPU 반환
+  - Nucleus URI/Secret reference runtime 주입
+  - Pending -> Initializing(기본 120초) -> Running 상태 표시
+
+제외:
+  - Metrics/Prometheus UI
+  - Scenes 관리
+  - GPU bans 관리 UI
+  - code-server sidecar
+  - 사용자별 PVC/workspace
+  - preview mode
+  - 원본 isaac-ui의 모든 self-service 부가 기능
+```
+
+`Pod Ready`는 Isaac Sim WebRTC 준비 완료가 아니므로, `STREAM_INITIALIZATION_SECONDS=120` 동안
+포털은 `Initializing`으로 표시한다. 이 값은 공통 chart의 기본값으로 두고 preset에서 조정할 수 있게
+한다. 사용자가 실제로 1~2분 대기 후 WebRTC 연결에 성공한 결과를 현재 기준으로 삼는다.
+
+### 최신 isaac-twinx 코드에서 반드시 보존할 설정
+
+| source | 현재 의미 | SmartX chart/preset 전달값 |
+| --- | --- | --- |
+| `src/isaac_twinx/inventory.py` | DRA ResourceSlice의 GPU/MIG, UUID, index, PCI, memoryGiB 계산 | 별도 inventory values를 만들지 않음 |
+| `src/isaac_twinx/config.py` | DRA class와 `STREAM_INITIALIZATION_SECONDS` 환경변수 | `dra.*`, `instance.streamInitializationSeconds` |
+| `src/isaac_twinx/resources.py` | exact one-device ResourceClaim, Isaac Deployment, WebRTC Service | `instance.*`, `dra.*`, `nucleus.*` |
+| `src/isaac_twinx/service.py` | instance lifecycle, Initializing/Running 판정 | `instance.streamInitializationSeconds` |
+| `src/isaac_twinx/api.py` | `/api/gpus`, `/api/instances`, `/api/config` | chart가 포털을 배포하고 RBAC를 제공 |
+| `images/isaac-sim/entrypoint.sh` | `OMNI_SERVER` runtime Nucleus config | image에 주소를 bake하지 않음 |
+
+### 최신 eecs-k8s 기준의 실제 app catalog 연결
+
+현재 최신 `eecs-k8s`는 `apps/*/manifest.yaml`을 `/templates/applications.yaml`이 자동 발견한다.
+`apps/template/application.yaml`은 `patched: true`인 앱에 대해 다음 cluster patch를 multi-source로 연결한다.
+
+```text
+$origin/apps/<app>/values.yaml
+$cluster/patches/<app>/values.yaml
+$cluster repository ref
+```
+
+따라서 Isaac SaaS 앱은 기존 Nucleus처럼 다음 경로를 새로 만든다.
+
+```text
+eecs-k8s/apps/omniverse-isaac-saas/
+  Chart.yaml
+  manifest.yaml
+  values.yaml
+  patches.yaml                # 필요할 때만 작은 계산값
+  templates/
+    _helpers.tpl
+    serviceaccount.yaml
+    role.yaml
+    rolebinding.yaml
+    clusterrole.yaml           # cluster inventory가 필요할 때
+    clusterrolebinding.yaml
+    deployment.yaml
+    service.yaml
+```
+
+현재 개인 `smartx-k8s` working tree에 이 chart의 재사용 가능한 파일이 남아 있지 않으므로, 존재하지 않는
+개인 chart를 복사한다고 가정하지 않는다. `isaac-twinx/deploy/minix/deployment.yaml`,
+`deploy/minix/service.yaml`, `src/isaac_twinx/resources.py`, `src/isaac_twinx/config.py`를 기준으로
+새 SmartX chart를 작성한다. 사용자별 Isaac Sim 리소스는 chart template에 넣지 않는다.
+
+### feature graph와 GPU/DRA 의존성
+
+최신 eecs-k8s에는 이미 다음 feature가 존재한다.
+
+```text
+nvidia.com/gpu
+nvidia.com/gpu/dynamic-resource-allocation
+org.ulagbulag.io/omniverse
+org.ulagbulag.io/omniverse/nucleus
+org.ulagbulag.io/registry/container/harbor
+```
+
+추가할 feature는 포털과 GPU 실행 capability를 분리해 표현한다.
+
+```yaml
+org.ulagbulag.io/omniverse/isaac-saas:
+  requires:
+    - org.ulagbulag.io/omniverse/nucleus
+
+org.ulagbulag.io/omniverse/isaac-saas/dra:
+  requires:
+    - org.ulagbulag.io/omniverse/isaac-saas
+    - nvidia.com/gpu
+    - nvidia.com/gpu/dynamic-resource-allocation
+```
+
+Harbor는 현재 C 외부 registry `10.34.25.18`을 사용할 예정이므로 hard dependency로 넣지 않는다.
+Harbor 자체 feature는 별도 인프라 소유권이며, Isaac portal은 `imagePullSecret`으로 외부 Harbor를
+사용한다. 계정/비밀번호는 Secret으로만 전달한다.
+
+C에는 DGX Spark가 추가되었으므로 다음 순서로 C를 1차 실제 대상에 포함한다.
+
+```text
+c-k8s/values.yaml
+  org.ulagbulag.io/omniverse/isaac-saas 추가
+  GPU/DRA 확인 후 org.ulagbulag.io/omniverse/isaac-saas/dra 추가
+
+c-k8s/patches/omniverse-isaac-saas/values.yaml
+  C portal/image/Harbor/Nucleus/DRA/LB/Secret 참조
+```
+
+DGX Spark가 실제 `DeviceClass`, `ResourceSlice`, `ResourceClaim`을 제공하는지 확인하기 전에는
+`/dra` feature와 `WRITE_ENABLED=true`를 켜지 않는다. DRA가 확인되면 C에서 일반 GPU/MIG 선택과
+Isaac Sim launch까지 검증한다. 이후 같은 공통 chart를 실제 `twinx-k8s`로 별도 이관한다.
+
+현재 c preset의 `cluster.group: ops`는 원격 `ops` branch가 존재하지 않고
+`eecs-k8s/apps/template/application.yaml`이 이를 cluster repo `targetRevision`으로 사용한다.
+C Argo 적용 전 `main`으로 정렬하거나 `ops` branch를 명시적으로 생성하는 branch 결정을 먼저 완료한다.
+
+### C 1차 patch와 Secret 경계
+
+C에는 이미 `org.ulagbulag.io/omniverse/nucleus`가 있으므로 Nucleus StatefulSet을 복제하지 않는다.
+포털은 별도의 Nucleus client Secret 이름/key만 참조한다. Nucleus 내부 password Secret의 key 구조가
+`OMNI_USER`/`OMNI_PASS`와 다를 수 있으므로, 포털용 client Secret은 ExternalSecret 또는 클러스터
+운영 절차로 별도 제공한다.
+
+```yaml
+ui:
+  writeEnabled: false
+  image:
+    repository: 10.34.25.18/<harbor-project>/isaac-twinx
+    digest: sha256:<PORTAL_DIGEST>
+  imagePullSecrets: [<PORTAL_PULL_SECRET>]
+  service:
+    type: LoadBalancer
+    loadBalancerIP: <C_PORTAL_IP>
+
+instance:
+  image:
+    repository: 10.34.25.18/<harbor-project>/isaac-sim
+    digest: sha256:<ISAAC_SIM_DIGEST>
+  imagePullSecrets: [<ISAAC_PULL_SECRET>]
+  streamInitializationSeconds: 120
+
+dra:
+  apiVersion: resource.k8s.io/v1
+  driver: gpu.nvidia.com
+  deviceClass: gpu.nvidia.com
+  migDeviceClass: mig.nvidia.com
+
+nucleus:
+  server: omniverse://<C_NUCLEUS_LB>/
+  projectPath: Projects/demonstration
+  credentialSecret:
+    name: <NUCLEUS_CLIENT_SECRET>
+    userKey: OMNI_USER
+    passwordKey: OMNI_PASS
+```
+
+Harbor 계정/비밀번호는 values, Git, render output에 기록하지 않는다. 먼저 C namespace에 pull Secret을
+준비하고, 이후 portal/Isaac image pull과 Nucleus client Secret 참조만 검증한다.
+
+### 최신 preset patch schema
+
+현재 `twinx-k8s` 개인 patch에는 구형 portal tag와 MiniX Nucleus 값이 남아 있으므로 그대로 복사하지
+않는다. 새 patch는 다음 schema를 기준으로 다시 작성한다.
+
+```yaml
+ui:
+  image:
+    repository: <PORTAL_REGISTRY>/isaac-twinx
+    digest: sha256:<PORTAL_DIGEST>
+  imagePullSecrets: [<PORTAL_PULL_SECRET>]
+  writeEnabled: false
+  service:
+    type: LoadBalancer
+    loadBalancerIP: <PORTAL_IP>
+
+instance:
+  image:
+    repository: <HARBOR>/omniverse/isaac-sim
+    digest: sha256:<ISAAC_SIM_DIGEST>
+  imagePullSecrets: [<ISAAC_PULL_SECRET>]
+  dshmSize: 8Gi
+  streamCommand: /isaac-sim/isaac-sim.streaming.sh
+  publicEndpointFlag: --/app/livestream/publicEndpointAddress=
+  streamIPWaitSeconds: 15
+  streamInitializationSeconds: 120
+
+dra:
+  apiVersion: resource.k8s.io/v1
+  driver: gpu.nvidia.com
+  deviceClass: gpu.nvidia.com
+  migDeviceClass: mig.nvidia.com
+
+nucleus:
+  server: omniverse://<CLUSTER_NUCLEUS>/
+  projectPath: Projects/demonstration
+  credentialSecret:
+    name: <SECRET_NAME>
+    userKey: OMNI_USER
+    passwordKey: OMNI_PASS
+
+webrtc:
+  incompatibleProducts: [A100]
+```
+
+MiniX의 Harbor endpoint는 내부 registry로 사용하되 계정/비밀번호는 이 문서나 values에 기록하지 않는다.
+Kubernetes `imagePullSecret` 또는 ExternalSecret이 전달하는 구조만 사용한다.
+
+### 최신 MiniX rollout 증거
+
+MiniX 포털은 최신 immutable portal digest로 rollout했고 다음을 확인했다.
+
+```text
+Service: 10.34.48.222
+Deployment: 1/1 Ready
+/healthz: 200 OK
+UI: Initializing 표시 코드 제공
+/api/gpus: memoryGiB 제공
+```
+
+MiniX ResourceSlice provider는 현재 GPU index/PCI attribute를 제공하지 않아 해당 필드가 빈 값일 수
+있다. 이것은 UI 실패가 아니라 클러스터 inventory source의 차이다. TwinX처럼 ResourceSlice에 index와
+PCI가 있는 클러스터에서는 `GPU #N`과 PCI가 표시된다.
+
+### 이관 후 검증 기준
+
+```text
+1. eecs-k8s chart lint
+2. engine root helm template에서 isaac app Application 생성 확인
+3. multi-source에 $cluster/patches/omniverse-isaac-saas/values.yaml 연결 확인
+4. Secret 원문 없이 rendered manifest kind/image/env key 검증
+5. GPU cluster에서 DeviceClass/ResourceSlice/portal /api/gpus 확인
+6. exact UUID 선택 -> ResourceClaim count=1 확인
+7. Isaac Pod가 Initializing 후 Running으로 전환
+8. Stream IP WebRTC 연결 확인
+9. Nucleus omni.client stat Result.OK 확인
+10. 삭제 후 Deployment/Service/ResourceClaim와 GPU 반환 확인
+```
+
+이 절의 완료 전까지 `eecs-k8s`, `c-k8s`, `twinx-k8s`에는 push하지 않는다.
+
 ## 0. 이 문서만 보면 알 수 있어야 하는 것
 
 이관 작업자는 이 문서를 따라 다음을 판단할 수 있어야 한다.
@@ -102,7 +430,7 @@ mj006648/twinx-k8s commit: 2a616de
 - chart/preset 렌더: [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md)
 - 실제 TwinX E2E: [`TWINX_ISAAC_SIM_E2E_2026-07-15.md`](./TWINX_ISAAC_SIM_E2E_2026-07-15.md)
 
-현재 성공 기준은 `isaac-twinx` commit `47dcfee`, 38 tests, Isaac Sim digest `sha256:c3a5b1b3402f3f2d6185fccee158023da59e99748ce096c33d5a2404fdea9bb7`이다.
+현재 성공 기준은 `isaac-twinx` commit `3013986`, 42 tests, portal digest `sha256:67fc3848cab38bb3503b71bdfc08b1d64e4702e9b95bbdd043287cbe1f0e9254`, Isaac Sim digest `sha256:c3a5b1b3402f3f2d6185fccee158023da59e99748ce096c33d5a2404fdea9bb7`이다.
 
 ### 2.3 대상 클러스터 전제
 
@@ -526,18 +854,20 @@ org.ulagbulag.io/registry/container/harbor
 ```yaml
 org.ulagbulag.io/omniverse/isaac-saas:
   requires:
+    - org.ulagbulag.io/omniverse/nucleus
+
+org.ulagbulag.io/omniverse/isaac-saas/dra:
+  requires:
+    - org.ulagbulag.io/omniverse/isaac-saas
     - nvidia.com/gpu
     - nvidia.com/gpu/dynamic-resource-allocation
-    - org.ulagbulag.io/omniverse/nucleus
-    - org.ulagbulag.io/registry/container/harbor
 ```
 
-왜 별도 `isaac-saas/dra` optional feature로 나누지 않는가:
+왜 base portal과 `isaac-saas/dra`를 분리하는가:
 
-- 현재 MVP의 핵심이 특정 GPU device 선택이다.
+- C에 포털을 먼저 배포하고 DGX Spark GPU capability는 별도로 검증해야 한다.
 - legacy `nvidia.com/gpu: 1` fallback은 구현 범위가 아니다.
-- DRA가 없으면 UI가 약속한 node/product/UUID 선택을 보장할 수 없다.
-- 따라서 DRA는 선택 기능이 아니라 필수 의존성이다.
+- DRA가 없으면 GPU 선택/launch만 비활성화하고 웹 health/inventory 상태는 확인할 수 있다.
 
 Nucleus feature 정의는 이미 있으므로 중복 key를 추가하지 않는다.
 
@@ -810,11 +1140,11 @@ Nucleus endpoint/Secret 이름 미정
 개인 리허설 chart를 기준으로 다음 디렉터리를 옮긴다.
 
 ```text
-mj006648/smartx-k8s/apps/omniverse-isaac-saas/
-  -> eecs-k8s/apps/omniverse-isaac-saas/
+eecs-k8s/apps/omniverse-isaac-saas/는 현재 개인 working tree에 재사용 가능한 chart가
+남아 있지 않으므로, `isaac-twinx` source/deploy와 Nucleus chart precedent를 기준으로 새로 작성한다.
 ```
 
-그대로 복사한 뒤 반드시 바꿀 것:
+새 chart를 작성한 뒤 반드시 검토할 것:
 
 | 항목 | 변경 |
 | --- | --- |
