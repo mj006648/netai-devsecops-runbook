@@ -1,5 +1,7 @@
 # TwinX control1 GPU/MIG 포털 사전 배포 기록 — 2026-07-15
 
+> 이 문서는 `WRITE_ENABLED=false`였던 사전 preview의 역사적 기록이다. 이후 실제 launch, 신규 Nucleus 인증, Extension 포함, delete/GPU 반환 결과는 [`TWINX_ISAAC_SIM_E2E_2026-07-15.md`](./TWINX_ISAAC_SIM_E2E_2026-07-15.md)를 기준으로 한다.
+
 > 목적: 기존 연구원의 `oos-sim` 워크로드와 외부 Nucleus를 건드리지 않고, 실제 TwinX GPU 클러스터에서 `isaac-twinx`가 일반 GPU와 MIG를 자동 탐색하는지 확인하기 위한 **읽기 전용 웹 포털**을 Argo CD 구조에 추가한 기록이다.
 >
 > 이 문서는 제품 범위나 최종 eecs-k8s chart 코드를 다시 설명하지 않는다. 제품 범위는 [`ISAAC_UI_MVP_SCOPE.md`](./ISAAC_UI_MVP_SCOPE.md), 최종 이관 파일 경계는 [`SMARTX_MIGRATION_PLAN.md`](./SMARTX_MIGRATION_PLAN.md)를 기준으로 한다.

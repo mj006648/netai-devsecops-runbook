@@ -253,43 +253,35 @@ SmartX/eecs-k8s 기준의 재현·변경 계획은 기존 문서를 따른다.
 
 TwinX raw app 실행 기록은 이 문서가 기준이다.
 
-## 10. isaac-twinx 포털과의 현재 경계
+## 10. isaac-twinx 포털과의 최종 검증 경계
 
-`isaac-twinx` 애플리케이션 소스 자체는 원격 `main`과 일치한다.
-
-```text
-local HEAD: bd7d6f09e8623ceeedd79cd9a6b3c4cea13f1504
-origin/main: bd7d6f09e8623ceeedd79cd9a6b3c4cea13f1504
-deployed portal image tag: sha-bd7d6f09e8623ceeedd79cd9a6b3c4cea13f1504
-test result: 37 passed
-```
-
-따라서 일반 GPU/MIG inventory, DRA v1 resource 생성, instance launch/delete, Nucleus env 주입 기능은 최신 소스에 들어 있다. 이번 Nucleus 장애 수정은 포털 Python 코드가 아니라 `TwinX-Ops`의 Nucleus manifest 수정이므로 `isaac-twinx` 저장소에 중복 복사하지 않는다.
-
-다만 현재 TwinX에 배포된 포털은 아직 **읽기 전용 preview 설정**이다.
+Nucleus 장애 수정 이후 포털을 실제 write 모드로 전환하고, 신규 Nucleus `10.38.38.245`를 사용하는 두 Isaac Sim 인스턴스를 실행했다.
 
 ```text
-portal LoadBalancer: 10.38.38.243
-WRITE_ENABLED: false
-ISAAC_SIM_IMAGE: 비어 있음
-OMNI_SERVER: omniverse://10.38.38.32/
-new TwinX Nucleus: omniverse://10.38.38.245/
+isaac-twinx source/origin: 47dcfee
+tests: 38 passed
+portal: 10.38.38.243
+WRITE_ENABLED: true
+OMNI_SERVER: omniverse://10.38.38.245/
+Isaac Sim digest: sha256:c3a5b1b3402f3f2d6185fccee158023da59e99748ce096c33d5a2404fdea9bb7
 ```
 
-즉, 포털 소스와 이미지까지는 최신이지만 새 Nucleus `10.38.38.245`를 사용하는 실제 launch/delete 배포로 전환한 상태는 아니다. Harbor에는 다음 Isaac Sim 이미지가 준비돼 있으나 포털 manifest에는 아직 주입하지 않았다.
+검증 결과:
 
 ```text
-10.38.38.210/library/isaac-sim:6.0-netai-bd7d6f0
-digest: sha256:5511d44476458ba5cb415d991a2f6bc3c24cdfff36a39eca22f3dbcfa9c69e31
+L40S index 7과 sv4000-1 A6000 동시 Running/Ready
+각 Pod에서 omni.client stat(OMNI_SERVER): Result.OK
+Nucleus entry present: True
+Nucleus HTTP 8080: 200
+Extension 9개 image 포함과 Kit 검색 경로 등록 확인
+MiniX 10.34.48.*와 외부 Nucleus 10.38.38.32의 image/runtime hardcoding 없음
+portal DELETE: 두 인스턴스 모두 HTTP 204
+Deployment/Service/ResourceClaim 잔여: 0
+두 DRA GPU: Available 반환
 ```
 
-다음 단계는 `argocd/omniverse/apps/isaac-twinx-preview/install.yaml`의 클러스터별 설정에서만 다음을 변경하는 것이다.
+Extension은 모두 이미지에 포함·등록하지만 자동 활성화하지 않는다. 각 기능의 backend/asset과 Isaac Sim 6.0 호환성을 확인한 뒤 Extension Manager에서 필요한 것만 활성화한다.
 
-1. `ISAAC_SIM_IMAGE`를 위 digest image로 설정한다.
-2. `OMNI_SERVER`를 `omniverse://10.38.38.245/`로 설정한다.
-3. `NUCLEUS_SECRET_NAME`을 신규 TwinX client credential Secret 참조로 바꾼다.
-4. namespace `omniverse` 범위의 create/delete RBAC를 추가한다.
-5. 마지막에 `WRITE_ENABLED=true`로 전환한 뒤 launch, WebRTC, delete, GPU 반환을 검증한다.
+`10.38.38.32`는 기존 연구 환경으로 계속 보호하며, 이번 검증의 Isaac Sim은 새 Kubernetes Nucleus `10.38.38.245`에만 연결했다. 상세한 GPU UUID, Stream IP, image build와 삭제 증거는 다음 문서를 기준으로 한다.
 
-이 전환 전까지는 `10.38.38.243` 포털을 GPU/MIG inventory 확인용으로만 사용한다.
-
+- [`../omniverse-isaac-saas/TWINX_ISAAC_SIM_E2E_2026-07-15.md`](../omniverse-isaac-saas/TWINX_ISAAC_SIM_E2E_2026-07-15.md)

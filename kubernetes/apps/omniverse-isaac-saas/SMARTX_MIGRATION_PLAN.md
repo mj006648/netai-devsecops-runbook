@@ -1,7 +1,7 @@
 # Omniverse Isaac SaaS SmartX/eecs-k8s 이관 구현 가이드
 
 > 목적: MiniX에서 검증한 `isaac-twinx` 포털과 Isaac Sim 실행 구조를 SmartX의 `eecs-k8s` 공통 앱 카탈로그와 `c-k8s`/`twinx-k8s` 클러스터 preset 구조로 옮길 때, **어느 파일에 어떤 코드를 넣고 왜 넣는지**를 구현 단위로 설명한다.
-> 이 문서는 제품 범위를 다시 결정하는 문서가 아니다. 유지·제거 기능과 UI 범위는 [`ISAAC_UI_MVP_SCOPE.md`](./ISAAC_UI_MVP_SCOPE.md), 실제 MiniX 실행 증거는 [`MINIX_ISAAC_SIM_E2E_2026-07-14.md`](./MINIX_ISAAC_SIM_E2E_2026-07-14.md)를 기준으로 한다.
+> 이 문서는 제품 범위를 다시 결정하는 문서가 아니다. 유지·제거 기능과 UI 범위는 [`ISAAC_UI_MVP_SCOPE.md`](./ISAAC_UI_MVP_SCOPE.md), 현재 실제 TwinX 성공 기준은 [`TWINX_ISAAC_SIM_E2E_2026-07-15.md`](./TWINX_ISAAC_SIM_E2E_2026-07-15.md)를 기준으로 한다.
 > Secret 원문은 이 문서, `eecs-k8s`, 공개 저장소, Helm render 출력에 기록하지 않는다.
 
 ---
@@ -84,7 +84,9 @@ https://github.com/mj006648/isaac-twinx
 - 인스턴스 생성 사용자 표시
 - 인스턴스 삭제 시 Deployment/Service/ResourceClaim 정리
 - Nucleus endpoint와 credential Secret 참조
-- MiniX에서 검증한 Isaac Sim 6.0 이미지와 Extension 9개 lock
+- TwinX에서 검증한 Isaac Sim 6.0 immutable image와 Extension 9개 lock
+- 일반 GPU와 MIG DeviceClass를 모두 처리하는 inventory/ResourceClaim 생성
+- Nucleus 주소를 runtime env로만 주입하고 과거 cluster IP를 image에 남기지 않는 구성
 
 ### 2.2 사전 이관 리허설
 
@@ -97,7 +99,10 @@ mj006648/twinx-k8s commit: 2a616de
 
 상세 실행 증거는 다음 문서에만 기록한다.
 
-- [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md)
+- chart/preset 렌더: [`SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md`](./SMARTX_PRE_MIGRATION_REHEARSAL_2026-07-14.md)
+- 실제 TwinX E2E: [`TWINX_ISAAC_SIM_E2E_2026-07-15.md`](./TWINX_ISAAC_SIM_E2E_2026-07-15.md)
+
+현재 성공 기준은 `isaac-twinx` commit `47dcfee`, 38 tests, Isaac Sim digest `sha256:c3a5b1b3402f3f2d6185fccee158023da59e99748ce096c33d5a2404fdea9bb7`이다.
 
 ### 2.3 대상 클러스터 전제
 
@@ -323,6 +328,7 @@ dra:
   apiVersion: resource.k8s.io/v1
   driver: gpu.nvidia.com
   deviceClass: gpu.nvidia.com
+  migDeviceClass: mig.nvidia.com
 
 nucleus:
   server: ""
@@ -353,7 +359,7 @@ nucleus:
 | `instance.prefix` | `INSTANCE_PREFIX` | 동적 리소스 이름 prefix |
 | `instance.dshmSize` | `DSHM_SIZE` | Isaac Sim `/dev/shm` 크기 |
 | `instance.streamCommand` | runtime env | Isaac Sim streaming launcher |
-| `dra.*` | 포털 환경변수 | ResourceClaim API/driver/class |
+| `dra.*` | 포털 환경변수 | ResourceClaim API/driver와 일반 GPU/MIG DeviceClass |
 | `nucleus.server` | `OMNI_SERVER` | Isaac Sim이 연결할 Nucleus URI |
 | `nucleus.projectPath` | `OMNI_PROJECT_PATH` | Content Browser와 Nucleus 사용 Extension이 조회할 상대 경로 |
 | `nucleus.credentialSecret.*` | 포털 환경변수 | 동적 Deployment에 넣을 Secret name/key |
@@ -463,7 +469,7 @@ resource.k8s.io/resourceclaims: list
 write/auth 상태
 Isaac Sim image digest
 동적 instance imagePullSecret
-DRA API version/driver/deviceClass
+DRA API version/driver와 normal/MIG DeviceClass
 Nucleus endpoint
 Nucleus credential Secret name/key
 WebRTC incompatible GPU product
@@ -620,6 +626,7 @@ dra:
   apiVersion: resource.k8s.io/v1
   driver: gpu.nvidia.com
   deviceClass: gpu.nvidia.com
+  migDeviceClass: mig.nvidia.com
 
 nucleus:
   server: omniverse://<NUCLEUS_LOADBALANCER_IP>/
@@ -683,6 +690,7 @@ resource.k8s.io/v1 ResourceClaims, 모든 namespace
 4. 이미 claim된 UUID는 `Allocated`, 사용 가능한 UUID는 `Available`로 표시한다.
 5. A100처럼 WebRTC에 필요한 NVENC가 없는 product는 정책에 따라 `Incompatible`로 표시한다.
 6. 사용자가 선택한 UUID를 exact selector로 ResourceClaim에 넣는다.
+7. 선택한 장치가 MIG이면 `mig.nvidia.com`, 일반 GPU이면 `gpu.nvidia.com` DeviceClass를 사용한다.
 
 따라서 preset은 **API를 읽는 방법과 정책만 설정**하고 inventory 데이터 자체는 저장하지 않는다.
 
@@ -730,9 +738,12 @@ WebRTC/headless launcher
 SmartX Extension 9개, lock commit 기준
 Extension 등록/검증 entrypoint(자동 활성화 없음)
 Nucleus endpoint와 project path를 runtime config/Content Browser에 반영하는 처리
+Time Travel 선택 asset은 `NETAI_TIMETRAVEL_ASTRONAUT_USD` runtime env로만 주입
 ```
 
-Nucleus 주소와 계정 값 자체는 image에 bake하지 않는다. 같은 image를 여러 클러스터에서 재사용하고 preset/Secret만 바꾼다.
+Nucleus 주소와 계정 값 자체는 image에 bake하지 않는다. 같은 image를 여러 클러스터에서 재사용하고 preset/Secret만 바꾼다. 공통 image와 생성 extension을 검사해 MiniX `10.34.48.*`, 기존 외부 Nucleus `10.38.38.32` 같은 과거 주소가 없어야 한다.
+
+9개 extension은 image에 포함하고 Kit 검색 경로에 등록하지만 자동 활성화하지 않는다. 각 extension의 backend/asset과 Isaac Sim 6.0 호환성을 확인한 뒤 필요한 것만 활성화한다.
 
 ---
 
@@ -920,6 +931,7 @@ Service
 사용자별 WebRTC Service
 Secret 원문
 MiniX 전용 IP, 실제 대상이 MiniX가 아닌 경우
+기존 외부 Nucleus IP가 새 cluster preset/image에 남은 값
 mutable Isaac Sim latest tag
 ```
 
@@ -970,6 +982,9 @@ Isaac Sim Running
 WebRTC Service External IP 할당
 stream TCP/UDP endpoint 준비
 Nucleus URI 설정 확인
+각 Pod의 omni.client stat 결과가 Result.OK
+Extension lock 9개가 image와 Kit 검색 경로에 등록
+과거 cluster IP scan 결과가 0
 ```
 
 ### 13.5 삭제/GPU 반환
@@ -1066,27 +1081,33 @@ kubectl -n omniverse get deploy,svc,resourceclaim
 개인 SmartX chart lint/render
 개인 TwinX preset multi-source value path
 MiniX에 render 결과 적용
-포털 health
-Kubernetes live GPU inventory
-Isaac Sim Running
-WebRTC TCP endpoint와 EndpointSlice readiness
-Nucleus runtime URI 설정
+TwinX 포털 health와 일반 GPU/MIG live inventory
+L40S index 7과 sv4000-1 A6000 동시 Isaac Sim Running
+두 exact DRA allocation과 WebRTC LoadBalancer IP
+두 Pod에서 신규 Nucleus omni.client stat Result.OK
+Extension 9개 image 포함과 Kit 검색 경로 등록
+과거 MiniX/외부 Nucleus IP image/runtime scan 0
+포털 Delete HTTP 204
+Deployment/Service/ResourceClaim 삭제와 두 GPU Available 반환
 ```
 
 사람 확인 완료:
 
 ```text
-WebRTC 2.0.0 client 영상과 입력
+MiniX WebRTC 2.0.0 client 영상과 입력
 ```
 
-아직 남은 live 확인:
+실제 이관 전 남은 게이트:
 
 ```text
-인스턴스 Delete 실행
-ResourceClaim 삭제와 GPU Available 반환 확인
+TwinX Stream IP의 GUI 영상/입력 수동 확인
+각 필요한 extension의 Isaac Sim 6.0 개별 활성화/기능 확인
+실제 eecs-k8s 공통 chart review/render
+실제 GPU cluster preset review/render
+인증 및 운영 Secret 전달 방식 확정
 ```
 
-또한 C 클러스터에는 GPU가 없으므로 C에 실제 feature를 켜는 것이 목적이 아니다. 실제 GPU 클러스터 preset을 최종 대상으로 정한 뒤 반영한다.
+C 클러스터에는 GPU가 없으므로 C에 실제 feature를 켜는 것이 목적이 아니다. 실제 활성화는 GPU/DRA가 검증된 TwinX 또는 별도 GPU 클러스터 preset에서 수행한다.
 
 ---
 
@@ -1122,8 +1143,8 @@ ResourceClaim 삭제와 GPU Available 반환 확인
 - [ ] GPU inventory가 live API와 일치
 - [ ] 정확한 GPU UUID로 instance 생성
 - [ ] WebRTC GUI 영상/입력 확인
-- [ ] instance 삭제
-- [ ] GPU 반환 확인
+- [x] TwinX E2E instance 삭제
+- [x] TwinX E2E GPU 반환 확인
 - [ ] 실행 기록 runbook 업데이트
 
 ---
