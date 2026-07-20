@@ -404,7 +404,7 @@ kubectl get nodes -o json
 - GPU device가 ResourceSlice에 표시됨
 - MIG가 구성된 장치는 해당 MIG device/profile이 표시됨
 
-`nvidiaDriverRoot`는 현재 C GPU Operator의 실제 driver mount 경로와 일치하는지 sync 전에 확인한다. 현재 patch에는 `/run/nvidia/driver`를 기본값으로 적었으며, 실제 환경이 host-installed driver이면 `/`로 조정할 수 있다.
+실제 C 클러스터 sync 검증에서 `/run/nvidia/driver`가 비어 있고 `nvidia-smi` 및 `libnvidia-ml.so.1`이 발견되지 않아 DRA Init 컨테이너가 대기했다. C는 GPU Operator가 driver container를 관리하는 방식이 아니라 호스트에 NVIDIA driver가 직접 설치된 구조이므로, C patch의 `nvidiaDriverRoot`는 `/`로 설정한다. 다른 클러스터에서는 driver container 사용 여부를 확인해 `/run/nvidia/driver` 또는 `/`를 별도로 선택해야 한다.
 
 이번 단계에서는 eecs-k8s와 c-k8s를 원격 push하지 않고 로컬 검증만 수행한다. DRA 검증이 끝난 뒤에만 Isaac SaaS feature와 portal patch를 별도로 적용한다.
 
