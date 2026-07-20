@@ -349,6 +349,65 @@ PCI가 있는 클러스터에서는 `GPU #N`과 PCI가 표시된다.
 
 ---
 
+
+## 0B. C 클러스터 DRA Driver 이관 계획 (2026-07-20)
+
+이번 단계는 DGX Spark가 C 클러스터에 이미 join되어 있고, NVIDIA GPU Operator가 설치되어 있다는 전제에서 진행한다. Isaac TwinX 포털보다 먼저 NVIDIA DRA Driver를 eecs-k8s/c-k8s 구조로 활성화한다.
+
+### 변경 범위
+
+공통 엔진 저장소인 eecs-k8s에는 기존 `apps/nvidia-gpu-dra` 앱이 이미 존재하므로 새 앱을 만들지 않는다. 해당 앱의 `manifest.yaml`에서 `patched: true`만 활성화하여 클러스터별 patch를 받을 수 있게 한다.
+
+```text
+eecs-k8s/apps/nvidia-gpu-dra/manifest.yaml
+  -> patched: false -> true
+```
+
+C preset에서는 다음 두 파일만 DRA 관련으로 변경한다.
+
+```text
+c-k8s/values.yaml
+  -> nvidia.com/gpu/dynamic-resource-allocation feature 활성화
+
+c-k8s/patches/nvidia-gpu-dra/values.yaml
+  -> C 클러스터 전용 driver root/resource/kubelet plugin 설정
+```
+
+GPU Operator와 DRA Driver의 역할은 다르다.
+
+```text
+GPU Operator
+  -> NVIDIA driver, container toolkit, device plugin, GPU node discovery
+
+NVIDIA DRA Driver
+  -> DeviceClass, ResourceSlice, ResourceClaim 기반 GPU 할당
+```
+
+따라서 GPU Operator를 다시 설치하지 않고, 기존 GPU Operator 상태 위에 DRA Driver만 ArgoCD로 배포한다. 노드명을 하드코딩하지 않고 `nvidia.com/gpu.present=true` label 기반으로 kubelet plugin을 배치한다.
+
+### C preset 적용 후 검증
+
+ArgoCD sync 이후 다음을 확인한다.
+
+```bash
+kubectl -n gpu-nvidia get deploy,daemonset,pods -o wide
+kubectl get deviceclass
+kubectl get resourceslices
+kubectl get nodes -o json
+```
+
+성공 기준:
+
+- DRA controller와 kubelet plugin이 Running
+- `DeviceClass`가 생성됨
+- GPU 노드별 `ResourceSlice`가 생성됨
+- GPU device가 ResourceSlice에 표시됨
+- MIG가 구성된 장치는 해당 MIG device/profile이 표시됨
+
+`nvidiaDriverRoot`는 현재 C GPU Operator의 실제 driver mount 경로와 일치하는지 sync 전에 확인한다. 현재 patch에는 `/run/nvidia/driver`를 기본값으로 적었으며, 실제 환경이 host-installed driver이면 `/`로 조정할 수 있다.
+
+이번 단계에서는 eecs-k8s와 c-k8s를 원격 push하지 않고 로컬 검증만 수행한다. DRA 검증이 끝난 뒤에만 Isaac SaaS feature와 portal patch를 별도로 적용한다.
+
 ## 1. 최종 목표 구조
 
 ```text
