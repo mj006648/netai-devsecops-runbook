@@ -857,6 +857,74 @@ SJoon99/c-k8s main
 `c-k8s`에는 확인된 `ops` remote branch가 없었으므로 이번 변경은 실제 Argo source가 사용하는
 `main`에 반영했다.
 
+
+### 15.2 NVIDIA 4K kernel 영구 기본값 고정 — 2026-07-21
+
+WebRTC 검증이 끝난 뒤 DGX Spark가 다음 일반 재부팅에서도 64K generic kernel이 아니라 검증된
+NVIDIA 4K kernel을 선택하도록 GRUB 기본값을 영구 고정했다. 이 작업 중에는 재부팅하지 않았으며,
+Kubernetes node, 포털, 실행 중인 Isaac Sim과 Nucleus도 중단하지 않았다.
+
+적용 상태:
+
+```text
+/etc/default/grub:
+  GRUB_DEFAULT=saved
+
+/boot/grub/grubenv:
+  saved_entry=Advanced options for Ubuntu>Ubuntu, with Linux 6.17.0-1026-nvidia
+
+current kernel: 6.17.0-1026-nvidia
+current page size: 4096
+backup: /etc/default/grub.bak-20260721-215758
+```
+
+실행한 핵심 명령:
+
+```bash
+sudo sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
+sudo update-grub
+sudo grub-set-default \
+  'Advanced options for Ubuntu>Ubuntu, with Linux 6.17.0-1026-nvidia'
+sudo grub-editenv /boot/grub/grubenv unset next_entry
+```
+
+`grub-reboot`의 `next_entry`는 1회 부팅용이므로 제거하고, `saved_entry`만 유지했다. 또한 자동
+`apt autoremove`가 검증된 kernel 구성요소를 정리하지 않도록 다음 versioned package를 manual로
+표시했다.
+
+```text
+linux-image-6.17.0-1026-nvidia
+linux-headers-6.17.0-1026-nvidia
+linux-modules-6.17.0-1026-nvidia
+linux-modules-nvidia-fs-6.17.0-1026-nvidia
+linux-tools-6.17.0-1026-nvidia
+```
+
+이는 package를 무조건 `hold`한 것이 아니다. 동일 package의 보안/수정 업데이트는 막지 않으면서,
+새 kernel이 설치되어도 GRUB은 위의 정확한 NVIDIA kernel entry를 기본으로 유지한다. 이 entry를
+계속 사용하려면 `/boot/vmlinuz-6.17.0-1026-nvidia`와 initrd를 삭제하지 않아야 한다.
+
+적용 직후 비재부팅 검증:
+
+```text
+DGX Spark node: Ready
+portal deployment: 1/1
+Isaac ARM64 deployment: 1/1
+DRA claim: allocated,reserved
+running kernel/page size: 변경 없음
+```
+
+의도적으로 원래 설정으로 되돌릴 때만 다음 rollback을 사용한다.
+
+```bash
+sudo cp -a /etc/default/grub.bak-20260721-215758 /etc/default/grub
+sudo update-grub
+sudo grub-editenv /boot/grub/grubenv unset saved_entry
+```
+
+rollback 명령도 즉시 reboot를 수행하지 않는다. 다음 reboot 전에 `GRUB_DEFAULT`, `saved_entry`,
+`/boot`의 kernel/initrd 존재 여부를 다시 확인해야 한다.
+
 ---
 
 ## 16. 참고 문서

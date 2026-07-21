@@ -75,6 +75,7 @@ Extension 9개: image 포함, 두 Pod의 Kit 검색 경로 등록 확인; 자동
 과거 MiniX 10.34.48.* 및 외부 Nucleus 10.38.38.32: 새 image/runtime extension scan에서 없음
 두 E2E Delete: HTTP 204, Deployment/Service/ResourceClaim 0, 두 GPU Available 반환
 C DGX Spark kernel/page size: 6.17.0-1026-nvidia / 4096, node Ready
+C DGX Spark boot default: GRUB saved entry로 6.17.0-1026-nvidia 영구 고정, 재부팅하지 않음
 C portal: isaac-twinx 0.2.2, amd64 control node에서 정상 실행
 C DGX Spark ARM64 Isaac 6.0.1: architecture 자동 선택, DRA exact GPU, hostNetwork, node IP WebRTC 검증 완료
 C DGX Spark WebRTC: 10.33.201.193, Client 2.0.0 영상/입력 사용자 확인 완료
