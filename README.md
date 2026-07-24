@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-07-24 | Kubernetes / Cluster Lifecycle | [EdgeX/TwinX KISS 클러스터 구성 및 Compute 재조인 복구](kubernetes/cluster-lifecycle/edgex-twinx-kiss-cluster-join-recovery-2026-07-24.md) | Control Plane bootstrap ConfigMap/RBAC 복구, localhost:6443 proxy seed, kubeadm CA/10250 preflight 충돌 해소, Compute 8대 조인 |
 | 2026-07-24 | Kubernetes / Cluster Lifecycle | [DataX Worker 재조인 복구 및 네트워크 안정화](kubernetes/cluster-lifecycle/datax-worker-rejoin-recovery-2026-07-24.md) | 이전 kubelet CA 백업·분리, KISS 재조인, Wi-Fi bond 불안정과 임시 유선 전환, stale CNI 정리, CNI 미배포 시 정상 판정 |
 | 2026-07-13 | Hardware / Provisioning | [Supermicro E300 Ubuntu 24.04 PXE/UEFI 복구](hardware/provisioning/supermicro-e300-ubuntu-24-04-pxe-uefi-recovery-2026-07-13.md) | KISS PXE network/HWE package 실패, stale UEFI NVRAM entry와 GRUB 등록 오류, Subiquity 전체 재시작 및 disk boot 검증 |
 | 2026-07-01 | Hardware / Power | [SYS-210P DC PSU 장애 및 AC 전환 문의](hardware/power/supermicro-sys-210p-dc-psu-2026-07-01.md) | edgebox3/4 power-off, S-1200-48 external AC-to-48V DC PSU 불안정, Supermicro 공식 AC conversion 확인 항목 |

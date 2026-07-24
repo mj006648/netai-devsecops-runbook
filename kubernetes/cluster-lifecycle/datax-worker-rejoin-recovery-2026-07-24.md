@@ -811,6 +811,8 @@ sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
 
 ## 향후 Control Plane 전환 전 별도 게이트
 
+> 후속 결과: 아래 사전 조사 이후 EdgeX/TwinX Control Plane 구성과 Compute 8대 Join을 완료했다. 실제 수행 절차와 추가로 확인된 `cluster-info`, localhost API proxy, kubeadm ConfigMap/RBAC 문제는 [EdgeX/TwinX KISS 클러스터 구성 및 Compute 재조인 복구](edgex-twinx-kiss-cluster-join-recovery-2026-07-24.md)에 정리했다.
+
 Worker의 인증정보 최소 분리 절차를 Control Plane 후보에 그대로 적용하면 안 된다. Control Plane 역할로 edit하기 전에 기존 workload와 로컬 etcd의 소유권·데이터를 먼저 확인한다.
 
 2026-07-24 읽기 전용 사전 확인 결과:
