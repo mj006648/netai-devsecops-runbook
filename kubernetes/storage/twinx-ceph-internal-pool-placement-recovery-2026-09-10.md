@@ -1,10 +1,10 @@
 # TwinX Ceph 내부 풀 배치 복구 — 단일 SSD 실험 환경
 
-> 작성일: 2026-09-10
+> 작성일: 2026-09-10 / 갱신일: 2026-09-14
 >
-> 상태: **선택 Sync 2건 성공, 대상 65 PG 복구 완료. 추가 내부 풀의 32 PG가 inactive로 남아 전체 정상화는 미완료.**
+> 상태: **5개 관리 풀 129 PG 복구 재검증 통과. 전체 513 PG의 active+clean을 확인했으나 mon.e가 간헐적으로 quorum에서 이탈해 성능 실험은 보류 중이다.**
 >
-> 범위: 관리·RGW 로그 풀 3개의 가용성 복구. 원본 데이터 삭제, PV/PVC 변경, 복제 수 감소는 하지 않는다.
+> 범위: 확인된 관리·RGW 내부 풀 5개의 가용성 복구. 원본 데이터 삭제, PV/PVC 변경, 복제 수 감소는 하지 않는다.
 
 ## Current status
 
@@ -12,13 +12,13 @@
 | --- | --- |
 | 환경 | Rook 1.17.6 / Ceph 19.2.2, TwinX 실험 스토리지 |
 | OSD 배치 | l40s 한 호스트, **같은 NVMe 한 개의 논리 장치 3개** |
-| 문제 | 최초 대상 65 PG는 복구됨. 추가 `default.rgw.control`의 32 PG가 inactive |
+| 현재 문제 | PG 가용성 막힘은 해소. mon.e의 간헐적 quorum 이탈과 운영 경고가 남음 |
 | 원본 풀 | `trident-kci-rgw-data` 128 PG는 active+clean |
 | 메타데이터 풀 | `trident-kci-rgw-meta` 8 PG는 active+clean |
 | 적용 GitOps | 별도 수동 앱 `rook-ceph-pool-recovery`, 자동 Sync는 꺼진 상태 유지 |
-| 로컬 검증 | 테스트 20개, Helm, API 서버 dry-run 통과 |
-| 실제 적용 | 새 Application 1개와 대상 풀 CR 3개만 선택 Sync, 두 작업 Succeeded |
-| 엄격한 사후 검증 | 추가 풀이 발견되어 실패. 예외를 무시하거나 baseline을 바꾸지 않음 |
+| 로컬 검증 | 마지막 metadata 단계 테스트 26개, Helm, API 서버 dry-run 통과 |
+| 실제 적용 | 최초 3개 → control 1개 → metadata 1개를 단계별 선택 Sync |
+| 엄격한 사후 검증 | 최종 129 PG 검증 통과, 2026-09-14 재통과. 과거 단계의 실패 기록은 보존 |
 | 물리 장애 보호 | 이번 변경으로 추가되지 않음 |
 
 이 문서는 공개 운영 노트다. 인증값, kubeconfig, keyring, 인증서 본문, 장치 일련번호와 전체 클러스터 원시 덤프는 게시하지 않는다. 상세 내부 근거 링크는 아래에 별도로 구분했다.
@@ -145,7 +145,9 @@ spec:
 
 `enableCrushUpdates`는 기존 풀의 CRUSH 규칙 변경을 허용한다. 기존 공용 `replicated_rule` 자체를 수정하지 않는다. 풀을 삭제·재생성하거나 `size=1`, `min_size=1`로 낮추는 방식은 사용하지 않는다.
 
-### 3. 적용 전 상태 저장 후 선택적으로 Sync
+### 3. 최초 3개 풀 적용 절차 — 2026-09-10 실행 기록
+
+아래는 최초 적용 당시의 기록이다. 현재 선언은 후속 복구를 포함한 5개 풀이므로 이 절차를 그대로 재실행하지 않는다. 후속 단계에서는 추가 대상 CR 하나씩만 선택 Sync했다.
 
 GitOps 저장소 루트에서:
 
@@ -178,7 +180,7 @@ python3 argocd/twinx-storage/apps/rook-ceph-pool-recovery/verify.py verify \
 
 - 클러스터 FSID/context와 기존 pool ID 유지.
 - 대상 풀의 `size=3`, `min_size=2`, PG 수 유지 및 osd 기준 규칙 적용.
-- 대상 65 PG가 `active+clean`, CephBlockPool 상태 Ready.
+- 현재 선언된 5개 관리 풀의 129 PG가 `active+clean`, CephBlockPool 상태 Ready.
 - 비대상 풀의 ID·size·min_size·crush_rule·pg_num에 예상 밖 변경이 없음.
 - 남은 Ceph 경고를 별도로 기록.
 
@@ -201,6 +203,26 @@ python3 argocd/twinx-storage/apps/rook-ceph-pool-recovery/verify.py verify \
 
 추가 풀이나 기존 프로세스를 임의로 삭제·종료하지 않았다. 소유자·용도를 확인하고 후속 범위를 정하기 전에는 복구 대상 풀을 계속 추가하거나 global CRUSH 기본값을 바꾸지 않는다. 원본 데이터·PV/PVC·MinIO는 변경하지 않았으며 파일럿 성능 부하도 재개하지 않았다.
 
+### 2026-09-11~14 후속 검증
+
+| 풀 | ID | PG 수 | 최종 관리 풀 검증 |
+| --- | ---: | ---: | --- |
+| `.mgr` | 1 | 1 | active+clean |
+| `default.rgw.log` | 20 | 32 | active+clean |
+| `trident-kci-store.rgw.log` | 31 | 32 | active+clean |
+| `default.rgw.control` | 32 | 32 | active+clean |
+| `default.rgw.meta` | 33 | 32 | active+clean |
+
+Control을 복구한 뒤 default zone 설정에 있는 metadata 풀이 초기화됐다. 관리 용도와 실제 ID를 확인해 이미 생성된 풀만 추가했으며, metadata 단계에서 엄격한 검사까지 통과했다. 복제 수 3/min_size 2, pool ID·PG 수와 기존 비대상 풀 설정을 유지했다. 원본 버킷의 데이터 풀을 임의로 추가하지 않았다.
+
+2026-09-14 최초 관측에서는 전체 513 PG가 active+clean이었다. 하지만 후속 샘플에서는 mon.e가 quorum을 반복 이탈했다. 약 46초 동안 CPU quota throttled period 증가는 0이었고 메모리는 8 GiB 한계에 근접했다. 추가 약 15초 관측에서 memory max 이벤트 4,555회와 파일 캐시 refault가 약 204만 page 증가했지만 OOM/oom_kill 증가는 없었다. 메모리 사용량만으로 OOM 또는 원인을 단정하지 않는다.
+
+비교한 mon.f에서는 같은 관측 구간에 max/refault 증가가 없었다. mon.e의 캐시·I/O 압박과 quorum 이탈은 함께 관측된 사실이며, 원인 확정이나 CPU 증설의 근거로 확대하지 않는다. Monitor DB는 Trident 데이터셋의 설명·공유 메타데이터가 아니라 Ceph 내부 운영 DB다.
+
+낮은 디스크 여유 비율 경고는 mon.f/h이고, quorum 이탈은 여유 공간 약 2.84 TB인 mon.e에서 관측됐다. 원본 데이터 삭제로 해결할 문제라고 단정하지 않는다. PG replica 수 경고도 771/3=257로 남아 있다. 경고 임계값·PG 수·메모리 제한을 임의로 바꾸지 않았다.
+
+mon.e 한 개의 온라인 DB compaction은 별도 승인·사전 점검이 필요한 후속 후보이며 **아직 실행하지 않았다**. 시행 시 f/h quorum 유지, 충분한 공간과 기존 유지보수 작업 여부를 먼저 확인하고 전후 DB 크기·압박·quorum을 검증해야 한다. 전체 Monitor 동시 재시작이나 원본/PV 삭제는 하지 않는다.
+
 ## Prevention
 
 - OSD 개수뿐 아니라 실제 장치·호스트의 독립성을 확인한다.
@@ -214,7 +236,7 @@ python3 argocd/twinx-storage/apps/rook-ceph-pool-recovery/verify.py verify \
 - **같은 NVMe/호스트 장애에 대한 보호는 추가되지 않는다.**
 - `Prune=false,Delete=false`는 Argo 경로의 보호다. 직접 `kubectl delete`로 풀 CR을 삭제하면 Rook이 기존 Ceph 풀까지 삭제할 수 있다. **CR 삭제를 rollback으로 사용하지 않는다.**
 - 정상화되지 않는 경우 CR/PG 상태와 Operator 오류를 수집하고 같은 대상 범위의 전진 수정안을 검토한다. 데이터를 지우거나 복제 수를 낮춰 성공처럼 보이게 하지 않는다.
-- 요청한 Sync와 대상 65 PG 복구는 검증했지만, 추가 내부 풀과 Monitor 경고가 남아 전체 정상화·파일럿 재개는 미완료다.
+- 관리 풀 복구와 재배치 수렴은 확인했지만, 간헐적인 Monitor quorum 이탈 및 운영 경고로 안정적인 파일럿 재개는 미완료다.
 
 ## 참고
 
@@ -230,5 +252,8 @@ python3 argocd/twinx-storage/apps/rook-ceph-pool-recovery/verify.py verify \
 - [Trident 실험 저장소의 준비·검증 기록](https://github.com/mj006648/Trident-Lakehouse-Experiments/blob/bf0ee141c87eaa79457563e3c7d95409ee1668e5/experiments/operations-v3/results/summary/ceph-pool-recovery-preparation-20260910.md)
 
 - [실제 선택 Sync 결과와 남은 예외 — 내부 권한 필요](https://github.com/mj006648/Trident-Lakehouse-Experiments/blob/main/experiments/operations-v3/results/summary/ceph-pool-recovery-result-2026-09-10.md)
+
+- [최종 관리 풀 복구 — 내부 권한 필요](https://github.com/mj006648/Trident-Lakehouse-Experiments/blob/main/experiments/operations-v3/results/summary/ceph-management-recovery-2026-09-11.md)
+- [2026-09-14 안정성 점검 — 내부 권한 필요](https://github.com/mj006648/Trident-Lakehouse-Experiments/blob/main/experiments/operations-v3/results/summary/ceph-stability-assessment-2026-09-14.md)
 
 기존의 [Rook-Ceph 재설치 절차](rook-ceph-reinstall.md)나 [LV 준비 절차](lv-preparation.md)는 이번 복구 경로가 아니다. 재설치·LV 재구성으로 이 문제를 해결하려 하지 않는다.
