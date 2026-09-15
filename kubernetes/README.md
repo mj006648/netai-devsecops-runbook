@@ -7,6 +7,7 @@ NetAI TwinX/MiniX 클러스터의 Kubernetes 기반 운영 기록을 모아둔 �
 
 | Last update | Area | Topic | Document |
 | --- | --- | --- | --- |
+| 2026-09-15 | Observability | 관측·스트리밍·검색·테이블 관리의 개념과 실습 | [운영 데이터 파이프라인 학습](observability/data-pipelines/) |
 | 2026-09-14 | Storage | 129 관리 PG 복구 및 mon.e quorum·메모리 압박 후속 점검 | [TwinX Ceph 내부 풀 배치 복구](storage/twinx-ceph-internal-pool-placement-recovery-2026-09-10.md) |
 | 2026-09-02 | GPU | sv4000-2 Partridge 전용 스케줄링 해제, A100 MIG rollback, 일반 Pod 배치 검증 | [TwinX sv4000-2 Partridge 전용 해제](gpu/twinx-sv4000-2-partridge-release-2026-09-02.md) |
 | 2026-09-02 | GPU | NVIDIA AI Infrastructure/DSX 공개 개념과 NetAI 운영 기준선 | [NVIDIA AI Infrastructure와 DSX 학습 메모](gpu/nvidia-ai-infrastructure-dsx-notes-2026-08.md) |

@@ -1,0 +1,10 @@
+{"bytes_completed": 0, "event_id": "event-001", "event_time": "2026-09-15T10:00:00Z", "run_id": "run-001", "sequence": 1, "state": "PendingDispatch"}
+{"bytes_completed": 0, "event_id": "event-002", "event_time": "2026-09-15T10:00:01Z", "run_id": "run-001", "sequence": 2, "state": "Accepted"}
+{"bytes_completed": 0, "event_id": "event-003", "event_time": "2026-09-15T10:00:02Z", "run_id": "run-001", "sequence": 3, "state": "Preparing"}
+{"bytes_completed": 64, "event_id": "event-004", "event_time": "2026-09-15T10:00:03Z", "run_id": "run-001", "sequence": 4, "state": "Preparing"}
+{"bytes_completed": 128, "event_id": "event-005", "event_time": "2026-09-15T10:00:05Z", "run_id": "run-001", "sequence": 5, "state": "Ready"}
+{"bytes_completed": 64, "event_id": "event-004", "event_time": "2026-09-15T10:00:03Z", "run_id": "run-001", "sequence": 4, "state": "Preparing"}
+{"bytes_completed": 0, "event_id": "event-006", "event_time": "2026-09-15T10:00:01Z", "run_id": "run-002", "sequence": 1, "state": "PendingDispatch"}
+{"bytes_completed": 256, "event_id": "event-007", "event_time": "2026-09-15T10:00:04Z", "run_id": "run-002", "sequence": 3, "state": "Ready"}
+{"bytes_completed": 64, "event_id": "event-008", "event_time": "2026-09-15T10:00:03Z", "run_id": "run-002", "sequence": 2, "state": "Preparing"}
+{"bytes_completed": 128, "event_id": "event-005", "event_time": "2026-09-15T10:00:05Z", "run_id": "run-001", "sequence": 5, "state": "Ready"}

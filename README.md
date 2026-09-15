@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-15 | Kubernetes / Observability | [운영 데이터 파이프라인 한국어 학습](kubernetes/observability/data-pipelines/) | OTel·Kafka·Flink·OpenSearch·Iceberg·Spark·Prometheus 개념, 장애·복구, 통합 설계와 오프라인 실습 |
 | 2026-09-14 | Kubernetes / Storage | [TwinX Ceph 내부 풀 배치 복구](kubernetes/storage/twinx-ceph-internal-pool-placement-recovery-2026-09-10.md) | 129 관리 PG 복구·전체 PG 수렴, mon.e quorum 이탈·메모리 압박 재검증 |
 | 2026-09-02 | Kubernetes / GPU | [TwinX sv4000-2 Partridge 전용 해제](kubernetes/gpu/twinx-sv4000-2-partridge-release-2026-09-02.md) | GitOps 의존성 제거, Rook SSA 잔존 필드 복구, NFS Retain 보존, MIG rollback, 일반 Pod 스케줄링 검증 |
 | 2026-09-02 | Kubernetes / GPU | [NVIDIA AI Infrastructure와 DSX 학습 메모](kubernetes/gpu/nvidia-ai-infrastructure-dsx-notes-2026-08.md) | AI Factory와 DSX 공개 개념, 공동 설계 원칙, NetAI 운영 기준선과 검토 질문 |
