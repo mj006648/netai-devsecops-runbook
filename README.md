@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-16 | Kubernetes / Storage | [Iceberg·Open Table Format 논문 학습 노트](kubernetes/storage/lakehouse/) | 입문 예제, VLDB·SIGMOD·CIDR 주요 논문 7편과 보충 문헌, 실험 조건·한계, NetAI 검증 계획 |
 | 2026-09-15 | Kubernetes / Observability | [운영 데이터 파이프라인 한국어 학습](kubernetes/observability/data-pipelines/) | OTel·Kafka·Flink·OpenSearch·Iceberg·Spark·Prometheus 개념, 장애·복구, 통합 설계와 오프라인 실습 |
 | 2026-09-14 | Kubernetes / Storage | [TwinX Ceph 내부 풀 배치 복구](kubernetes/storage/twinx-ceph-internal-pool-placement-recovery-2026-09-10.md) | 129 관리 PG 복구·전체 PG 수렴, mon.e quorum 이탈·메모리 압박 재검증 |
 | 2026-09-02 | Kubernetes / GPU | [TwinX sv4000-2 Partridge 전용 해제](kubernetes/gpu/twinx-sv4000-2-partridge-release-2026-09-02.md) | GitOps 의존성 제거, Rook SSA 잔존 필드 복구, NFS Retain 보존, MIG rollback, 일반 Pod 스케줄링 검증 |
