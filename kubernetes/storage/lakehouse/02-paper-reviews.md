@@ -4,6 +4,20 @@
 
 문헌 확인일: **2026-09-16**. 최근 연구는 2024–2026년을 중심으로 골랐다. 각 절의 **원문 근거**는 저자들의 결과이며, **비평·적용 제안**은 이 노트의 해석이다. NetAI에서 동일한 수치를 재현했다는 의미는 아니다.
 
+## 긴 해설 바로 읽기
+
+이 파일은 서지·실험 근거와 비교 요약이다. 원리와 예제를 처음부터 자세히 읽으려면 아래 독립 해설로 이동한다. 각 장에는 단계별 동작, 직접 계산하는 예제, 한계와 풀이형 복습 문제가 있다.
+
+| 상세 해설 | 설명하는 내용 |
+| --- | --- |
+| [LST-Bench: 장기 성능과 실험 설계](papers/p1-lst-bench.md) | 파일·API 비용, workload 구성, 회복률 계산, 실험 통제 |
+| [Iceberg 행 단위 변경](papers/p2-row-level-operations.md) | 행·파일 전후 추적, delete sequence, join·shuffle, 손익 계산 |
+| [AutoComp: 유지보수 예산 배분](papers/p3-autocomp.md) | 정리 비용, 우선순위와 선택 반례, 오차·피드백 |
+| [Ursa: 실시간 스트림과 테이블](papers/p4-ursa.md) | partition·offset·WAL, ACK와 SQL 가시성, 보존 비용 |
+| [Active Data Lakes](papers/p5-active-data-lakes.md) | 물리 독립성, 가상 Parquet·range 읽기, 캐시·변환 비용 |
+| [CIDR 포맷 비교](papers/p6-cidr-comparison.md) | 포맷·엔진·파일 배치 분리, 실험 수치와 비율 해석 |
+| [다중 테이블 ACID](papers/p7-interoperable-acid.md) | 부분 갱신, snapshot isolation, write skew, 게시 모델 |
+
 ## 선정 결과와 우선순위
 
 | ID | 논문 | 게재 | 선정 이유 | 확인 범위 |
@@ -23,6 +37,8 @@
 <a id="p1"></a>
 ## P1. LST-Bench: Benchmarking Log-Structured Tables in the Cloud
 
+**[→ LST-Bench: 장기 성능과 실험 설계: 단계별 심화 해설 읽기](papers/p1-lst-bench.md)**
+
 ### 서지와 읽을 위치
 
 - 저자: Jesús Camacho-Rodríguez, Ashvin Agrawal, Anja Gruenheid 외.
@@ -38,7 +54,7 @@
 
 ### 원문 근거: 문제·방법·실험
 
-한 번 적재한 테이블의 SQL 속도만으로 지속적인 갱신과 유지보수 후 성능 회복을 평가하기 어렵다는 문제에서 출발한다. 워크로드를 조합 가능한 package로 만들고 TPC-DS와 장기 실행, 동시성, time travel을 다룬다. 여기서 resilience는 유지보수에 따른 성능 회복 평가이며 장애 주입·복구 실험을 뜻하지 않는다. 지연·처리량 외에 저장소 API 호출과 자원 사용도 관찰한다.
+한 번 적재한 테이블의 SQL 속도만으로 지속적인 갱신과 유지보수 후 성능 회복을 평가하기 어렵다는 문제에서 출발한다. 워크로드를 조합 가능한 package로 만들고 TPC-DS와 장기 실행, 동시성, time travel을 다룬다. 여기서 resilience는 정기 최적화와 크기가 다른 반복 변경 아래의 성능 변화 평가이며 장애 주입·복구 실험을 뜻하지 않는다. 지연·처리량 외에 저장소 API 호출과 자원 사용도 관찰한다.
 
 평가는 Azure ADLS Gen2, 16-worker 클러스터, Spark 3.3.1·Trino 420, Delta 2.2.0·Iceberg 1.1.0·Hudi 0.12.2를 사용한다. SF100·SF1000의 TPC-DS를 포함한다. 일부 Spark 갱신 과정에서 Delta·Iceberg가 생성한 작은 증분 파일은 API 호출을 5배 넘게 늘렸고, 비교한 Trino 경로는 최대 40배 적은 파일을 만들었다. 따라서 엔진 구현도 결과에 크게 영향을 준다.
 
@@ -54,6 +70,8 @@ NetAI에서는 03 문서의 반복 갱신 실험으로 이를 확장한다. 같�
 
 <a id="p2"></a>
 ## P2. Petabyte-Scale Row-Level Operations in Data Lakehouses
+
+**[→ Iceberg 행 단위 변경: 단계별 심화 해설 읽기](papers/p2-row-level-operations.md)**
 
 ### 서지와 읽을 위치
 
@@ -97,6 +115,8 @@ NetAI의 센서 정정 작업을 예로 들면 “전체 행의 1% 변경”만�
 <a id="p3"></a>
 ## P3. AutoComp: Automated Data Compaction for Log-Structured Tables in Data Lakes
 
+**[→ AutoComp: 유지보수 예산 배분: 단계별 심화 해설 읽기](papers/p3-autocomp.md)**
+
 ### 서지와 읽을 위치
 
 - 저자: Anja Gruenheid, Jesús Camacho-Rodríguez, Carlo Curino 외.
@@ -138,6 +158,8 @@ NetAI용 첫 구현은 논문의 전체 최적화기를 바로 재구현하기�
 
 <a id="p4"></a>
 ## P4. Ursa: A Lakehouse-Native Data Streaming Engine for Kafka
+
+**[→ Ursa: 실시간 스트림과 테이블: 단계별 심화 해설 읽기](papers/p4-ursa.md)**
 
 ### 서지와 읽을 위치
 
@@ -183,6 +205,8 @@ t3: 분석 엔진의 커밋된 테이블에서 조회 가능
 <a id="p5"></a>
 ## P5. Active Data Lakes: Regaining Physical Data Independence Without Losing Interoperability
 
+**[→ Active Data Lakes: 단계별 심화 해설 읽기](papers/p5-active-data-lakes.md)**
+
 ### 서지와 읽을 위치
 
 - 저자: Pascal Ginter, Viktor Leis.
@@ -223,6 +247,8 @@ NetAI에서 연구 프로젝트로 재현한다면 먼저 단일 테이블의 �
 <a id="p6"></a>
 ## P6. Analyzing and Comparing Lakehouse Storage Systems
 
+**[→ CIDR 포맷 비교: 단계별 심화 해설 읽기](papers/p6-cidr-comparison.md)**
+
 ### 서지와 읽을 위치
 
 - 저자: Paras Jain, Peter Kraft, Conor Power, Tathagata Das, Ion Stoica, Matei Zaharia.
@@ -256,6 +282,8 @@ Delta·Hudi·Iceberg의 메타데이터와 갱신 설계를 비교하고 성능 
 
 <a id="p7"></a>
 ## P7. Interoperable ACID Transactions for Open Table Formats
+
+**[→ 다중 테이블 ACID: 단계별 심화 해설 읽기](papers/p7-interoperable-acid.md)**
 
 ### 서지와 검증 범위
 

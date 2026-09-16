@@ -4,6 +4,27 @@
 
 Apache Iceberg, Delta Lake, Hudi를 이해하고 NetAI의 데이터 플랫폼 설계에 연결하기 위한 문헌 연구 노트다. **실제 클러스터에서 재현한 장애 기록이나 도입 완료 보고서가 아니다.** 논문의 실험 결과, 공식 규격, 이 문서의 해석과 실험 제안을 구분한다.
 
+## 처음이라면 이 순서로 읽는다
+
+기존 짧은 리뷰를 넘어 **논문별 독립 해설 7장**을 추가했다. 각 장은 용어를 풀고 구체적인 데이터·파일 상태와 계산을 따라가며 설명한다. 논문의 실험 결과와 교육용 가상 예제는 구분한다.
+
+1. [기본 용어 입문](00-start-here.md)에서 행·테이블·ACID·snapshot을 이해한다.
+2. [센서 데이터로 끝까지 따라가기](04-end-to-end-walkthrough.md)에서 값 하나의 정정, commit 실패, 재시도 중복, 동시 쓰기와 보존을 추적한다.
+3. 아래에서 관심 있는 논문의 긴 해설을 읽는다. Iceberg 구조가 목적이면 P2, 실험 방법이면 P1, 스트리밍이면 P4부터 시작한다.
+4. [실제 검증 계획](03-netai-evaluation.md)으로 우리 환경에서 확인할 항목을 정한다.
+
+| 상세 해설 | 설명하는 내용 |
+| --- | --- |
+| [LST-Bench: 장기 성능과 실험 설계](papers/p1-lst-bench.md) | 파일·API 비용, workload 구성, 회복률 계산, 실험 통제 |
+| [Iceberg 행 단위 변경](papers/p2-row-level-operations.md) | 행·파일 전후 추적, delete sequence, join·shuffle, 손익 계산 |
+| [AutoComp: 유지보수 예산 배분](papers/p3-autocomp.md) | 정리 비용, 우선순위와 선택 반례, 오차·피드백 |
+| [Ursa: 실시간 스트림과 테이블](papers/p4-ursa.md) | partition·offset·WAL, ACK와 SQL 가시성, 보존 비용 |
+| [Active Data Lakes](papers/p5-active-data-lakes.md) | 물리 독립성, 가상 Parquet·range 읽기, 캐시·변환 비용 |
+| [CIDR 포맷 비교](papers/p6-cidr-comparison.md) | 포맷·엔진·파일 배치 분리, 실험 수치와 비율 해석 |
+| [다중 테이블 ACID](papers/p7-interoperable-acid.md) | 부분 갱신, snapshot isolation, write skew, 게시 모델 |
+
+P7은 최종 전문을 확보하지 못해 공식 초록의 기여와 일반적인 트랜잭션 원리를 분리해 설명한다. 확인하지 못한 최종 알고리즘을 추정해 적지 않았다.
+
 ## 읽는 순서
 
 | 문서 | 읽고 답할 수 있어야 하는 질문 |
@@ -13,7 +34,7 @@ Apache Iceberg, Delta Lake, Hudi를 이해하고 NetAI의 데이터 플랫폼 �
 | [02. 주요 논문 상세 리뷰](02-paper-reviews.md) | 최신 연구는 어떤 문제를 해결했고, 실험 결과를 어디까지 믿을 수 있는가? |
 | [03. NetAI 적용과 검증 계획](03-netai-evaluation.md) | 우리의 데이터로 무엇을 측정하고, 어떤 장애·정합성 조건을 통과해야 하는가? |
 
-처음 접한다면 **00 → 01 → 02 → 03** 순서로 읽는다. 배경 지식이 있다면 02의 논문 목록에서 관심 주제를 고른다. 실제 도입 검토에는 03의 실험 표를 사용한다.
+처음 접한다면 **00 → 04 → 관심 논문 심화 장 → 03** 순서로 읽고, 01은 구조 참고서로 사용한다. 배경 지식이 있다면 02의 논문 목록에서 관심 주제를 고른다. 실제 도입 검토에는 03의 실험 표를 사용한다.
 
 ## 선정 원칙
 
