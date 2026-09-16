@@ -1,5 +1,7 @@
 # 0. 전체 그림: 데이터 한 건이 지나가는 길
 
+> 최신 선택은 [현재 구성](12-current-architecture.md)을 따른다. 이 장의 Kafka/Flink/OpenSearch 예시는 일반 개념·대안 비교이며 현재 배포를 뜻하지 않는다.
+
 [학습 목차](README.md) · 다음: [OpenTelemetry](01-opentelemetry.md)
 
 ## 1. 먼저 도구 이름을 지우고 생각하기

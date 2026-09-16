@@ -38,3 +38,7 @@ NetAI TwinX/MiniX 클러스터의 Kubernetes 기반 운영 기록을 모아둔 �
 - **[apps/](apps/)** — Kubernetes 위에서 운영되는 앱과 플랫폼 서비스 runbook
 - **[multicluster/](multicluster/)** — Karmada, ScaleX-POD, multi-cluster placement, Kueue 연동 실험/운영
 - **[incidents/](incidents/)** — Kubernetes 장애 기록과 postmortem
+
+## 운영 계층 학습 갱신 — 2026-09-15
+
+[현재 구성과 학습 순서](observability/data-pipelines/README.md): Airflow·OTel·Prometheus·Loki·Tempo·Grafana 중심으로 갱신했습니다. Kafka·Spark·Iceberg는 장기 분석 경로이며 기존 Flink·OpenSearch 자료는 대안 학습용으로 보존합니다. 실제 설치·배포 완료 보고가 아닙니다.

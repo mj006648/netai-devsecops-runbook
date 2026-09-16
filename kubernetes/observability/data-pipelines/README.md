@@ -1,6 +1,8 @@
 # 운영 데이터 파이프라인 학습 자료
 
-OpenTelemetry · Kafka · Flink · OpenSearch · Data Prepper · Iceberg · Spark · Prometheus
+현재 경로: Airflow · OpenTelemetry · Prometheus · Loki · Tempo · Grafana
+
+장기 분석: Kafka · Spark · Iceberg / 대안 학습: Flink · OpenSearch · Data Prepper
 
 **한국어 학습 경로 — 개념부터 내부 동작, 장애·복구, 설계와 검증까지**
 
@@ -9,7 +11,19 @@ OpenTelemetry · Kafka · Flink · OpenSearch · Data Prepper · Iceberg · Spar
 - 목적: 특정 도구를 무조건 도입하는 것이 아니라, 어떤 요구에 어떤 도구가 필요한지 설명하고 검증할 수 있게 되기
 - 범위: 공개 문서 기반 학습 자료. 예시 아키텍처가 현재 NetAI/Trident에 구현·배포됐다는 뜻은 아니다.
 
-## 어디부터 읽을까?
+## 최신 학습 순서
+
+현재 운영 방향은 [12장 전체 구성](12-current-architecture.md)에서 시작한다.
+
+1. [OTel](01-opentelemetry.md) → [Prometheus](07-metrics-and-prometheus.md)
+2. [Loki·Tempo·Grafana와 선택적 Mimir](11-lgtm-observability.md)
+3. [Airflow의 작업 오케스트레이션](10-airflow-orchestration.md)
+4. [Kafka](02-kafka.md) → [Spark](06-spark.md) → [Iceberg](05-iceberg.md): 선별한 장기 이력 경로
+5. [오프라인 실습](09-labs-and-review.md)
+
+Flink·OpenSearch 장과 기존 통합 예시는 기술 비교·참고용으로 보존한다. 현재 필수 stack 또는 설치 완료 상태를 뜻하지 않는다. [현재 구성과 연구 경계](12-current-architecture.md)를 우선한다.
+
+## 전체 자료 목록
 
 | 순서 | 문서 | 핵심 질문 | 학습 완료 기준 |
 | --- | --- | --- | --- |
@@ -23,6 +37,9 @@ OpenTelemetry · Kafka · Flink · OpenSearch · Data Prepper · Iceberg · Spar
 | 7 | [메트릭과 Prometheus](07-metrics-and-prometheus.md) | 지표·label·histogram·신선도를 어떻게 읽는가? | 평균/p95·counter reset·stale 문제 식별 |
 | 8 | [통합 설계와 선택 기준](08-integration-design.md) | 무엇을 넣고 무엇을 빼야 하는가? | 요구에 맞는 최소 구성과 실패 경계 제시 |
 | 9 | [안전한 실습과 종합 복습](09-labs-and-review.md) | 수집·중복·보존·복구를 어떻게 확인하는가? | 오프라인 실습과 검증 계획 작성 |
+| 10 | [Airflow](10-airflow-orchestration.md) | 실행·대기·재시도를 어떻게 안전하게 조율하나? | workflow와 실제 자원 제어 책임 구분 |
+| 11 | [LGTM 계열 관측](11-lgtm-observability.md) | 로그·메트릭·트레이스를 어디에 저장하나? | 신호별 수집·조회·신선도 설명 |
+| 12 | [현재 구성과 연구 방향](12-current-architecture.md) | 현재 선택과 과거 대안은 무엇인가? | 최신 구성의 역할·검증 조건 설명 |
 
 ## 추천 학습 방법
 

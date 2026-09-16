@@ -1,5 +1,7 @@
 # 8. 통합 설계: 무엇을 넣고 무엇을 빼야 하나?
 
+> 최신 선택은 [현재 구성](12-current-architecture.md)을 따른다. 이 장의 Kafka/Flink/OpenSearch 예시는 일반 개념·대안 비교이며 현재 배포를 뜻하지 않는다.
+
 [학습 목차](README.md) · 이전: [메트릭](07-metrics-and-prometheus.md) · 다음: [실습·복습](09-labs-and-review.md)
 
 > 아래 구조는 학습용 설계 예시다. 특정 클러스터에서 구현·성능·가용성이 검증된 배포판을 뜻하지 않는다.
