@@ -1,6 +1,6 @@
 # 01. Linux에서 읽기와 쓰기는 어떻게 일어나는가?
 
-[학습 목차](README.md) · 이전: [계층과 단위](00-map-and-vocabulary.md) · 다음: [파일시스템과 장치](02-filesystems-block-devices.md)
+[학습 목차](README.md) · 이전: [바이트·페이로드·패킷](00a-bytes-payload-and-packets.md) · 기초: [계층과 용어](00-map-and-vocabulary.md) · 다음: [파일시스템과 장치](02-filesystems-block-devices.md)
 
 범위: 일반적인 Linux buffered regular-file I/O. 네트워크 파일시스템, direct I/O, DAX와 특수 장치는 경로·보장이 다를 수 있다. 아래 흐름은 교육용이며 현재 클러스터의 내부를 추적한 결과가 아니다.
 
