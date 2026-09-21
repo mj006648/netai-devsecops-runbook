@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-21 | Hardware / NPU | [A7 RNGD NPU 작업일지](hardware/npu/a7-rngd-slot-numa-binning-2026-09-21.md) | PCIe·NUMA·후면 슬롯 대조, SLOT10→18 이전 권고, binning·225W 제한 관측 / 이전 미실행 |
 | 2026-09-16 | Kubernetes / Storage | [Iceberg·Open Table Format 논문 학습 노트](kubernetes/storage/lakehouse/) | 입문 예제, VLDB·SIGMOD·CIDR 주요 논문 7편과 보충 문헌, 실험 조건·한계, NetAI 검증 계획 |
 | 2026-09-15 | Kubernetes / Observability | [운영 데이터 파이프라인 한국어 학습](kubernetes/observability/data-pipelines/) | OTel·Kafka·Flink·OpenSearch·Iceberg·Spark·Prometheus 개념, 장애·복구, 통합 설계와 오프라인 실습 |
 | 2026-09-14 | Kubernetes / Storage | [TwinX Ceph 내부 풀 배치 복구](kubernetes/storage/twinx-ceph-internal-pool-placement-recovery-2026-09-10.md) | 129 관리 PG 복구·전체 PG 수렴, mon.e quorum 이탈·메모리 압박 재검증 |
@@ -51,6 +52,7 @@
   - **[kubernetes/multicluster/](kubernetes/multicluster/)** — Karmada, ScaleX-POD, multi-cluster placement 실험과 운영
   - **[kubernetes/incidents/](kubernetes/incidents/)** — Kubernetes 장애 기록, postmortem, cross-component failure
 - **[hardware/](hardware/)** — PSU, BMC/IPMI, NIC cabling, rack 등 Kubernetes 바깥 물리 인프라 이슈
+  - **[hardware/npu/](hardware/npu/)** — NPU 전용 작업일지, PCIe/NUMA 배치, binning·진단 결과
 - **[templates/](templates/)** — 새 runbook/incident 작성 템플릿
 - **[archive/](archive/)** — active 구조에서 빠진 오래된 자료
 
