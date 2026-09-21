@@ -7,6 +7,7 @@
 
 ## Current status
 
+- **추가 조사:** [GPU·NPU·NIC 증설 검토](a7-expansion-plan-2026-09-21.md)에 16:59–17:04 KST 실측 RAM·NIC·PCIe 상위 링크·전원 상태와 GPU 최종 4장 가정의 슬롯 배치안을 기록했다.
 - **완료:** 읽기 전용 원격 조회, 실제 PCIe/NUMA/슬롯 대조, 공식 후면 배치도 확인.
 - **권고:** CARD-A(npu0)를 SLOT10에서 SLOT18로 이전. 실제 이전은 아직 하지 않았다.
 - **미완료:** 현장 장착 조건 확인, 카드 이전, 이전 후 인식·토폴로지·성능 검증, CARD-B의 binning/전력 제한 원인에 대한 제조사 판정.
@@ -54,6 +55,8 @@ SLOT18은 NUMA1이며 SLOT16의 npu3와 같은 PCIe 스위치에 연결된다. �
 - [공식 설명서 PDF — PDF 40쪽 / 본문 34쪽](https://www.xfusion.com/wp-content/uploads/2025/11/FusionServer-G6550-V8-Server-Technical-White-Paper.pdf#page=40)
 
 설명서 그림은 라벨을 덧붙인 도면이다. 실제 장비에 인쇄된 글씨의 위치·가독성까지 확인한 것은 아니므로 후면 상단 슬롯 열과 공식 도면을 대조한다.
+
+여기서 매핑한 8개 자리는 해당 백서와 현재 노드 기준이다. 현행 제품 페이지는 10-GPU 구성을 제시하므로 모델 전체의 최대 확장을 8장으로 단정하지 않는다. 실제 BOM에 따른 적용 여부와 NIC용 별도 슬롯은 [증설 검토의 전체 슬롯 지도와 문서 차이](a7-expansion-plan-2026-09-21.md)에서 구분했다.
 
 ## 1. 현재 카드 식별표
 
@@ -105,7 +108,7 @@ NPU0와 NVMe가 같은 스위치 아래 있다는 사실은 확인했다. 다만
 |---|---|---|---|---|---|
 | SLOT18 | 0000:e2:00.0 | 1 | 32GT/s x16 | Available / PresDet- / x0 | 우선 후보: npu3와 같은 스위치, 2+2 배치 |
 | SLOT21 | 0000:e2:04.0 | 1 | 32GT/s x16 | Available / PresDet- / x0 | 동일 스위치이나 RNGD 장착 지원 미확인; 즉시 대체 목적지로 사용하지 않음 |
-| SLOT20 | 0000:9c:02.0 | 1 | 32GT/s x16 | Available / PresDet- / x0 | 같은 NUMA지만 스위치별 3+1 배치가 됨 |
+| SLOT20 | 0000:9c:02.0 | 1 | 32GT/s x16 | Available / PresDet- / x0 | RNGD 장착 지원 미확인. 연결상으로는 3+1 배치; NIC 후보로 별도 검토 |
 
 SLOT18은 SMBIOS의 `Designation: SLOT18`, 포트의 `Slot #18`, sysfs 슬롯 주소 `0000:e3:00`으로 교차 확인했다. 비어 있는 포트의 현재 `2.5GT/s x0`는 장착 카드가 없는 상태의 표시이며 장착 후 동작 속도를 뜻하지 않는다.
 
@@ -200,6 +203,7 @@ sudo cat /sys/kernel/debug/rngd/mgmt1/power_limit_mw
 
 ## 참고
 
+- [GPU·NPU·NIC 증설 검토 — 전체 슬롯 지도, RAM, NIC, 전원 및 미확정 조건](a7-expansion-plan-2026-09-21.md)
 - [NPU 작업일지 목록](README.md)
 - [공식 G6550 V8 설명서 — Figure 5-15](https://www.xfusion.com/wp-content/uploads/2025/11/FusionServer-G6550-V8-Server-Technical-White-Paper.pdf#page=40)
 - [Furiosa SMI CLI](https://developer.furiosa.ai/latest/en/device_management/system_management_interface/furiosa_smi_cli.html)

@@ -4,6 +4,7 @@ NPU 장착, PCIe/NUMA 배치, 상태 조회, 드라이버·펌웨어 및 진단 
 
 | 작업 날짜 | 대상 | 내용 | 상태 |
 | --- | --- | --- | --- |
+| 2026-09-21 | A7 / RNGD 4장 + Blackwell 증설 검토 | [GPU·NPU·NIC 전체 슬롯 배치안과 추가 실측](a7-expansion-plan-2026-09-21.md) | RAM 128GB/2 DIMM, 기존 200G NIC DOWN, 상위 링크·전원 조회 완료 / 증설 미실행 |
 | 2026-09-21 | A7 / XFUSION G6550 V8 / RNGD 4장 | [슬롯·NUMA·binning 조회 및 이전 권고](a7-rngd-slot-numa-binning-2026-09-21.md) | 조회 완료 / SLOT10→18 이전 및 검증 미실행 |
 
 ## 기록 원칙
