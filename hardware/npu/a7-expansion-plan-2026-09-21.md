@@ -1,7 +1,7 @@
 # A7 GPU·NPU·NIC 증설 검토 — 실측 구성과 배치안 (2026-09-21)
 
 - 대상: XFUSION G6550 V8 (Turin), AMD EPYC 9355 × 2.
-- 추가 조회: 2026-09-21 약 16:59–17:04 KST. SSH에서 하드웨어 정보와 센서만 읽었다.
+- 추가 조회: 2026-09-21 약 16:59–17:04 KST. RAID 후속 조회: 17:18–17:21 KST. SSH와 BMC Redfish GET으로 하드웨어 정보·구성·상태만 읽었다.
 - 연결 문서: [NPU 슬롯·NUMA·binning 작업일지](a7-rngd-slot-numa-binning-2026-09-21.md).
 - 범위: 설정 변경, 카드 이동, 펌웨어 갱신, 재부팅, 진단·부하 테스트는 수행하지 않았다. 실제 시리얼·UUID·접속 주소·인증 정보는 공개하지 않는다.
 
@@ -39,7 +39,7 @@ CPU 소켓 수와 DIMM 슬롯 수는 보드 설계로 정해진다. RAM은 지�
 | 슬롯 | 현재 장치 | NUMA / 연결 | GPU 최종 4장 가정의 배치안 |
 |---|---|---|---|
 | SLOT1 | ConnectX-6 VPI, `11:00.0` | 0 / CPU 루트 직접 | 유지. 기존 IB/Ethernet 용도부터 확인 |
-| SLOT2 | Broadcom/LSI SAS38xx RAID, `05:00.0` | 0 / 스위치 A | 유지 |
+| SLOT2 | MegaRAID 9520-2M2, `05:00.0` | 0 / 스위치 A | 유지. 960GB M.2 SSD 두 개의 RAID1로 Ubuntu 부팅 |
 | SLOT3 | 비어 있음 | 0 / 스위치 B | GPU용 추가 NIC 후보 |
 | SLOT4 | Blackwell GPU, `04:00.0` | 0 / 스위치 A | 기존 GPU 유지 |
 | SLOT6 | Blackwell GPU, `03:00.0` | 0 / 스위치 A | 기존 GPU 유지 |
@@ -52,7 +52,7 @@ CPU 소켓 수와 DIMM 슬롯 수는 보드 설계로 정해진다. RAM은 지�
 | SLOT20 | 비어 있음 | 1 / 스위치 C | NPU용 추가 NIC 후보 |
 | SLOT21 | 비어 있음 | 1 / 스위치 D | NPU용 추가 NIC 후보 |
 | OCP1 | Broadcom BCM57416 2포트 10GbE, `8b:00.0/1` | 0 | 현재 관리망 유지 |
-| NVME9 | Samsung NVMe, `7f:00.0` | 0 / 스위치 B | 유지. GPU·NIC와 공유되는 경로 고려 |
+| NVME9 | Samsung 7.68TB NVMe, `7f:00.0` | 0 / 스위치 B | `/data`용 단일 디스크 유지. GPU·NIC와 공유되는 경로 고려 |
 
 표의 BDF는 도메인 `0000:`을 생략했다. 장치 번호/BDF는 이동 후 달라질 수 있다. 공개 별칭 CARD-A/B/C/D와 내부 시리얼을 대조해 작업한다.
 
@@ -211,5 +211,85 @@ sudo ipmitool dcmi power reading
 3. NIC의 프로토콜·실제 링크 속도·스위치 연결을 확인하고, 필요하면 합의된 작업 시간에 단일/양포트 통신을 측정한다.
 4. 동일한 ACS·드라이버·펌웨어·전력 제한 조건으로 RNGD 진단/P2P 및 실제 모델 서빙을 전후 비교한다. 명령·시간·단위·대상 장치를 남긴다.
 5. 승인된 부하 시험 중 온도·전력·스로틀링·PCIe 오류를 확인한다. 저부하 센서 정상만으로 증설 검증을 끝내지 않는다.
+
+## 9. RAID 후속 조회 — Ubuntu 부팅 디스크 구성 확인
+
+2026-09-21 17:18–17:21 KST에 Linux 블록 장치, PCIe 경로, SMART 조회와 BMC Redfish GET을 교차 확인했다. 추가 도구 설치, RAID 생성·초기화·재빌드·설정 변경, SMART 자가시험은 하지 않았다.
+
+**SLOT2는 MegaRAID 9520-2M2 부트 어댑터다. 카드의 960GB M.2 NVMe SSD 두 개를 하드웨어 RAID1로 묶고, 그 논리 디스크에 Ubuntu가 설치돼 있다.** 앞서 설명한 일반적인 RAID 카드→케이블→디스크 백플레인 구조와 달리, 이 모델은 카드에 M.2 SSD 두 개를 장착하는 형태다. 모델 구조는 [Broadcom 제품 페이지](https://www.broadcom.com/products/storage/raid-controllers/megaraid-9520-2m2), 실측 위치는 BMC의 `M.2 Disk0/1(PCIe2)` 및 `Position: raidcard`로 확인했다.
+
+| 항목 | 실제 조회 결과 |
+|---|---|
+| 컨트롤러 | Broadcom MegaRAID 9520-2M2 / SAS3808 |
+| 위치 / 링크 | SLOT2, `0000:05:00.0`, NUMA0 / 스위치 A, 실제 Gen4 x8 |
+| 드라이버 / FW | `megaraid_sas` / `5.340.04-4198` |
+| 물리 SSD | Samsung `MZ1L2960HCJR-00A07`, 960GB M.2 NVMe × 2 |
+| 물리 위치 | `M.2 Disk0(PCIe2)`, `M.2 Disk1(PCIe2)` — 둘 다 카드 위 M.2 자리 |
+| 논리 디스크 | `LogicalDrive0`, `RAIDType: RAID1`, `VolumeType: Mirrored` |
+| 논리 디스크 상태 | `Health: OK`, `State: Optimal`, `BootEnable: true` |
+| RAID 멤버 | 두 SSD 모두 `Online`, `Member`, `Health: OK` |
+| SMART | 두 SSD 모두 Health OK. 조회된 NVMe media errors 및 critical warning은 0 |
+| 논리 용량 | 959,656,755,200 bytes, 약 960GB / 893.8GiB |
+| Linux 장치 | `/dev/sda`, 모델 `MR9520-2M2`, 위 논리 용량과 일치 |
+| 파티션 | `/dev/sda1` → `/boot/efi`(vfat), `/dev/sda2` → `/`(ext4) |
+| 별도 데이터 SSD | Samsung `MZQL27T6HBLA-00A07`, 약 7.68TB / 7TiB, PCIe `0000:7f:00.0` |
+| 데이터 마운트 | `/dev/nvme0n1p1` → `/data`(ext4). 위 RAID1의 멤버가 아님 |
+
+```text
+NUMA0 / CPU0
+ ├─ PCIe 스위치 A
+ │    ├─ SLOT4/6: Blackwell GPU 두 장
+ │    └─ SLOT2: MegaRAID 9520-2M2
+ │         ├─ 카드 위 M.2 SSD0: 960GB ┐
+ │         └─ 카드 위 M.2 SSD1: 960GB ┴─ RAID1 미러링
+ │                                      └─ /dev/sda 약 960GB
+ │                                           ├─ /boot/efi
+ │                                           └─ / (Ubuntu)
+ └─ PCIe 스위치 B
+      └─ NVME9: 단일 7.68TB NVMe
+           └─ /dev/nvme0n1p1 → /data
+```
+
+RAID1이므로 두 SSD를 합산한 약 1.92TB를 사용할 수 있는 구성이 아니다. 동일 데이터를 두 장에 기록하며, 논리 용량은 약 한 장 분량이다. 현재 상태 조회로 정상 구성을 확인했으며, 디스크 장애·교체·복구 시험을 수행한 것은 아니다. `/data`는 별도의 단일 NVMe 경로로 관측됐고 이 부팅용 RAID1의 이중화 대상이 아니다. 백업 유무는 이번 조회 범위에 포함하지 않았다.
+
+### RAID 레벨과 구현 방식은 별개
+
+**RAID0/1/5/6/10 같은 숫자는 데이터 배치 방식을 가리키며, RAID 카드의 종류나 디스크 개수를 뜻하지 않는다.** 같은 RAID1도 전용 컨트롤러가 처리하는 하드웨어 RAID와 Linux `md`가 처리하는 소프트웨어 RAID로 구현할 수 있다. Linux 소프트웨어 RAID에는 전용 RAID 카드가 필수는 아니다. [Linux 커널 md 문서](https://cdn.kernel.org/doc/html/latest/admin-guide/md.html).
+
+| 구분 | 처리 주체 | 이 노드의 관측 |
+|---|---|---|
+| 하드웨어 RAID | 전용 컨트롤러·펌웨어가 디스크를 묶어 OS에 논리 디스크 제공 | 9520-2M2의 RAID1이 `/dev/sda`로 제공됨 |
+| 소프트웨어 RAID | OS의 RAID 기능이 직접 보이는 디스크를 묶음 | 활성 Linux md 배열은 관측되지 않음 |
+
+`/proc/mdstat`의 `Personalities: [raid0] [raid1] ...`는 지원 모듈 목록이지 현재 해당 RAID를 사용한다는 뜻이 아니다. 실제 md 배열 항목은 없었고 `mdadm --detail --scan` 출력도 비어 있었다. 루트 파티션은 md 장치가 아닌 `/dev/sda2`의 ext4였다.
+
+이 카드의 공식 모델 문서는 RAID0/RAID1을 설명한다. RAID2는 이 모델의 지원 목록에 없으며, RAID1 다음에 RAID2로 업그레이드하는 식의 순서를 뜻하지 않는다. 실제 구성의 판정 근거는 BMC의 지원 기능 목록이 아니라 **현재 볼륨의 `RAIDType: RAID1`과 두 멤버 링크**다. [9520-2M2 User Guide](https://docs.broadcom.com/doc/9520-2M2-UG).
+
+### 확인에 사용한 읽기 전용 인터페이스
+
+```bash
+lsblk -b -e 7 -o NAME,TYPE,SIZE,MODEL,FSTYPE,MOUNTPOINTS
+findmnt -no SOURCE,FSTYPE /
+cat /proc/mdstat
+sudo mdadm --detail --scan
+readlink -f /sys/class/block/sda/device
+readlink -f /sys/class/block/nvme0n1/device
+sudo lspci -s 0000:05:00.0 -vv
+sudo smartctl --scan
+sudo smartctl -i -H -d megaraid,0 /dev/bus/0
+sudo smartctl -i -H -d megaraid,1 /dev/bus/0
+```
+
+StorCLI/MegaCLI는 확인한 PATH 및 일반 설치 경로에 없었다. 설치하는 대신 기존 BMC의 다음 리소스를 인증 후 **GET만** 수행했다. BMC 주소·계정·비밀번호는 기록하지 않는다. 원시 출력의 시리얼·고유 식별자는 공개 기록에서 제외했다.
+
+```text
+GET /redfish/v1/Systems/1/Storages/RAIDStorage0
+GET /redfish/v1/Systems/1/Storages/RAIDStorage0/Volumes/LogicalDrive0
+GET /redfish/v1/Chassis/1/Drives/raidcardM.2Disk0(PCIe2)
+GET /redfish/v1/Chassis/1/Drives/raidcardM.2Disk1(PCIe2)
+GET /redfish/v1/Chassis/1/Drives/HDDPlaneDisk9
+```
+
+BMC가 보고하는 BDF가 상위 포트를 가리키는 경우가 있어, 엔드포인트 BDF/NUMA는 Linux `lspci`와 sysfs 경로를 기준으로 적었다. 디스크 `SMART` 출력의 SCSI/SAS 전달 형식만으로 매체를 SAS SSD라고 분류하지 않고 BMC의 PCIe/NVMe·M.2 정보와 모델을 함께 대조했다.
 
 [NPU 작업일지 목록](README.md) · [이전 슬롯·binning 관측](a7-rngd-slot-numa-binning-2026-09-21.md)
