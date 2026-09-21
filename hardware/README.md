@@ -4,6 +4,7 @@ Kubernetes 바깥의 물리 인프라 기록입니다. PSU, BMC/IPMI, NIC cablin
 
 | Last update | Area | Topic | Document |
 | --- | --- | --- | --- |
+| 2026-09-21 | Learning | CPU·RAM·PCIe·RAID·GPU/NPU·NIC·전원·냉각, NVLink·UALink·CXL 최신 기술과 A7 설계 실습 | [서버 하드웨어 학습 교재](learning/server-hardware/README.md) |
 | 2026-09-21 | NPU / GPU / NIC | A7 GPU·NPU 슬롯 배치안, RAM 2/24 DIMM, 기존 200G NIC, 공유 대역폭·전원 조사 | [A7 증설 검토](npu/a7-expansion-plan-2026-09-21.md) |
 | 2026-09-21 | NPU | A7 RNGD PCIe·NUMA 배치, SLOT10→18 이전 권고 및 binning·전력 제한 차이 | [NPU 작업일지](npu/a7-rngd-slot-numa-binning-2026-09-21.md) |
 | 2026-07-13 | Provisioning | Supermicro E300의 KISS PXE 설치 중 HWE package 및 UEFI NVRAM/GRUB 실패 복구 | [E300 Ubuntu 24.04 PXE/UEFI recovery](provisioning/supermicro-e300-ubuntu-24-04-pxe-uefi-recovery-2026-07-13.md) |
@@ -11,6 +12,7 @@ Kubernetes 바깥의 물리 인프라 기록입니다. PSU, BMC/IPMI, NIC cablin
 
 ## Directories
 
+- **[learning/server-hardware/](learning/server-hardware/README.md)** — A7 사례로 배우는 서버 하드웨어 교재: 11개 장, 읽기 전용 실습, 계산 문제·해설, 용어 사전
 - **[npu/](npu/)** — NPU 전용 작업일지: 장착, PCIe/NUMA, binning, 상태·진단·이전 검증
 
 - **[provisioning/](provisioning/)** — KISS/PXE, Ubuntu autoinstall, BIOS/UEFI, GRUB, 첫 OS boot

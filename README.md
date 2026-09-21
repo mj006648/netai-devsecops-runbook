@@ -14,6 +14,7 @@
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
 | 2026-09-21 | Linux / Data Systems | [데이터 시스템 밑바닥부터 배우기](kubernetes/storage/data-systems-foundations/) | OS 읽기·쓰기·fsync, 파일시스템·SSD, HDFS·Ceph·S3, DB WAL·인덱스, Parquet·Iceberg, 실험 해석과 안전한 로컬 실습 |
+| 2026-09-21 | Hardware / Learning | [서버 하드웨어 학습 교재](hardware/learning/server-hardware/README.md) | 11개 장: CPU·RAM·PCIe·RAID·GPU/NPU·NIC·전원·냉각, NVLink·UALink·UEC·CXL, A7 실습·계산·해설 |
 | 2026-09-21 | Hardware / NPU·GPU·NIC | [A7 가속기 증설 검토](hardware/npu/a7-expansion-plan-2026-09-21.md) | GPU 4장+NPU 4장 가정의 슬롯 배치안, RAM 128GB/2 DIMM, 200G NIC DOWN, 공유 링크·전원·OS RAID1 실측 / 증설 미실행 |
 | 2026-09-21 | Hardware / NPU | [A7 RNGD NPU 작업일지](hardware/npu/a7-rngd-slot-numa-binning-2026-09-21.md) | PCIe·NUMA·후면 슬롯 대조, SLOT10→18 이전 권고, binning·225W 제한 관측 / 이전 미실행 |
 | 2026-09-16 | Kubernetes / Storage | [Iceberg·Open Table Format 논문 학습 노트](kubernetes/storage/lakehouse/) | 입문 예제, VLDB·SIGMOD·CIDR 주요 논문 7편과 보충 문헌, 실험 조건·한계, NetAI 검증 계획 |
@@ -54,6 +55,7 @@
   - **[kubernetes/multicluster/](kubernetes/multicluster/)** — Karmada, ScaleX-POD, multi-cluster placement 실험과 운영
   - **[kubernetes/incidents/](kubernetes/incidents/)** — Kubernetes 장애 기록, postmortem, cross-component failure
 - **[hardware/](hardware/)** — PSU, BMC/IPMI, NIC cabling, rack 등 Kubernetes 바깥 물리 인프라 이슈
+  - **[hardware/learning/server-hardware/](hardware/learning/server-hardware/README.md)** — 하드웨어 구성요소·최신 인터커넥트·A7 설계 학습
   - **[hardware/npu/](hardware/npu/)** — NPU 전용 작업일지, PCIe/NUMA 배치, binning·진단 결과
 - **[templates/](templates/)** — 새 runbook/incident 작성 템플릿
 - **[archive/](archive/)** — active 구조에서 빠진 오래된 자료

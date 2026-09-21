@@ -3,6 +3,7 @@
 - 대상: XFUSION G6550 V8 (Turin), AMD EPYC 9355 × 2.
 - 추가 조회: 2026-09-21 약 16:59–17:04 KST. RAID 후속 조회: 17:18–17:21 KST. SSH와 BMC Redfish GET으로 하드웨어 정보·구성·상태만 읽었다.
 - 연결 문서: [NPU 슬롯·NUMA·binning 작업일지](a7-rngd-slot-numa-binning-2026-09-21.md).
+- 학습 자료: [서버 하드웨어 교재](../learning/server-hardware/README.md) — 구성요소 원리, 최신 연결 기술, A7 설계 실습.
 - 범위: 설정 변경, 카드 이동, 펌웨어 갱신, 재부팅, 진단·부하 테스트는 수행하지 않았다. 실제 시리얼·UUID·접속 주소·인증 정보는 공개하지 않는다.
 
 ## Current status — 배치 결론
@@ -153,6 +154,8 @@ NVIDIA ConnectX-6 VPI 제품군에도 단일 100G Gen4 x8 모델과 듀얼 100G 
 | BIOS | `01.13.06.06`, 2026-04-13 |
 
 [NVIDIA 공식 사양](https://www.nvidia.com/en-us/data-center/rtx-pro-6000-blackwell-server-edition/)에서 Server Edition은 최대 600W이며 공랭 모델은 dual-slot FHFL이다. **GPU 4장만 최대 2.4kW**이므로 NPU·CPU·메모리·스토리지·팬 소비와 전원 여유를 별도로 계산해야 한다. 현재 NPU 중 한 장의 225W 제한을 임의로 올려 산정하거나 변경하지 않는다.
+
+**추가 공식 사양 확인(2026-09-21): RTX PRO 6000 Blackwell Server Edition은 NVLink 미지원**으로 [NVIDIA 공식 GPU 비교표](https://docs.nvidia.com/vgpu/sizing/virtual-workstation/latest/gpus-vws.html)에 명시돼 있다. B200/GB200의 NVLink 사양을 이 카드에 적용하지 않는다. GPU 증설의 통신 계획은 현재 PCIe 연결과 지원 소프트웨어를 기준으로 검토한다.
 
 PSU 8개가 정상이라는 관측만으로 모든 증설이 가능하다고 판단하지 않는다. 제품 페이지의 PSU 최대 옵션과 실제 장착 PSU의 정격·입력 조건은 구분한다. PSU 라벨/공식 부품 사양, 입력 회로·PDU·케이블 용량, 이중화 상태에서의 허용 부하, GPU 전원 하네스·팬·에어덕트 및 정확한 GPU P/N의 OEM 지원을 확인해야 한다.
 

@@ -7,6 +7,10 @@ NPU 장착, PCIe/NUMA 배치, 상태 조회, 드라이버·펌웨어 및 진단 
 | 2026-09-21 | A7 / RNGD 4장 + Blackwell 증설 검토 | [GPU·NPU·NIC 전체 슬롯 배치안과 추가 실측](a7-expansion-plan-2026-09-21.md) | RAM 128GB/2 DIMM, 기존 200G NIC DOWN, 상위 링크·전원·OS RAID1 확인 완료 / 증설 미실행 |
 | 2026-09-21 | A7 / XFUSION G6550 V8 / RNGD 4장 | [슬롯·NUMA·binning 조회 및 이전 권고](a7-rngd-slot-numa-binning-2026-09-21.md) | 조회 완료 / SLOT10→18 이전 및 검증 미실행 |
 
+## 구성요소를 공부할 때
+
+[서버 하드웨어 학습 교재](../learning/server-hardware/README.md)에서 CPU·메모리·PCIe·스토리지·RAID·GPU/NPU·NIC·전원·냉각을 순서대로 설명합니다. NVLink·UALink·Ultra Ethernet·CXL 등 최신 연결 기술과 A7 슬롯 배치 문제·해설도 포함합니다. 실제 작업 완료 여부는 위 작업일지로 확인합니다.
+
 ## 기록 원칙
 
 - 날짜, 대상 모델, 커널·드라이버·펌웨어·도구 버전과 확인 명령을 기록합니다.
