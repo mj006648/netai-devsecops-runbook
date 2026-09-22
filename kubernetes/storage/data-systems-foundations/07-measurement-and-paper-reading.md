@@ -52,6 +52,47 @@
 
 또한 애플리케이션 요청과 실제 device I/O는 1:1이 아니다. cache, 요청 병합·분할, read-ahead, replication을 구분한다.
 
+## 3.1 평균, 분산, percentiles를 작은 표본으로 계산해 본다
+
+먼저 용어를 고정한다. 평균은 값을 모두 더해 개수로 나눈 중심값이다. 분산은 값들이 평균 주변에서 얼마나 퍼졌는지 보는 값이다. 표준편차는 분산의 제곱근이라 원래 단위로 돌아온다. p50은 절반의 관측값이 그 이하인 지점이고 median이라고도 부른다. p95는 95%가 그 이하, p99는 99%가 그 이하인 지점이다.
+
+가상 latency 10개가 밀리초 단위로 다음과 같다고 하자.
+
+```text
+raw order:    8, 9, 7, 10, 8, 12, 9, 80, 11, 8
+sorted order: 7, 8, 8, 8, 9, 9, 10, 11, 12, 80
+```
+
+평균:
+
+```text
+sum = 162 ms
+mean = 162 / 10 = 16.2 ms
+```
+
+대부분 요청은 7-12 ms인데 평균이 16.2 ms인 이유는 80 ms tail 하나가 평균을 끌어올렸기 때문이다. Median p50은 정렬된 5번째와 6번째 사이를 쓰는 방식이면 약 9 ms다. 작은 표본에서 p95/p99는 더 조심해야 한다. 10개 표본만으로 p99를 말하면 사실상 가장 느린 값 하나에 기대는 셈이다.
+
+```text
+표본 10개:
+  p50은 대략 중앙을 볼 수 있음
+  p95는 상위 끝값 근처라 매우 불안정
+  p99는 표본 수가 너무 적어 tail claim으로 약함
+```
+
+분산도 계산해 보면 tail의 영향이 보인다.
+
+```text
+각 값에서 평균 16.2를 뺀 뒤 제곱해 평균:
+  8  -> (-8.2)^2
+  9  -> (-7.2)^2
+  ...
+  80 -> (63.8)^2
+
+80 ms 하나가 분산 대부분을 차지한다.
+```
+
+성능 문서에서 “평균 16 ms”만 쓰면 평상시 9 ms 시스템인지 tail이 자주 튀는 시스템인지 감춰진다. “p99 80 ms”만 쓰면 표본이 충분했는지, warm-up과 timeout을 어떻게 처리했는지 감춰질 수 있다. 평균, median, tail, 실패율, 표본 수를 함께 기록한다.
+
 ## 4. 동시성을 늘리면 왜 처음에는 빨라지고 나중에는 느려지는가?
 
 대기 중인 I/O가 적으면 장치·네트워크의 병렬성이 충분히 사용되지 않을 수 있다. 동시성이 늘면 처리량이 증가하다가, 병목 자원이 포화되면 queue 대기가 늘어난다.
@@ -63,6 +104,31 @@
 ~~~
 
 예: 평균 outstanding 요청이 32, 평균 체류시간이 4 ms인 안정 상태라면 완료율은 약 8,000 requests/s다. 이것은 **관측량 사이의 관계**이지, queue depth를 32로 설정하면 어떤 장치든 해당 성능이 나온다는 보장이 아니다. 측정 경계·steady state·평균 정의가 맞아야 한다.
+
+Worked examples:
+
+```text
+예제 A: L=32, W=4 ms = 0.004 s
+  λ = L / W = 32 / 0.004 = 8000 requests/s
+
+예제 B: 목표 λ=12000 requests/s, W=5 ms = 0.005 s
+  필요한 평균 in-flight L = λ × W = 12000 × 0.005 = 60 requests
+
+예제 C: λ=8000 requests/s에서 W가 4 ms -> 20 ms로 증가
+  L = 8000 × 0.020 = 160 requests
+  처리율이 같아도 queue 안 체류량과 지연이 크게 늘었다.
+```
+
+Amdahl의 법칙은 전체 시간 중 개선한 부분의 비율을 보게 한다. 전체 작업 100초 중 storage read가 60초, compute가 40초라고 하자. GPU로 compute를 무한히 빠르게 만들어도 storage 60초는 남는다.
+
+```text
+최대 speedup = 전체 시간 / 개선 후 남는 시간
+compute만 무한 개선: 100 / 60 = 1.67x
+storage를 2배 빠르게: read 60 -> 30, total 70, speedup 100/70 = 1.43x
+둘 다 개선: read 30 + compute 10 = 40, speedup 2.5x
+```
+
+그래서 “GPU를 붙였는데 10배 빨라지지 않았다”는 말은 실패가 아니라 병목 비율을 다시 보여 주는 측정 결과일 수 있다.
 
 ### Trident 예시
 
@@ -150,7 +216,35 @@ speedup = 10 / 6 ≈ 1.67배
 
 CPU/GPU 사용량 변화만으로 인과를 확정하지 않는다. 파일 수만 바꾸는 통제 실험, metadata 신호를 뺀 ablation, maintenance와 동시 작업이 없는 기준 등을 이용해 경쟁 설명을 줄인다.
 
-## 11. 논문 한 편을 읽을 때 남길 표
+## 11. 재현성, confounder, null result를 문서에 남긴다
+
+Reproducibility는 다른 사람이 같은 조건을 만들었을 때 같은 결론에 도달할 수 있는 정도다. 단순히 코드를 공개했다는 뜻만은 아니다. 데이터 snapshot, 실행 순서, seed, hardware, firmware, kernel, container image, engine version, configuration, warm-up, 실패 처리 기준이 함께 필요하다.
+
+Confounder는 결과에 영향을 줬지만 실험자가 비교 축으로 의도하지 않은 요인이다.
+
+```text
+주장: 파일 compaction 때문에 query가 빨라졌다.
+가능한 confounder:
+  두 번째 실행이라 OS page cache가 따뜻했다.
+  catalog cache가 이미 채워졌다.
+  동시에 돌던 batch job이 끝났다.
+  작은 파일 정리와 함께 compression codec도 바뀌었다.
+  partition pruning이 우연히 더 잘 되는 파일 배치가 됐다.
+```
+
+Null result는 기대한 개선이 관측되지 않은 결과다. null result를 실패한 실험으로 숨기면 학습이 사라진다. 예를 들어 Parquet Bloom filter를 켰는데 point lookup이 빨라지지 않았다면, reader가 Bloom filter를 사용하지 않았는지, predicate가 지원되지 않았는지, 파일 수가 적어 metadata overhead가 더 컸는지, data가 이미 cache에 있었는지 확인할 수 있다.
+
+좋은 결과 문장은 다음 구조를 가진다.
+
+```text
+조건: Iceberg snapshot S123, file count 1200 -> 180, same query set Q1-Q20
+관측: planning median 820 ms -> 210 ms, p95 2100 ms -> 550 ms
+불확실성: data read time은 거의 변화 없음, OS cache는 완전히 통제하지 못함
+해석: 이번 workload에서는 manifest/file-open planning 비용 감소가 주효했다.
+Null/한계: GPU decode latency 개선은 관측되지 않았다.
+```
+
+## 12. 논문 한 편을 읽을 때 남길 표
 
 | 질문 | 기록 예시 |
 | --- | --- |
@@ -165,7 +259,51 @@ CPU/GPU 사용량 변화만으로 인과를 확정하지 않는다. 파일 수�
 
 “저 논문에서 10배라서 우리도 10배”가 아니라, 그 10배가 발생한 조건과 제거한 병목을 이해하는 것이 목적이다.
 
-## 12. 개념 확인
+논문 읽기 순서는 다음이 안전하다.
+
+```text
+1. Abstract에서 주장만 표시하고 믿지는 않는다.
+2. Introduction에서 문제와 비용 모델을 찾는다.
+3. System model에서 어떤 실패·저장·네트워크 가정을 뒀는지 표시한다.
+4. Design에서 바꾼 mechanism을 한 문장으로 쓴다.
+5. Correctness 또는 consistency section에서 지키는 불변조건을 찾는다.
+6. Evaluation에서 workload, baseline, hardware, metric, 제외한 비용을 표로 옮긴다.
+7. Threats/limitations가 없으면 직접 한계 후보를 적는다.
+8. 우리 환경에 가져올 때 필요한 재현 조건과 빠진 관측값을 적는다.
+```
+
+### 12.1 실험 설계 문제
+
+**문제.** 작은 Parquet 파일 10,000개를 500개로 합치면 query가 빨라진다는 가설을 검증하려 한다. 어떤 실험군이 필요한가?
+
+해설:
+
+```text
+Baseline:
+  같은 Iceberg snapshot 의미, 작은 파일 10,000개
+
+Treatment:
+  같은 row 집합과 schema, compacted file 500개
+
+통제:
+  같은 엔진 버전, 같은 cluster 자원, 같은 query set, 순서 randomization
+  cache warm/cold 조건 분리
+  compaction에 따른 codec, row group size, sort order 변화 기록
+
+측정:
+  catalog time, manifest planning time, object open/list/read count
+  Parquet footer time, data read bytes, decode CPU, total latency
+  correctness: row count/hash/null count
+
+주의:
+  compaction 수행 시간과 compute cost를 최종 비용에서 빼먹지 않는다.
+```
+
+**문제.** GPU decode를 추가했는데 end-to-end latency가 거의 줄지 않았다. 가능한 해석은?
+
+해설: decode가 전체 시간의 작은 부분이었거나, storage/network/catalog가 병목이었거나, GPU transfer 비용이 decode 이득을 상쇄했거나, CPU path가 이미 충분히 빨랐을 수 있다. Amdahl 계산과 span breakdown으로 어느 구간이 남았는지 확인해야 한다.
+
+## 13. 개념 확인
 
 **Q1. IOPS가 같으면 대역폭도 같은가?**
 
@@ -186,3 +324,11 @@ CPU/GPU 사용량 변화만으로 인과를 확정하지 않는다. 파일 수�
 **Q5. 저장소가 병목인데 GPU를 늘리면 왜 효과가 작을 수 있는가?**
 
 GPU가 줄일 수 없는 전송·대기 구간이 전체 시간을 지배할 수 있기 때문이다. 실제 구간 측정으로 확인한다.
+
+**Q6. 10개 요청만 보고 p99를 주장하면 왜 위험한가?**
+
+p99는 tail 분포를 말하는데 표본 10개에서는 끝값 하나에 거의 의존한다. 표본 수, 반복 구조, timeout과 실패 처리를 함께 보고해야 한다.
+
+**Q7. Null result는 왜 기록할 가치가 있는가?**
+
+기대한 개선이 없었다는 사실도 병목 위치와 잘못된 가정을 줄여 준다. 재현 조건과 함께 남기면 다음 실험의 검색 공간을 줄인다.

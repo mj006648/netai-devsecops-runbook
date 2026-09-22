@@ -4,6 +4,25 @@
 
 약어를 처음부터 외울 필요는 없다. 이 표에서 **무엇을 가리키는 단어인지** 확인하고 해당 장의 연결 그림으로 돌아간다. 숫자가 붙으면 단위와 제품 버전을 함께 확인한다.
 
+## 전기·논리·정보의 첫 용어
+
+| 용어 | 쉬운 뜻 | 구별할 것 | 본문 |
+| --- | --- | --- | --- |
+| 전하 / 전류 | 전기적 성질을 갖는 양 / 단위 시간에 이동하는 전하량 | 전하의 양과 흐름의 속도 | [00](00-physical-bits-to-computer.md) |
+| 전압 / 저항 | 두 지점의 전위 차이 / 전류 흐름과 관련한 소자의 특성 | 전류·전력과 다른 양 | [00](00-physical-bits-to-computer.md) |
+| W / Wh / J | 전력 / 에너지 / 에너지의 단위 | W는 순간 소비율, Wh는 시간에 걸친 소비량 | [00](00-physical-bits-to-computer.md), [08](08-power-cooling-serviceability.md) |
+| MOSFET | gate 전압으로 전류 흐름을 제어하는 트랜지스터 계열 | 실제 소자는 이상적인 스위치와 다름 | [00](00-physical-bits-to-computer.md) |
+| 논리게이트 | 입력 논리값에서 출력 논리값을 만드는 회로 | 전압 자체와 그 전압을 해석한 논리값 | [00](00-physical-bits-to-computer.md) |
+| 진리표 / XOR | 입력 조합별 출력 표 / 입력이 다를 때 참인 배타적 논리합 | OR는 둘 다 참인 경우에도 참 | [00](00-physical-bits-to-computer.md) |
+| 조합회로 / 순차회로 | 현재 입력으로 출력 결정 / 저장된 상태도 출력에 영향 | 시간·기억의 유무 | [00](00-physical-bits-to-computer.md) |
+| latch / flip-flop | 작은 상태를 유지하는 회로 종류 | clock level과 edge에 대한 반응 차이 | [00](00-physical-bits-to-computer.md) |
+| clock / Hz | 동기화에 쓰는 주기 신호 / 초당 주기 수 | 클록 한 번이 작업 하나 완료와 같지 않음 | [00](00-physical-bits-to-computer.md), [02](02-cpu-memory-numa.md) |
+| bit / byte / 16진수 | 이진 자리 / 이 교재에서는 8 bit / 16을 밑으로 한 표기 | 정보 단위와 표기 방식 | [00](00-physical-bits-to-computer.md) |
+| 2의 보수 | 고정 비트 폭에서 부호 있는 정수를 표현하는 방식 | 수학적 무제한 정수와 overflow 규칙 | [00](00-physical-bits-to-computer.md) |
+| encoding / endian | 값을 바이트로 나타내는 규칙 / 다중 바이트 값의 배열 순서 | 문자 인코딩과 정수 byte order | [00](00-physical-bits-to-computer.md) |
+| instruction / register / PC | CPU 명령 / 가까운 작업 상태 저장소 / 명령 진행 위치 | 파일·RAM·장치 주소와 구별 | [00](00-physical-bits-to-computer.md), [02](02-cpu-memory-numa.md) |
+| MMU / TLB | 주소 변환·보호 기능 / 변환 결과 캐시 | 데이터 캐시와 TLB는 저장 대상이 다름 | [02](02-cpu-memory-numa.md) |
+
 ## 시스템과 연산
 
 | 용어 | 뜻·역할 | 다음에 연결할 개념 | 장 |

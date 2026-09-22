@@ -2,6 +2,10 @@
 
 Cilium, Hubble, MTU, Pod communication, and Kubernetes-related node routing runbooks.
 
+## 처음 배우는 네트워크
+
+[신호·스위치·라우터·패킷에서 Linux·eBPF·Cilium까지](networking-foundations/README.md): 기초 용어, 등장 이유, 손으로 추적하는 패킷 경로, 서브넷·MTU·BDP 계산, 안전한 로컬 실습과 해설 문제를 순서대로 읽는 독립 교재입니다. Kubernetes 사전 지식은 앞부분에 필요하지 않습니다.
+
 ## Quick map
 
 | Last update | Topic | Document | Contents |

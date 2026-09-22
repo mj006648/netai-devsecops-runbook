@@ -21,6 +21,20 @@ Ceph는 block, file, object interface를 한 시스템에서 제공하지만 모
 RBD, CephFS, RGW는 서로 대체 가능한 “세 이름”이 아니다. RBD는 VM disk나 Kubernetes block/filesystem volume에 가까운 interface다. CephFS는 shared filesystem semantics를 제공하려고 MDS를 둔다. RGW는 HTTP object API와
 bucket index, auth, access control을 제공한다.
 
+초기 용어를 더 낮은 층에서 고정한다.
+
+| 용어 | 뜻 | 처음 보는 사람을 위한 해석 |
+| --- | --- | --- |
+| RADOS | Ceph storage cluster의 핵심 object store | Ceph 내부의 실제 저장·복제·복구 엔진 |
+| Pool | RADOS object가 들어가는 논리 저장 공간 | replication/EC, CRUSH rule 같은 정책 묶음 |
+| PG | Placement Group | object들을 너무 잘게 직접 배치하지 않도록 묶는 shard |
+| OSD | Object Storage Daemon | 디스크/블록 장치를 맡아 object를 저장하고 복구에 참여하는 daemon |
+| CRUSH | 배치 계산 알고리즘과 topology map | 중앙 lookup table 대신 규칙과 지도에서 위치를 계산하는 방식 |
+| Acting set | 특정 PG를 현재 담당하는 OSD 집합 | client write/read와 recovery가 실제로 만나는 OSD들 |
+| Primary OSD | acting set에서 client 요청 조정 역할을 맡은 OSD | 모든 데이터를 혼자 저장한다는 뜻은 아니다 |
+
+비유하면 RADOS는 창고 회사, pool은 보관 정책이 정해진 구역, PG는 화물 묶음, OSD는 실제 창고 칸, CRUSH는 어느 칸에 둘지 정하는 지도와 규칙이다. 이 비유의 한계는 Ceph가 정적 창고 목록을 사람이 매번 조회하는 구조가 아니라, client와 daemon이 cluster map을 보고 같은 결론을 계산한다는 점이다.
+
 ## 2. RADOS object는 S3 object와 같지 않다
 
 Ceph 공식 문서는 S3/Swift API object가 Ceph Storage Cluster의 RADOS object와 반드시 1:1 대응하지 않는다고 설명한다. [Ceph Object Storage](https://docs.ceph.com/en/reef/architecture/#ceph-object-storage)
@@ -117,6 +131,23 @@ EC k=4, m=2:
 이 계산은 단순 payload overhead다. 실제 비용에는 small write amplification, CPU, network, recovery, latency, metadata pool, BlueStore overhead가 붙는다. EC는 “공짜로 같은 내구성을 더 싸게”가 아니다. RGW의 큰
 immutable-ish object와 RBD/CephFS small random write는 비용 곡선이 다르다.
 
+`k=4, m=2` EC를 object 하나로 더 자세히 풀면 다음과 같다. Ceph EC 문서는 `k` data chunks와 `m` coding chunks를 사용해 `m`개 OSD 손실까지 견딜 수 있는 형식을 설명한다. [Erasure code](https://docs.ceph.com/en/reef/rados/operations/erasure-code/)
+
+```text
+------------- logical object 256 MiB -------------+
+---64MiB---+---64MiB---+---64MiB---+---64MiB---+
+ data D0   + data D1   + data D2   + data D3   +
+
+ coding C0 + coding C1                              # parity/equation chunks
+
+ total chunks = 6
+ raw bytes    = 6 × 64 MiB = 384 MiB
+ overhead     = 384 / 256 = 1.5x
+ can recover  = any 4 of 6 chunks are enough, assuming failures match the model
+```
+
+여기서 “any 4 of 6”은 수학적 EC 조건을 단순화한 설명이다. 실제 장애 허용은 CRUSH failure domain, OSD 상태, recovery 중 추가 장애, `min_size`, client timeout, scrub 발견 시점에 영향을 받는다. 또 4 KiB 작은 overwrite가 들어오면 필요한 chunk 읽기, 새 coding chunk 계산, 여러 OSD write가 생길 수 있다. 그래서 EC pool은 capacity 효율만 보고 고르면 안 되고, workload의 write 크기와 update 패턴을 함께 본다.
+
 ## 6. BlueStore는 “모든 object를 ext4 일반 파일로 저장”이 아니다
 
 Ceph glossary는 BlueStore가 raw block device나 partition에 직접 object를 저장하고 mounted filesystem과 상호작용하지 않으며, RocksDB key/value database로 object name을 disk location에 mapping한다고 설명한다.
@@ -146,6 +177,21 @@ librados](https://docs.ceph.com/en/reef/architecture/#native-protocol-and-librad
 | Listing | RADOS namespace listing과 다름 | bucket index가 반영돼야 함 |
 
 ACK를 받았다는 말만으로 “모든 interface에서 즉시 같은 방식으로 보인다”고 쓰면 안 된다. RBD client에게 보이는 block write, CephFS client에게 보이는 file metadata, RGW S3 GET/LIST는 다른 protocol boundary를 지난다.
+
+Quorum과 split-brain caveat도 여기서 분리한다. Ceph monitor는 cluster map과 중요한 상태를 다루므로 quorum 개념이 핵심이다. 반면 RADOS object write 경로의 성공 조건은 pool type, size, min_size, primary/replica 상태, OSD map epoch 같은 Ceph 내부 규칙을 따른다. “quorum”이라는 단어를 보았다고 모든 쓰기가 Paxos식 다수결 key-value DB처럼 동작한다고 쓰면 안 된다.
+
+```text
+Monitor quorum 질문:
+  이 cluster map과 leader를 누가 인정하는가?
+
+OSD acting set 질문:
+  이 PG의 primary와 replica/chunk OSD가 누구이며 write가 어느 수준까지 완료됐는가?
+
+Split-brain 질문:
+  network partition 뒤 양쪽이 서로 다른 cluster map이나 object history를 정답이라고 믿는가?
+```
+
+Ceph는 이런 상황을 피하려고 monitor quorum, OSDMap epoch, peering, PG state, recovery 절차를 둔다. 입문자가 기억할 문장은 짧다. “복제본이 여러 개 있다”는 말과 “누가 최신이고 누가 쓰기를 받을 권한이 있는지 합의했다”는 말은 다르다.
 
 ## 8. RGW bucket index와 object visibility
 
@@ -220,6 +266,20 @@ Range GET:
 
 Range GET는 임의 위치 update가 아니다. Multipart upload는 여러 part를 완성해 하나의 object version을 만드는 방식이지, 완성된 object의 중간 bytes를 POSIX처럼 수정하는 기능이 아니다.
 
+Multipart publish 실패도 반드시 시간순으로 본다.
+
+```text
+t0  CreateMultipartUpload returns upload id U1.
+t1  UploadPart 1,2,3 succeed.
+t2  UploadPart 4 fails or client loses network.
+t3  Object key K is still not published as the completed object.
+t4  Client can retry part 4 or abort multipart upload.
+t5  CompleteMultipartUpload succeeds.
+t6  Only now K becomes one completed object according to that service's consistency rules.
+```
+
+완료 전 uploaded parts는 비용과 lifecycle의 대상이 될 수 있지만, 일반 reader가 key K의 완성 object로 읽는 상태가 아니다. Complete 요청이 성공했는데 client가 timeout을 받으면 더 조심해야 한다. 실제로 publish됐는지 HEAD/GET, versioning 상태, idempotency 설계를 확인하지 않고 같은 데이터를 새 object로 다시 쓰면 중복이나 orphan이 생길 수 있다. AWS S3의 구체적 보장은 AWS S3 문서 범위에서 말하고, RGW나 다른 S3-compatible 구현은 그 구현의 문서를 따로 확인한다.
+
 ## 11. Rename과 append를 POSIX처럼 가정하지 않는다
 
 AWS general-purpose bucket에서 일반적인 rename/move는 새 key로 copy한 뒤 source key를 delete하는 조합으로 이해한다. AWS 문서는 rename을 copy 후 original에 delete marker를 추가하는 방식으로 설명하지만, delete marker는 versioning-enabled 또는 suspended bucket의 simple DELETE에서 생기는 표식이고, versioning이 꺼진 bucket에서는 DeleteObject가 객체를 영구 삭제한다는 점을 구분해야 한다. [Copying, moving, and renaming objects](https://docs.aws.amazon.com/AmazonS3/latest/userguide/copy-object.html), [DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html), [Working with delete markers](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html)
@@ -276,6 +336,31 @@ Actual semantics come from the backend and driver mode
 
 RBD-backed PVC는 block volume으로 보일 수 있다. CephFS-backed PVC는 shared filesystem으로 보일 수 있다. RGW/S3는 보통 PVC mount가 아니라 HTTP object API로 애플리케이션이 직접 사용한다.
 
+Pod 안에서 보이는 경로까지 따라가면 더 분명하다.
+
+```text
+1. Developer writes Pod spec:
+   volumeMounts:
+   - name: data
+     mountPath: /var/lib/app/data
+
+2. Developer writes PVC:
+   storageClassName: ceph-rbd
+   accessModes: [ReadWriteOnce]
+   resources.requests.storage: 100Gi
+
+3. Kubernetes control plane:
+   PVC를 만족할 PV를 찾거나 CSI driver로 dynamic provisioning 요청
+
+4. Node + CSI driver:
+   backend volume을 attach/map 하고 node filesystem 또는 block device로 준비
+
+5. Container process:
+   /var/lib/app/data 라는 경로에서 POSIX file API를 사용
+```
+
+이때 `/var/lib/app/data`는 container mount namespace 안의 경로다. 그 아래 bytes의 durability, replication, snapshot, multi-writer 가능 여부는 mountPath 문자열이 아니라 StorageClass, CSI driver, backend mode, access mode, filesystem, application sync 방식이 결정한다. 같은 PVC라도 RBD filesystem volume인지 raw block volume인지, CephFS인지, cloud disk인지에 따라 의미가 달라진다.
+
 ## 14. 센서 파일 접근을 끝까지 추적하기
 
 가상 데이터: `sensor-A`가 10분마다 64 MiB binary chunk를 만든다고 하자. 목표는 raw object 저장 뒤 Parquet 변환본을 Iceberg table에서 읽는 것이다. 이 흐름은 설명용이며 실제 endpoint나 credential을 포함하지 않는다.
@@ -331,6 +416,33 @@ Reader sees object after completion according to service consistency semantics
 
 이 숫자는 이해를 위한 산술이다. 실제 성능, 압축률, billing, BlueStore allocation, checksum, recovery cost를 측정한 값이 아니다.
 
+## 16. RBD, CephFS, RGW를 한 요청으로 비교하기
+
+같은 “센서 파일 저장” 요구도 interface에 따라 완전히 다른 시스템 경로를 탄다.
+
+```text
+RBD-backed PVC:
+  app writes /var/lib/app/data/a.bin
+  → guest/container filesystem updates blocks
+  → kernel block I/O
+  → RBD image objects
+  → RADOS pool PGs and OSDs
+
+CephFS-backed PVC:
+  app writes /mnt/shared/a.bin
+  → CephFS client talks to MDS for metadata
+  → file data maps to RADOS objects
+  → RADOS pool PGs and OSDs
+
+RGW/S3:
+  app PUT https://object.example/bucket/a.bin
+  → RGW auth and bucket index logic
+  → head/tail RADOS objects
+  → RADOS pool PGs and OSDs
+```
+
+RBD는 block device라서 filesystem metadata는 보통 client node 쪽 filesystem이 만든다. CephFS는 shared filesystem metadata를 MDS가 조정한다. RGW는 bucket, key, HTTP method, ACL/policy, bucket index가 핵심이다. 세 경로 모두 RADOS를 쓸 수 있지만, 사용자가 보는 consistency와 metadata 책임은 같지 않다.
+
 ## 17. 흔한 오해
 
 - “Ceph는 S3다” → Ceph는 RADOS 위에 RBD, CephFS, RGW 등 여러 interface를 제공한다.
@@ -350,3 +462,9 @@ Reader sees object after completion according to service consistency semantics
 **질문 4.** AWS S3 strong consistency claim을 Ceph RGW multisite에 그대로 적용해도 되는가? 짧은 답: 안 된다. AWS S3 서비스 claim과 S3-compatible 구현, RGW multisite sync semantics는 별도로 확인해야 한다.
 
 **질문 5.** Kubernetes PVC는 왜 storage engine이 아닌가? 짧은 답: PVC는 storage 요청 API이고 실제 저장·복제·consistency semantics는 CSI driver 뒤의 backend가 제공한다.
+
+**질문 6.** EC `k=4, m=2`에서 256 MiB object의 단순 raw payload는 얼마인가? 짧은 답: data chunk 4개와 coding chunk 2개, 총 6개 chunk가 필요하므로 384 MiB이고 overhead는 1.5배다.
+
+**질문 7.** multipart upload에서 part 1-3 업로드 성공 후 complete 전에 client가 죽으면 object가 완성 publish됐는가? 짧은 답: 아니다. CompleteMultipartUpload가 성공해야 하나의 완성 object로 게시된다. 미완료 part는 별도 정리 대상이 될 수 있다.
+
+**질문 8.** Pod의 `/var/lib/app/data` 경로만 보고 storage semantics를 알 수 있는가? 짧은 답: 없다. PVC, StorageClass, CSI driver, backend, access mode, filesystem, sync 방식까지 봐야 한다.

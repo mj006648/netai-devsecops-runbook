@@ -1,6 +1,6 @@
 # 06. Parquet, Arrow, Iceberg를 bytes에서 snapshot까지 연결하기
 
-작성·문헌 확인일: **2026-09-21**. 이 장은 CSV·row store·columnar file·in-memory columnar layout·table format catalog를 한 번에 섞지 않도록 낮은 층의 역할을 분리한다. 공식 문서와 규격은 시간이 지나며 바뀌므로, 실제 실험에서는 Apache Parquet·Arrow·Iceberg·Nessie의 릴리스 번호와 엔진 커넥터 버전을 함께 고정한다. 여기서의 파일 이름, metadata, SQL 모양은 모두 **개념 설명용 가상 표현**이며, 운영 환경에서 실행할 명령이나 완전한 schema가 아니다. Lakehouse 논문별 긴 연구 해설은 [기존 리뷰](../lakehouse/02-paper-reviews.md)와 [단계별 walkthrough](../lakehouse/04-end-to-end-walkthrough.md)를 참고하고, 이 장은 하위 파일 구조와 읽기 경로에 집중한다.
+작성·문헌 확인일: **2026-09-22**. 이 장은 CSV·row store·columnar file·in-memory columnar layout·table format catalog를 한 번에 섞지 않도록 낮은 층의 역할을 분리한다. 공식 문서와 규격은 시간이 지나며 바뀌므로, 실제 실험에서는 Apache Parquet·Arrow·Iceberg·Nessie의 릴리스 번호와 엔진 커넥터 버전을 함께 고정한다. 여기서의 파일 이름, metadata, SQL 모양은 모두 **개념 설명용 가상 표현**이며, 운영 환경에서 실행할 명령이나 완전한 schema가 아니다. Lakehouse 논문별 긴 연구 해설은 [기존 리뷰](../lakehouse/02-paper-reviews.md)와 [단계별 walkthrough](../lakehouse/04-end-to-end-walkthrough.md)를 참고하고, 이 장은 하위 파일 구조와 읽기 경로에 집중한다.
 
 ## 1. CSV, row layout, column layout은 서로 다른 읽기 비용을 만든다
 
@@ -20,7 +20,56 @@ Columnar view
   rpm:    1000,  1005,  ...
 ```
 
-### 1.1 worked example: 1억 행에서 3개 column만 읽기
+### 1.1 같은 작은 테이블을 네 가지 배치로 보기
+
+가상 테이블을 하나 고정한다.
+
+| row | ts | device_id | temp_c | ok |
+| --- | --- | --- | ---: | --- |
+| 0 | 09:00 | A | 20 | true |
+| 1 | 09:01 | A | 21 | true |
+| 2 | 09:02 | B | null | false |
+| 3 | 09:03 | A | 21 | true |
+
+Row layout은 한 row의 값을 붙여 둔다.
+
+```text
+row0: 09:00 | A | 20   | true
+row1: 09:01 | A | 21   | true
+row2: 09:02 | B | null | false
+row3: 09:03 | A | 21   | true
+```
+
+Column layout은 같은 column끼리 붙여 둔다.
+
+```text
+ts:        09:00, 09:01, 09:02, 09:03
+device_id: A,     A,     B,     A
+temp_c:    20,    21,    null,  21
+ok:        true,  true,  false, true
+```
+
+Arrow in-memory array는 value buffer와 validity bitmap 같은 buffer 조합으로 column을 표현한다. Arrow 문서는 각 array가 value buffer, offset buffer, validity bitmap 같은 buffer로 구성될 수 있음을 설명한다. [Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)
+
+```text
+Arrow temp_c Int32 array, 개념도
+  values buffer:   [20, 21, 0, 21]       # null 자리의 value bytes는 의미 없음
+  validity bitmap: [1,  1,  0, 1 ]       # 0 means null
+```
+
+Parquet file 안에서는 같은 `temp_c`가 row group의 column chunk와 page로 저장되고, page 안에서 definition level, encoding, compression이 적용될 수 있다. Null은 단순히 문자열 `"null"`을 저장하는 것이 아니라, 해당 값이 존재하는지 나타내는 level/bitmap 계열 표현과 encoding 규칙으로 다룬다.
+
+```text
+Parquet temp_c page, 개념도
+  definition levels: 1,1,0,1        # null 여부
+  encoded values:    20,21,21       # null의 실제 값은 저장하지 않을 수 있음
+  optional encoding: dictionary, RLE, bit-packing 등
+  optional compression: snappy/zstd/gzip 등
+```
+
+비유하면 row layout은 학생 한 명의 생활기록부를 봉투 하나에 넣는 방식이고, column layout은 전교생의 키, 몸무게, 출석 여부를 항목별 상자에 나눠 담는 방식이다. 비유의 한계는 실제 format이 schema, nullability, nested type, offset, compression, statistics를 함께 다룬다는 점이다.
+
+### 1.2 worked example: 1억 행에서 3개 column만 읽기
 
 가상 dataset에 100개 column과 1억 행이 있다고 하자. 분석 쿼리가 `event_time`, `device_id`, `temperature_c`만 필요로 한다면 row file은 보통 row 전체를 decode하거나 적어도 많은 불필요 bytes를 지나야 한다. Parquet 같은 columnar file은 필요한 column chunk만 선택해 읽을 수 있다. 그러나 predicate가 아주 넓어서 모든 row group을 열어야 하거나, 압축 해제 CPU가 병목이면 I/O 절감이 그대로 wall-clock 절감으로 변하지 않을 수 있다. 이 예제는 원리 설명이며 실제 수치는 측정하지 않았다.
 
@@ -66,9 +115,27 @@ compressed page bytes
 Parquet page inside column chunk
 ```
 
-### 3.1 worked example: device_id column의 dictionary
+### 3.1 worked example: device_id column의 dictionary, RLE, bitmap
 
 가상 column `device_id`가 `A`, `B`, `C` 세 값만 반복한다고 하자. Dictionary page는 `A→0`, `B→1`, `C→2` 같은 mapping을 담을 수 있다. Data page는 `0,0,1,2,0,...` 같은 작은 id sequence를 RLE/bit-packing으로 저장할 수 있다. 조건이 `device_id='Z'`라면 dictionary나 statistics를 보고 해당 page 또는 row group을 건너뛰는 reader도 있을 수 있다. 하지만 dictionary 사용 여부와 predicate pushdown 구현은 writer·reader·column cardinality에 따라 다르므로, 문서에는 “가능한 구조”와 “우리 엔진에서 확인한 동작”을 분리해 써야 한다.
+
+작은 column 네 개를 다시 쓰면 encoding 차이가 보인다.
+
+```text
+device_id raw:       A, A, B, A
+Dictionary:          A->0, B->1
+Encoded ids:         0, 0, 1, 0
+RLE 가능 구간:       0 repeats 2 times, then 1, then 0
+
+temp_c with null:    20, 21, null, 21
+definition levels:   1,  1,  0,    1
+encoded non-null:    20, 21, 21
+
+ok raw:              true, true, false, true
+bit-packed values:   1,    1,    0,     1
+```
+
+Dictionary는 반복되는 값을 작은 id로 바꿔 cardinality가 낮은 column에 유리할 수 있다. RLE는 같은 값이 길게 반복될 때 유리하다. Bitmap이나 bit-packing은 boolean, null 여부, 작은 정수 level처럼 적은 bit로 표현 가능한 정보에 유리하다. 세 기법은 서로 배타적인 마법 버튼이 아니라 page 안에서 조합될 수 있는 표현 단계다.
 
 ## 4. Statistics와 Bloom filter는 pruning 힌트이지 정답 계산기가 아니다
 
@@ -128,9 +195,60 @@ Iceberg append write path 단순도
 6. New readers can load v2 and choose snapshot S2
 ```
 
-### 7.1 worked example: commit 전 파일은 공식 table이 아니다
+### 7.1 Iceberg metadata tree를 파일 이름으로 그리기
+
+작은 append 하나가 성공했을 때 metadata tree는 다음처럼 보일 수 있다. 이름은 설명용이다.
+
+```text
+catalog pointer
+  -> s3://warehouse/camera/metadata/v3.metadata.json
+
+v3.metadata.json
+  current-snapshot-id: 3003
+  snapshots:
+    3001 -> metadata/snap-3001.avro
+    3002 -> metadata/snap-3002.avro
+    3003 -> metadata/snap-3003.avro
+
+snap-3003.avro, manifest list
+  manifest: metadata/manifest-A.avro
+    added-data-file: data/day=22/part-010.parquet
+    existing-file:   data/day=21/part-001.parquet
+  manifest: metadata/manifest-B.avro
+    existing-file:   data/day=21/part-002.parquet
+```
+
+Data file은 row bytes를 담는다. Manifest는 data/delete file 목록과 partition, metrics를 담는다. Manifest list는 snapshot이 참조하는 manifests와 요약 통계를 담는다. Table metadata JSON은 schema, partition spec, snapshot log, current snapshot pointer를 담는다. Catalog pointer는 현재 table metadata file 위치를 가리킨다. 이 tree를 그리지 못하면 “파일은 있는데 table에서 안 보인다”, “snapshot은 바뀌었는데 raw object는 그대로다” 같은 장애를 해석하기 어렵다.
+
+### 7.2 worked example: commit 전 파일은 공식 table이 아니다
 
 가상 writer가 `part-001.parquet`를 object store에 올렸지만 catalog commit 전에 crash났다고 하자. 파일은 storage에 존재할 수 있지만 current snapshot의 manifest가 참조하지 않으면 공식 table scan의 일부가 아니다. 반대로 commit이 성공했는데 client가 timeout을 받았다면, 같은 data를 다시 append하면 중복이 생길 수 있다. Iceberg commit atomicity는 table metadata pointer의 게시를 다루지만, application-level idempotency까지 자동으로 보장하지 않는다. 이 점은 [기존 end-to-end walkthrough](../lakehouse/04-end-to-end-walkthrough.md)의 commit 실패·재시도 예제와 연결해서 읽는다.
+
+Optimistic commit conflict를 시간표로 보면 다음과 같다.
+
+```text
+t0  Table pointer is v2.metadata.json, current snapshot S2.
+t1  Writer A reads v2 and writes data file A1.parquet.
+t2  Writer B reads v2 and writes data file B1.parquet.
+t3  Writer A creates v3 metadata with snapshot S3 and swaps catalog pointer v2 -> v3.
+t4  Writer B tries to swap v2 -> v4.
+t5  Swap fails because current pointer is now v3, not v2.
+t6  Writer B reloads v3, validates assumptions, then creates v5 or aborts.
+```
+
+Conflict가 항상 오류라는 뜻은 아니다. Append끼리 독립이면 재검증 후 재시도할 수 있다. 같은 partition을 rewrite하거나 delete/update가 겹치면 안전한 재시도가 불가능할 수 있다. 중요한 점은 object store에 `B1.parquet`가 이미 있을 수 있다는 사실이다. Commit이 실패하면 그 파일은 current snapshot이 참조하지 않는 orphan이 된다.
+
+Orphan lifecycle도 구분한다.
+
+```text
+orphan data file:
+  object store에는 존재
+  current snapshot manifests는 참조하지 않음
+  즉시 삭제하면 안 될 수 있음: retry, in-flight commit, old snapshot, audit window 때문
+  정리는 table maintenance 정책과 보존 기간을 보고 수행
+```
+
+따라서 “commit 실패 파일은 바로 지워도 된다”라고 일반화하지 않는다. 어떤 catalog와 engine이 어떤 retry/idempotency marker를 쓰는지, snapshot expiration과 orphan removal 보존 기간이 어떻게 설정됐는지 확인한다.
 
 ## 8. Iceberg read path는 pinned snapshot에서 file과 row로 내려간다
 
@@ -269,3 +387,7 @@ Query read path
    - 짧은 답: 파일 존재만으로 공식 table 상태가 되지 않으며, 새 metadata pointer를 atomic commit해야 독자가 일관된 snapshot으로 볼 수 있기 때문이다.
 5. Nessie branch와 Iceberg snapshot의 차이는 무엇인가?
    - 짧은 답: Nessie branch는 catalog-level reference로 여러 table 상태를 commit graph에서 가리킬 수 있고, Iceberg snapshot은 한 table의 data/delete file 집합 version이다.
+6. Arrow `temp_c=[20,21,null,21]`는 null을 값 0 하나로 저장한다고 말해도 되는가?
+   - 짧은 답: 안 된다. 값 buffer와 validity bitmap 또는 null level을 구분해야 하며, null 자리의 value bytes는 논리값이 아니다.
+7. Iceberg commit conflict 뒤 object store에 남은 Parquet file은 곧바로 table data인가?
+   - 짧은 답: 아니다. Current snapshot manifest가 참조해야 table scan의 일부다. Commit 실패 파일은 orphan일 수 있고 보존 기간과 maintenance 정책을 보고 정리한다.

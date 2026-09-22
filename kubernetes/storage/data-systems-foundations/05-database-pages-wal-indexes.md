@@ -1,6 +1,6 @@
 # 05. 데이터베이스 페이지, WAL, 인덱스, LSM을 한 층씩 보기
 
-작성·문헌 확인일: **2026-09-21**. 이 장은 연구자가 데이터 시스템 논문과 운영 문서를 읽을 때 혼동하기 쉬운 “페이지”, “로그”, “스냅샷”, “컴팩션”을 낮은 층에서 정리한다. 공식 문서의 세부는 버전별로 달라질 수 있으므로, 구현 판단 전에는 사용 중인 PostgreSQL·RocksDB·Iceberg 릴리스 문서를 다시 고정한다. 여기서 쓰는 예제는 모두 **개념 설명용 가상 사례**이며, 실제 데이터베이스에 실행할 SQL이나 운영 명령이 아니다. Lakehouse 논문별 성능·연구 리뷰는 이미 [Iceberg·Open Table Format 주요 논문 리뷰](../lakehouse/02-paper-reviews.md)에 정리되어 있으므로, 이 장은 파일·페이지·로그의 기계적 동작에 집중한다.
+작성·문헌 확인일: **2026-09-22**. 이 장은 연구자가 데이터 시스템 논문과 운영 문서를 읽을 때 혼동하기 쉬운 “페이지”, “로그”, “스냅샷”, “컴팩션”을 낮은 층에서 정리한다. 공식 문서의 세부는 버전별로 달라질 수 있으므로, 구현 판단 전에는 사용 중인 PostgreSQL·RocksDB·Iceberg 릴리스 문서를 다시 고정한다. 여기서 쓰는 예제는 모두 **개념 설명용 가상 사례**이며, 실제 데이터베이스에 실행할 SQL이나 운영 명령이 아니다. Lakehouse 논문별 성능·연구 리뷰는 이미 [Iceberg·Open Table Format 주요 논문 리뷰](../lakehouse/02-paper-reviews.md)에 정리되어 있으므로, 이 장은 파일·페이지·로그의 기계적 동작에 집중한다.
 
 ## 1. 세 종류의 “페이지”를 먼저 분리한다
 
@@ -196,11 +196,244 @@ RocksDB에서 작은 SST가 많으면 compaction이 SST run을 합쳐 read ampli
 
 Atomicity는 transaction의 논리 결과가 전부 보이거나 전부 보이지 않는 규칙이다. Durability는 commit된 결과가 crash 후에도 복구 가능해야 한다는 규칙이다. Isolation은 concurrent transaction이 서로의 중간 상태를 보지 않도록 하는 규칙이다. Consistency는 DB가 정의한 constraint와 application invariant가 transaction 전후에 유지되어야 한다는 규칙이다. WAL은 durability와 recovery에 핵심적이지만, isolation은 MVCC와 lock/protocol이 만든다. B+tree는 빠른 접근 경로이지만, 단독으로 transaction atomicity를 만들지 않는다. Slotted page는 행 배치와 item pointer 안정성을 돕지만, 단독으로 backup 보존을 만들지 않는다. LSM compaction은 오래된 version을 정리하지만, 단독으로 SQL snapshot isolation을 의미하지 않는다.
 
-## 11. 연구 논문을 읽을 때 체크할 질문
+
+## 11. 같은 작은 테이블로 heap, B+tree, LSM을 끝까지 따라간다
+
+이 절은 일부러 아주 작은 row를 쓴다. 숫자가 작아야 page, index, log가 눈에 보인다.
+
+```text
+sensor_event
+  event_id | device_id | ts    | temp_c
+  -------- | --------- | ----- | ------
+  10       | A         | 09:00 | 20
+  11       | A         | 09:01 | 21
+  12       | B         | 09:00 | 18
+  13       | C         | 09:00 | 30
+```
+
+Heap table은 보통 “정렬되지 않은 row 저장소”로 이해한다. Heap이라는 말이 여기서는 priority queue heap이 아니라, table row version을 담는 page들의 모음이라는 뜻에 가깝다. PostgreSQL heap page의 item identifier는 page 안 row 위치를 가리키고, CTID는 page number와 item slot을 조합한다. [PostgreSQL Database Page Layout](https://www.postgresql.org/docs/current/storage-page-layout.html)
+
+```text
+heap page 42, 설명용
+
+ItemId array
+  slot 1 -> offset 7900, length 40  -> row event_id=10, xmin=101, xmax=0
+  slot 2 -> offset 7860, length 40  -> row event_id=11, xmin=101, xmax=0
+  slot 3 -> offset 7820, length 40  -> row event_id=12, xmin=102, xmax=0
+  slot 4 -> offset 7780, length 40  -> row event_id=13, xmin=103, xmax=0
+
+free space는 ItemId array와 row bytes 사이에 남는다.
+```
+
+`UPDATE sensor_event SET temp_c=22 WHERE event_id=11`을 실행한다고 하자. MVCC 엔진은 논리 row를 제자리 수정한 것처럼 보여도, 물리적으로는 새 row version을 만들 수 있다.
+
+```text
+before:
+  slot 2 -> row event_id=11,temp=21,xmin=101,xmax=0
+
+after, 단순화:
+  slot 2 -> old row event_id=11,temp=21,xmin=101,xmax=120
+  slot 5 -> new row event_id=11,temp=22,xmin=120,xmax=0
+```
+
+오래된 transaction이 아직 `xmin=101` 시점 snapshot을 보고 있다면 old row가 필요할 수 있다. 그래서 delete나 update 직후 row bytes가 즉시 사라진다고 생각하면 안 된다. Vacuum, pruning, HOT, visibility map 같은 기능은 이 기본 사실 위에 올라간다.
+
+B+tree index를 `event_id`에 만들면 leaf에는 key와 heap 위치가 들어간다고 단순화할 수 있다.
+
+```text
+btree leaf L1
+  key 10 -> (page 42, slot 1)
+  key 11 -> (page 42, slot 2)
+  key 12 -> (page 42, slot 3)
+  key 13 -> (page 42, slot 4)
+```
+
+`event_id=12` lookup은 root에서 시작해 leaf까지 내려간 뒤 `(page 42, slot 3)`을 얻고, heap page 42를 읽어 row visibility를 확인한다. Index entry가 있다고 해서 그 row version이 현재 transaction에 visible하다는 뜻은 아니다. Index는 후보 위치를 빠르게 찾게 해 주고, MVCC가 “보이는가”를 결정한다.
+
+### 11.1 B+tree leaf split worked example
+
+Leaf page에 key 10, 11, 12, 13만 들어갈 수 있다고 가정하자. 새 key 14가 들어오면 leaf가 꽉 차므로 split이 필요하다.
+
+```text
+before insert 14:
+  root -> L1 [10,11,12,13]
+
+insert 14:
+  temporary [10,11,12,13,14]
+  split into L1 [10,11] and L2 [12,13,14]
+  parent/root receives separator key 12
+
+after:
+  root [12]
+    left  -> L1 [10,11]
+    right -> L2 [12,13,14]
+```
+
+실제 DB는 page fillfactor, sibling link, WAL logging, latch coupling, concurrent readers 때문에 더 복잡하다. 하지만 기본 원리는 “정렬 순서를 유지하려고 page를 나누고 parent에 경계 key를 올린다”다. Split은 쓰기 amplification을 만든다. row 하나 insert가 leaf page, 새 leaf page, parent page, WAL record 여러 개를 만들 수 있다.
+
+### 11.2 LSM으로 같은 key를 저장하면 무엇이 달라지는가
+
+LSM 계열 key-value engine에서는 같은 논리 row를 key/value로 바꿔 memtable과 SST로 보낸다고 단순화할 수 있다.
+
+```text
+key                         value
+sensor_event/event_id/10 -> A,09:00,20
+sensor_event/event_id/11 -> A,09:01,21
+sensor_event/event_id/12 -> B,09:00,18
+sensor_event/event_id/13 -> C,09:00,30
+```
+
+Write path:
+
+```text
+Put key=11,value=temp=22
+  1. WAL/logfile append: sequence=200, key=11, value=22
+  2. memtable update: key=11 now points to newest sequence 200
+  3. memtable full: flush creates sorted SST file
+  4. later compaction merges older SSTs and drops overwritten versions when safe
+```
+
+RocksDB는 memtable, SST file, logfile을 기본 구성요소로 설명한다. [RocksDB Overview](https://github.com/facebook/rocksdb/wiki/RocksDB-Overview) Bloom filter는 “이 SST에 key가 절대 없을 수 있는가”를 빠르게 묻는 보조 구조다. RocksDB Bloom filter 문서는 point lookup에서 불필요한 file read를 줄이기 위한 구조로 설명한다. [RocksDB Bloom Filter](https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter)
+
+```text
+Lookup key=11:
+  check memtable
+  check immutable memtable
+  for candidate SSTs:
+    Bloom says definitely-not-present -> skip file
+    Bloom says maybe-present          -> read index/data block
+```
+
+Bloom filter는 false positive가 있을 수 있다. “maybe-present”라고 해서 실제 key가 반드시 있다는 뜻은 아니다. false positive는 추가 read 비용을 만들지만 정답을 틀리게 만들지는 않는다. 반대로 올바른 Bloom filter가 “definitely not”이라고 말했는데 key가 있으면 correctness bug다.
+
+## 12. WAL, LSN, checkpoint, redo/undo를 사건표로 읽는다
+
+LSN은 Log Sequence Number, 즉 WAL stream 안의 위치다. Page header에 page LSN이 있으면 “이 page image에는 WAL의 어느 지점까지 반영됐는가”를 말할 수 있다. Checkpoint는 모든 dirty page를 매번 즉시 디스크에 쓰는 마법이 아니라, recovery가 어디서부터 WAL을 다시 보면 되는지 경계를 줄이는 절차다. PostgreSQL WAL 문서는 checkpoint가 자동으로 수행되고, crash 후 마지막 checkpoint 이후 WAL record를 replay한다고 설명한다. [PostgreSQL WAL](https://www.postgresql.org/docs/current/wal-intro.html)
+
+단순 commit trace:
+
+```text
+T120 begins
+T120 updates event_id=11 from 21 to 22
+  buffer page 42 dirty
+  WAL record R1 generated at LSN 1000: heap update old/new version metadata
+  page 42 pageLSN becomes 1000 in memory
+
+T120 commits
+  WAL commit record R2 generated at LSN 1080
+  synchronous commit case: WAL flushed through 1080 before client success
+  data page 42 may still be only in buffer pool
+
+checkpoint later
+  dirty page 42 eventually written to data file
+  checkpoint record says recovery can start later than old WAL start
+```
+
+Crash cases:
+
+```text
+Case A: WAL through LSN 1080 durable, page 42 not durable
+  recovery replays R1 and R2
+  committed update reappears
+
+Case B: page 42 reached disk but commit record R2 did not
+  recovery must not expose T120 as committed
+  MVCC transaction status / abort handling prevents dirty committed view
+```
+
+Redo와 undo는 구현마다 다르다. Redo는 “로그를 보고 이미 커밋된 변경을 다시 적용해 빠진 data page를 앞으로 밀어준다”는 방향이다. Undo는 “커밋되지 않은 변경을 되돌린다”는 방향이다. 어떤 시스템은 undo log를 따로 두고, 어떤 시스템은 MVCC row version과 transaction status로 미커밋 변경을 안 보이게 하며 나중에 청소한다. PostgreSQL식 설명을 모든 DB에 그대로 일반화하면 안 된다. MySQL/InnoDB, PostgreSQL, RocksDB, SQLite, distributed database는 로그와 undo/redo 경계가 다르다.
+
+## 13. MVCC isolation anomaly를 작은 표로 본다
+
+PostgreSQL 문서는 Read Committed, Repeatable Read, Serializable 같은 isolation level을 설명하고, 각 level에서 허용되는 현상이 다르다고 설명한다. [PostgreSQL Transaction Isolation](https://www.postgresql.org/docs/current/transaction-iso.html) Isolation level은 “WAL을 썼는가”가 아니라 “동시에 실행되는 transaction들이 서로 어떤 중간 상태와 순서를 볼 수 있는가”의 문제다.
+
+### 13.1 Read Committed에서 statement마다 snapshot이 바뀌는 예
+
+```text
+초기값: account A balance = 100
+
+T1: BEGIN READ COMMITTED
+T1: SELECT balance FROM account WHERE id='A';  -- sees 100
+
+T2: UPDATE account SET balance=80 WHERE id='A';
+T2: COMMIT;
+
+T1: SELECT balance FROM account WHERE id='A';  -- can see 80 in a new statement
+T1: COMMIT;
+```
+
+Read Committed는 한 transaction 안에서도 statement마다 새로 commit된 값을 볼 수 있다. 이것은 dirty read가 아니다. T2가 commit한 값만 보았기 때문이다.
+
+### 13.2 Repeatable Read와 phantom 직관
+
+Repeatable Read 계열 snapshot에서는 같은 transaction이 같은 predicate를 다시 읽을 때 새로 commit된 row를 보지 않을 수 있다. 하지만 DBMS별 Repeatable Read 의미는 표준과 구현이 다를 수 있다. PostgreSQL은 Repeatable Read에서 phantom read를 허용하지 않는다고 문서화한다. 다른 DB의 이름만 보고 같은 보장이라고 쓰지 않는다.
+
+### 13.3 Serializable은 “하나씩 실행한 것처럼 보이게” 하는 목표다
+
+Serializable은 concurrent execution 결과가 어떤 serial order와 같아야 한다는 목표다. 실제 구현은 모든 transaction을 물리적으로 한 줄로 세워 실행하지 않을 수 있다. Predicate lock, SSI, validation, abort/retry 같은 방식으로 위험한 interleaving을 막는다. 따라서 Serializable을 쓰면 성능 비용이나 serialization failure retry가 생길 수 있다.
+
+```text
+write skew 예, 단순화
+
+Invariant: 의사 A 또는 B 중 최소 한 명은 on_call=true여야 함.
+초기: A=true, B=true
+
+T1 reads A,B and sets A=false because B is true.
+T2 reads A,B and sets B=false because A is true.
+둘 다 commit되면 A=false,B=false로 invariant 위반.
+
+Serializable implementation은 이런 결과가 serial order와 맞지 않음을 감지하고
+한 transaction을 abort시킬 수 있다.
+```
+
+## 14. ACID와 distributed consistency는 같은 단어가 아니다
+
+ACID는 보통 한 DB transaction이 지켜야 하는 성질을 말한다. Distributed consistency는 여러 replica, shard, region, service가 있을 때 어떤 순서와 최신성을 관측하게 할지의 문제다. 둘은 겹치지만 같은 층이 아니다.
+
+| 질문 | ACID transaction | Distributed consistency |
+| --- | --- | --- |
+| 핵심 단위 | 한 transaction | 여러 node/replica의 관측 |
+| 대표 단어 | atomicity, isolation, durability | linearizability, causal consistency, eventual consistency, quorum |
+| 실패 초점 | crash 중 commit/rollback, concurrent transaction | network partition, replica lag, leader election, split-brain |
+| 흔한 오해 | WAL만 있으면 isolation이 완성된다 | replica 3개면 항상 최신값을 읽는다 |
+
+예를 들어 단일 PostgreSQL instance 안에서 transaction이 ACID를 만족해도, 그 변경을 비동기 replica가 따라오는 동안 replica read는 오래된 값을 볼 수 있다. 반대로 quorum replicated key-value store가 linearizable single-key write를 제공해도, SQL multi-row constraint와 serializable transaction을 자동으로 제공한다는 뜻은 아니다.
+
+## 15. 해설 문제: 같은 변경을 세 계층으로 설명하기
+
+**문제.** `event_id=11`의 `temp_c`를 21에서 22로 바꿨다. Heap page, B+tree, WAL, MVCC 관점에서 각각 어떤 질문을 해야 하는가?
+
+해설:
+
+```text
+Heap page:
+  새 row version이 같은 page에 생겼는가, 다른 page에 생겼는가?
+  old version은 언제까지 남는가?
+
+B+tree:
+  index key가 바뀌었는가?
+  index entry가 새 tuple 위치를 가리키도록 추가됐는가?
+  leaf split이 필요한가?
+
+WAL:
+  heap update와 index update record의 LSN은 무엇인가?
+  commit record가 flush됐는가?
+  crash 후 redo할 범위는 어디부터인가?
+
+MVCC:
+  old row의 xmin/xmax와 new row의 xmin은 무엇인가?
+  어떤 snapshot이 21을 보고 어떤 snapshot이 22를 보는가?
+```
+
+**문제.** LSM에서 key `11`을 세 번 update한 뒤 delete했다. 왜 파일이 바로 작아지지 않을 수 있는가?
+
+해설: 새 값과 tombstone은 memtable과 새 SST에 추가되고, 오래된 SST는 compaction 전까지 남을 수 있다. 오래된 snapshot이나 iterator가 있으면 compaction도 즉시 모든 과거 version을 지우지 못할 수 있다. Delete는 “지금부터 이 key를 없는 것으로 해석하라”는 marker이지, 모든 과거 bytes를 즉시 덮어쓰는 명령이 아니다.
+
+## 16. 연구 논문을 읽을 때 체크할 질문
 
 논문이 “page”라고 할 때 DB page, OS page, file block 중 무엇을 말하는가? 성능 개선이 buffer pool hit, OS cache hit, 장치 I/O 감소, CPU decode 감소 중 어디에서 오는가? B-tree와 hash 비교가 equality lookup만 보는지, range scan과 order by까지 보는지 확인했는가? WAL latency가 commit ACK 기준인지, data file flush 기준인지, replication durable 기준인지 구분했는가? Snapshot이라는 단어가 MVCC visibility, backup recovery point, Iceberg table version 중 무엇인지 표시했는가? Compaction이 RocksDB SST 병합인지, Iceberg file rewrite인지, Parquet row group 재작성인지 분리했는가? Write amplification을 줄였다는 주장이 read amplification과 space amplification을 어디로 이동시켰는지 확인했는가? 제시된 숫자가 특정 version·hardware·workload의 측정인지, 일반 보장처럼 과장됐는지 확인했는가?
 
-## 12. 복습 문제
+## 17. 복습 문제
 
 1. DB page와 filesystem block, memory page의 차이는 무엇인가?
    - 짧은 답: DB page는 DB가 row/index를 배치하는 논리 단위, filesystem block은 파일 바이트의 저장 배치 단위, memory page는 가상 메모리 주소 변환 단위다.
@@ -212,3 +445,9 @@ Atomicity는 transaction의 논리 결과가 전부 보이거나 전부 보이�
    - 짧은 답: MVCC snapshot은 transaction이 볼 row version 규칙이고, Iceberg snapshot은 analytic table의 data/delete file 집합을 가리키는 metadata version이다.
 5. RocksDB compaction과 Iceberg compaction을 혼동하면 어떤 잘못된 결론이 나오는가?
    - 짧은 답: storage engine 내부 SST 병합이 table-format manifest와 snapshot commit까지 해결한다고 착각하거나, table file rewrite가 key-value engine의 WAL·memtable 문제를 해결한다고 착각한다.
+6. WAL redo와 undo의 차이는 무엇인가?
+   - 짧은 답: redo는 durable WAL을 보고 빠진 committed 변경을 다시 적용하는 방향이고, undo는 committed 되지 않은 변경을 되돌리거나 보이지 않게 하는 방향이다. 실제 구현은 DB마다 다르다.
+7. B+tree leaf split은 왜 쓰기 비용을 키울 수 있는가?
+   - 짧은 답: row 하나 insert가 꽉 찬 leaf를 나누고 parent separator를 갱신하며 여러 page와 WAL record를 만들 수 있기 때문이다.
+8. ACID와 distributed consistency를 같은 말로 쓰면 왜 위험한가?
+   - 짧은 답: ACID는 transaction 내부 성질이고 distributed consistency는 여러 replica와 network partition에서의 관측 순서 문제다. 단일 DB commit 보장과 replica 최신성은 별도다.

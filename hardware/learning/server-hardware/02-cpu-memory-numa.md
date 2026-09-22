@@ -30,6 +30,63 @@ CPU가 빠른데도 작업이 느릴 수 있다. 계산에 필요한 데이터�
 
 캐시는 CPU 안쪽의 작은 고속 저장 공간이다. 보통 L1이 코어에 가장 가깝고, L2와 L3는 더 큰 용량을 제공한다. 캐시에 필요한 데이터가 있으면 DRAM(동적 임의 접근 메모리)까지 왕복하지 않아도 된다. 캐시 미스가 많으면 코어가 많아도 메모리 지연·대역폭의 영향을 크게 받는다. **캐시 크기와 RAM 용량을 합쳐 사용 가능 메모리로 계산하지 않는다.**
 
+### toy ISA 실행 추적: PC, register, load/store
+
+00장에서 본 toy ISA를 CPU 관점에서 한 클록 덩어리씩 더 자세히 보자. 실제 CPU는 파이프라인과 out-of-order 실행을 쓰지만, 관찰해야 할 상태 이름은 여기서 시작한다.
+
+초기 상태는 다음과 같다.
+
+```text
+PC = 100
+R1 = 0
+R2 = 0
+메모리[100] = LOAD R1, [1000]
+메모리[101] = LOAD R2, [1008]
+메모리[102] = ADD R1, R2
+메모리[103] = STORE R1, [1016]
+메모리[104] = HALT
+메모리[1000] = 7
+메모리[1008] = 5
+메모리[1016] = 0
+```
+
+| 단계 | PC가 가리킨 명령 | 실행 전 주요 상태 | 실행 뒤 주요 상태 | 해설 |
+|---:|---|---|---|---|
+| 1 | `LOAD R1, [1000]` | `R1=0` | `R1=7`, `PC=101` | 주소 1000의 데이터를 레지스터로 가져온다 |
+| 2 | `LOAD R2, [1008]` | `R2=0` | `R2=5`, `PC=102` | 두 번째 피연산자를 가져온다 |
+| 3 | `ADD R1, R2` | `R1=7`, `R2=5` | `R1=12`, `PC=103` | 산술논리장치가 레지스터 값을 더한다 |
+| 4 | `STORE R1, [1016]` | `R1=12`, `메모리[1016]=0` | `메모리[1016]=12`, `PC=104` | 결과를 메모리에 쓴다 |
+| 5 | `HALT` | `PC=104` | 종료 | 실행을 멈춘다 |
+
+**PC(Program Counter)**는 다음 명령 주소를 담는 레지스터다. 쉬운 뜻은 “책갈피”다. 왜 필요할까? CPU가 어느 명령을 실행해야 하는지 기억해야 한다. 기작은 fetch 단계에서 PC 주소의 명령을 읽고, 보통 다음 주소로 증가시키거나 branch가 새 주소로 바꾸는 것이다. 책갈피 비유의 한계는 현대 CPU가 여러 명령을 미리 가져오고 예측 실행할 수 있다는 점이다.
+
+**레지스터(register)**는 CPU 안의 작은 저장소다. 쉬운 뜻은 “계산대 바로 위에 놓인 숫자 칸”이다. 왜 필요할까? ALU가 매번 DRAM에 가지 않고 가까운 값으로 계산해야 한다. 기작은 명령이 어떤 레지스터를 읽고 쓸지 ISA가 정하고, CPU가 그 값을 내부 회로에 전달하는 것이다. 비유의 한계는 실제 CPU에는 물리 레지스터 renaming, reorder buffer, vector register 같은 더 복잡한 구조가 있다는 점이다.
+
+**load/store**는 메모리와 레지스터 사이를 옮기는 명령 종류다. 왜 필요할까? 대부분의 산술 명령은 레지스터에서 빠르게 계산하고, 메모리는 load/store로 드나든다. 기작은 주소 생성, 캐시/TLB 조회, 권한 검사, 데이터 반환 또는 쓰기 큐 반영으로 이어진다. 단순 “읽기/쓰기” 비유의 한계는 캐시와 store buffer 때문에 다른 코어가 보는 시점이 바로 같지 않을 수 있다는 점이다.
+
+### 캐시 hit/miss와 지역성
+
+**캐시 히트(cache hit)**는 CPU가 찾는 데이터가 캐시에 있는 경우다. 쉬운 뜻은 “책상 위에 이미 있다”다. 왜 필요할까? 가까운 캐시에서 받으면 DRAM보다 훨씬 빨리 계산을 계속할 수 있다. 기작은 주소 일부로 cache set을 찾고, tag가 맞는 cache line을 선택하는 방식이다. 책상 비유의 한계는 캐시가 보통 한 바이트가 아니라 **캐시 라인(cache line)** 단위로 움직이고, 여러 코어의 복사본을 일관되게 관리해야 한다는 점이다.
+
+**캐시 미스(cache miss)**는 필요한 데이터가 해당 캐시에 없어 더 아래 계층으로 내려가는 경우다. 쉬운 뜻은 “책상에 없어 서랍이나 창고를 찾는 일”이다. 왜 필요할까? 캐시가 작기 때문에 모든 데이터를 담을 수 없다. 기작은 L1 미스가 L2, L3, DRAM, 때로는 리모트 NUMA 메모리까지 요청을 보내는 것이다.
+
+**지역성(locality)**은 프로그램이 가까운 시간이나 가까운 주소의 데이터를 반복해서 쓰는 경향이다. 시간 지역성은 같은 값을 곧 다시 쓰는 성질이고, 공간 지역성은 가까운 주소를 함께 쓰는 성질이다. 왜 필요할까? 캐시는 지역성이 있어야 효과가 크다. 배열을 순서대로 읽으면 한 캐시 라인에 들어온 여러 값이 이어서 쓰일 수 있지만, 연결 리스트를 무작위 주소로 따라가면 매번 미스가 날 수 있다.
+
+AMAT(Average Memory Access Time, 평균 메모리 접근 시간)는 캐시 효과를 종이에서 감 잡는 계산이다.
+
+```text
+조건:
+  L1 hit time = 1ns
+  L1 miss rate = 5%
+  L1 miss penalty = 80ns
+
+AMAT = hit time + miss rate × miss penalty
+     = 1ns + 0.05 × 80ns
+     = 5ns
+```
+
+미스율이 5%뿐이어도 평균 접근 시간이 1ns에서 5ns로 늘었다. 미스율이 20%라면 `1 + 0.20 × 80 = 17ns`다. 이 계산은 단순화된 평균이다. 실제 CPU는 여러 미스를 겹치고, prefetch를 사용하고, out-of-order 실행으로 일부 대기를 숨길 수 있다. 그래도 “캐시 미스가 조금만 늘어도 코어가 기다릴 수 있다”는 감각을 주는 데 유용하다.
+
 ### 왜 코어가 놀고 있을까
 
 CPU가 더할 숫자를 기다리는 동안 코어의 산술 장치는 일을 못 할 수 있다. 숫자가 L1 캐시에 있으면 가까운 곳에서 받고, L3에만 있으면 더 먼 캐시를, 캐시에도 없으면 DRAM을 찾는다. 그 DRAM이 다른 소켓에 있으면 소켓 간 경로도 지난다. 데이터가 연속되어 있으면 미리 가져오기와 캐시 활용이 쉬울 수 있지만, 불규칙한 주소를 한 번씩 방문하면 지연이 지배적일 수 있다.
@@ -38,7 +95,30 @@ CPU가 더할 숫자를 기다리는 동안 코어의 산술 장치는 일을 �
 
 SMT(동시 멀티스레딩)는 한 코어가 둘 이상의 하드웨어 스레드를 실행하게 한다. 한 스레드가 기다리는 사이 다른 스레드가 일부 실행 자원을 사용할 수 있지만, 같은 코어의 자원 경쟁도 생긴다. SMT의 이득은 프로그램에 따라 달라지며, **논리 CPU 128개를 물리 코어 128개의 독립 성능으로 계산하지 않는다.**
 
-## 3. RAM의 세 가지 질문: 얼마나, 얼마나 빨리, 얼마나 늦게
+## 3. 가상 주소, 물리 주소, TLB
+
+프로그램이 보는 주소와 DRAM 칩의 실제 위치는 같은 것이 아니다. **가상 주소(virtual address)**는 프로세스가 사용하는 주소다. 쉬운 뜻은 “프로그램마다 받은 자기만의 주소표”다. 왜 필요할까? 각 프로세스가 자기 메모리를 0번지부터 가진 것처럼 보이게 하고, 서로의 메모리를 함부로 읽지 못하게 하며, 실제 RAM보다 큰 주소 공간을 관리하기 위해서다. 기작은 CPU의 MMU와 운영체제의 페이지 테이블이 가상 주소를 물리 주소로 변환하는 것이다. 비유의 한계는 주소표가 단순 사전 하나가 아니라 다단계 페이지 테이블, 권한 비트, 캐시, huge page, NUMA 정책과 엮인다는 점이다.
+
+**물리 주소(physical address)**는 CPU와 메모리 컨트롤러가 실제 RAM 위치를 식별하는 주소다. 쉬운 뜻은 “건물 안 실제 방 번호”다. 왜 필요할까? 전기 신호는 결국 실제 메모리 채널, DIMM, rank, bank, row, column으로 가야 한다. 기작은 CPU가 변환된 물리 주소를 캐시와 메모리 컨트롤러에 전달하고, 컨트롤러가 DRAM 명령으로 바꾸는 것이다.
+
+**TLB(Translation Lookaside Buffer)**는 최근 가상 주소와 물리 주소의 변환 결과를 저장하는 작은 캐시다. 쉬운 뜻은 “주소 번역 캐시”다. 왜 필요할까? 모든 load/store마다 페이지 테이블을 여러 단계 읽으면 너무 느리다. 기작은 가상 페이지 번호를 넣어 물리 페이지 번호와 권한을 빠르게 찾고, 없으면 page walk로 페이지 테이블을 읽는 것이다. Intel의 설명도 TLB가 선형/가상 주소에서 물리 주소로의 변환을 캐시해 page-table walk 비용을 줄인다고 설명한다. [Intel TLB explanation](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/machine-check-error-avoidance-on-page-size-change.html).
+
+추적 예를 보자.
+
+```text
+가정:
+  페이지 크기 = 4KiB = 4096B
+  가상 주소 = 0x0000_1234
+  가상 페이지 번호 = 0x1, 페이지 안 offset = 0x234
+  페이지 테이블: 가상 페이지 0x1 -> 물리 페이지 0xABC
+
+물리 주소 = 물리 페이지 0xABC + offset 0x234
+          = 0xABC234
+```
+
+TLB hit이면 이 변환을 빠르게 얻는다. TLB miss이면 페이지 테이블을 읽어 변환을 찾고 TLB에 채운다. 페이지 테이블에도 유효한 항목이 없으면 page fault가 발생하고 운영체제가 새 페이지를 할당하거나 파일에서 읽거나 오류를 낸다. 따라서 “메모리 접근이 느리다”는 말에는 캐시 미스뿐 아니라 TLB miss도 포함될 수 있다.
+
+## 4. RAM의 세 가지 질문: 얼마나, 얼마나 빨리, 얼마나 늦게
 
 | 질문 | 지표 | 예시 | 혼동하면 생기는 오류 |
 |---|---|---|---|
@@ -49,6 +129,28 @@ SMT(동시 멀티스레딩)는 한 코어가 둘 이상의 하드웨어 스레�
 **GB**는 10진 단위로 1GB = 10억 바이트다. **GiB**는 2진 단위로 1GiB = 2³⁰바이트다. 예를 들어 정확히 128,000,000,000바이트라면 약 119.2GiB다. 그러나 서버 DIMM의 64GB라는 표시를 곧바로 이 바이트 수로 가정하지 않는다. A7 작업일지는 **64GB × 2 장착**과 **OS 표시 약 125GiB**를 별도로 기록했다. 정확한 환산에는 모듈의 바이트 단위 용량과 OS가 예약한 영역을 확인해야 한다.
 
 DDR(Double Data Rate)는 클럭 주기당 두 번 데이터를 전송한다는 뜻이다. **MT/s**는 초당 백만 번의 전송 횟수이며, CPU 클럭 MHz나 실제 애플리케이션 GB/s가 아니다. A7 DIMM의 설정 속도는 작업일지에서 **DDR5-6400, 6400MT/s**로 기록됐다. AMD의 [EPYC 9355 사양](https://www.amd.com/en/products/processors/server/epyc/9005-series/amd-epyc-9355.html)은 최대 6400MT/s를 제시하지만, 실제 지원 속도는 장착 수·DIMM 종류·OEM 설정에 따라 달라진다.
+
+### DRAM 셀, row, refresh
+
+**DRAM(Dynamic Random Access Memory)**은 커패시터에 전하를 저장해 비트를 표현하는 메모리다. 쉬운 뜻은 “새는 물통에 물이 있으면 1, 없으면 0으로 보는 저장소”다. 왜 필요할까? SRAM보다 훨씬 높은 밀도로 큰 용량을 만들 수 있어 서버 주메모리에 적합하다. 기작은 wordline으로 row를 선택하고, bitline과 sense amplifier로 전하 차이를 감지하고 다시 보강하는 방식이다. 물통 비유의 한계는 실제 셀은 매우 작고, 읽기 자체가 저장 전하를 교란하므로 감지 뒤 복원 과정이 필요하다는 점이다.
+
+**refresh**는 DRAM 셀의 전하가 새기 때문에 주기적으로 다시 써 주는 동작이다. 쉬운 뜻은 “기억을 다시 진하게 칠하는 일”이다. 왜 필요할까? 전원을 켜 두어도 커패시터 전하는 시간이 지나면 약해진다. 기작은 메모리 컨트롤러가 row들을 순회하며 refresh 명령을 보내는 것이다. refresh 중 일부 자원은 접근에 쓰기 어렵기 때문에 지연과 대역폭에 영향을 줄 수 있다. Micron의 DDR5 자료는 DDR5의 refresh 방식과 bank 관련 개선을 설명한다. [Micron DDR5 new features white paper](https://www.micron.com/content/dam/micron/global/public/products/white-paper/ddr5-new-features-white-paper.pdf).
+
+**row**는 한 번에 열어 sense amplifier에 올리는 DRAM 셀들의 줄이다. **bank**는 독립적으로 row를 열고 닫을 수 있는 내부 묶음이다. **rank**는 DIMM에서 같은 chip select로 함께 동작해 데이터 폭을 이루는 DRAM 칩 집합이다. **channel**은 CPU 메모리 컨트롤러와 DIMM 사이의 독립 경로다. 이 네 단어가 모두 “묶음”처럼 들리지만 계층이 다르다.
+
+```text
+CPU memory controller
+  -> channel
+      -> DIMM slot
+          -> DIMM
+              -> rank
+                  -> DRAM chips
+                      -> bank / bank group
+                          -> row / column
+                              -> cell
+```
+
+이 계층을 구분해야 “DIMM 두 개”, “rank 두 개”, “채널 두 개”를 같은 말처럼 세지 않는다. 채널은 CPU와 DIMM 사이 길이고, rank는 DIMM 안 칩 묶음이며, row는 DRAM 내부 배열의 한 줄이다.
 
 ### 채널·DIMM·랭크는 서로 다른 층위
 
@@ -87,7 +189,27 @@ ECC에도 두 층위가 있다. DRAM 칩 안의 on-die ECC와 CPU 메모리 컨�
 
 GPU VRAM이나 NPU HBM은 가속기 쪽 메모리다. “GPU 메모리 48GB + 호스트 RAM 128GB”처럼 서로 다른 주소·전송 경로를 합쳐 한 종류의 사용 가능 RAM으로 취급하지 않는다. 모델 로딩, CPU 전처리, 호스트 버퍼, 오프로딩에서는 호스트 RAM의 **용량과 속도**를 따로 검토한다.
 
-## 4. NUMA: 메모리의 주소보다 위치가 중요할 때
+## 5. Cache coherence와 memory ordering은 다르다
+
+**캐시 일관성(cache coherence)**은 여러 코어가 같은 메모리 주소의 복사본을 캐시에 가지고 있을 때, 그 주소에 대한 값이 서로 모순되지 않도록 관리하는 성질이다. 쉬운 뜻은 “같은 문서의 복사본들이 결국 같은 수정 내용을 보게 하는 규칙”이다. 왜 필요할까? 코어 0이 변수 X에 1을 썼는데 코어 1이 영원히 예전 값 0만 보면 프로그램이 깨진다. 기작은 보통 cache line 단위로 소유권과 상태를 주고받는 coherence protocol이 담당한다. 문서 비유의 한계는 실제 하드웨어는 byte가 아니라 cache line 단위로 움직이고, 장치 DMA와 MMIO는 일반 캐시 규칙과 다르게 취급될 수 있다는 점이다.
+
+**메모리 순서(memory ordering)**는 여러 load/store가 다른 코어와 장치에 어떤 순서로 보이는가의 규칙이다. 쉬운 뜻은 “수정 내용이 보이는 순서의 약속”이다. 왜 필요할까? CPU와 컴파일러는 성능을 위해 독립적인 메모리 접근을 재배치할 수 있고, 락 없는 자료구조나 장치 제어는 순서 보장이 필요하다. 기작은 ISA의 메모리 모델, compiler barrier, CPU fence, acquire/release 연산이 함께 만든다. Linux memory barrier 문서는 barrier가 CPU 쪽 접근과 메모리 쪽 관측 순서를 제어한다고 설명한다. [Linux memory barriers](https://kernel.org/doc/html/latest/core-api/wrappers/memory-barriers.html).
+
+둘은 다른 질문이다. coherence는 “같은 주소 X의 최신 값이 무엇인가”에 가깝고, ordering은 “X를 쓴 뒤 Y를 썼다는 순서를 다른 관찰자가 어떻게 보는가”에 가깝다.
+
+```text
+코어 0:
+  data = 42
+  ready = 1
+
+코어 1:
+  if ready == 1:
+      print(data)
+```
+
+사람은 코어 1이 `ready == 1`을 보면 당연히 `data == 42`도 보리라 기대한다. 하지만 약한 메모리 모델이나 컴파일러 재배치가 있는 환경에서는 적절한 acquire/release 또는 lock 없이 그런 순서를 일반화하면 안 된다. 일반 애플리케이션은 mutex, atomic, channel 같은 언어·라이브러리의 동기화 도구를 써서 이 문제를 맡기는 편이 안전하다. 하드웨어 학습에서는 coherence와 ordering을 구분하는 것이 목표다.
+
+## 6. NUMA: 메모리의 주소보다 위치가 중요할 때
 
 NUMA(Non-Uniform Memory Access)는 CPU마다 가까운 메모리와 먼 메모리의 접근 비용이 다른 구조다. A7은 현재 OS에 **NUMA 노드 0·1**로 보이고 각 노드에 약 64GB가 있으며, 이 설정에서는 두 소켓과 대응한다. 노드 0에서 실행하는 CPU가 노드 0 메모리를 읽으면 **로컬**, 노드 1 메모리를 읽으면 **리모트** 접근이다. 리모트 접근은 소켓 사이 경로를 더 거쳐 일반적으로 지연과 경합 위험이 늘지만, 모든 워크로드에서 동일한 성능 차이를 약속하지 않는다. [Linux NUMA 개요](https://docs.kernel.org/mm/numa.html).
 
@@ -121,7 +243,7 @@ A7 작업일지에는 NUMA0 논리 CPU가 0–31·64–95, NUMA1 논리 CPU가 3
 
 메모리 여유가 부족하면 선호 노드 밖으로 할당되거나 할당이 실패할 수 있다. 정책의 bind, preferred, interleave는 각각 엄격한 제한, 선호와 대체, 분산이라는 다른 뜻을 가진다. 실제 효과는 cpuset 제한과 함께 해석한다. [Linux NUMA 메모리 정책](https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html).
 
-## 5. A7 용량·대역폭을 어떻게 해석할까
+## 7. A7 용량·대역폭을 어떻게 해석할까
 
 | 관측 | 확정할 수 있는 것 | 아직 알 수 없는 것 |
 |---|---|---|
@@ -152,22 +274,26 @@ A7 작업일지에는 NUMA0 논리 CPU가 0–31·64–95, NUMA1 논리 CPU가 3
 
 두 상황의 해법은 다르다. 용량 문제는 필요한 바이트 수와 배치 정책을, 대역폭 문제는 채널 사용·측정 처리량·동시 작업을 살핀다. DIMM 증설은 둘 모두에 영향을 줄 수 있지만 **무엇이 병목이었는지**를 확인한 뒤 효과를 판단한다.
 
-## 6. 스스로 계산해 보기
+## 8. 스스로 계산해 보기
 
 1. EPYC 9355 두 개가 있고 각 CPU가 32코어·64스레드라면 물리 코어와 논리 CPU는 각각 몇 개인가?
 2. DDR5-6400의 64비트 데이터 채널 하나에서 제어·명령 오버헤드를 무시한 초당 데이터량은 얼마인가? 두 채널을 *서로 다른 소켓에서* 동시에 쓰면 산술 합계는 얼마인가?
-3. 노드 0에서 버퍼를 처음 채운 뒤 스레드만 노드 1 CPU로 옮겼다. 왜 노드 1 계산이 항상 로컬 메모리 접근이 되지 않는가?
+3. L1 hit time 1ns, miss rate 8%, miss penalty 90ns라면 AMAT는 얼마인가?
+4. 페이지 크기가 4KiB이고 가상 페이지 0x20이 물리 페이지 0x777로 매핑된다. 가상 주소 0x20ABC의 물리 주소는 얼마인가?
+5. 노드 0에서 버퍼를 처음 채운 뒤 스레드만 노드 1 CPU로 옮겼다. 왜 노드 1 계산이 항상 로컬 메모리 접근이 되지 않는가?
 
 <details>
 <summary>해설 보기</summary>
 
 1. 32 × 2 = **64 물리 코어**, 64 × 2 = **128 논리 CPU**다.
 2. 6400 × 64 ÷ 8 = **51,200MB/s = 51.2GB/s**다. 두 소켓의 산술 합계는 **102.4GB/s**지만 측정 처리량이나 한 작업의 속도를 보장하지 않는다.
-3. CPU affinity는 실행 CPU를 제한한다. first-touch 때 이미 노드 0에 놓인 페이지의 위치는 별도로 확인하거나 정책에 따라 관리해야 한다.
+3. `1ns + 0.08 × 90ns = 8.2ns`다. 미스율이 작아 보여도 penalty가 크면 평균이 크게 오른다.
+4. offset은 0xABC이고 물리 페이지 base는 0x777000이므로 물리 주소는 **0x777ABC**다.
+5. CPU affinity는 실행 CPU를 제한한다. first-touch 때 이미 노드 0에 놓인 페이지의 위치는 별도로 확인하거나 정책에 따라 관리해야 한다.
 
 </details>
 
-## 7. 흔한 오해 바로잡기
+## 9. 흔한 오해 바로잡기
 
 - “128스레드니까 128코어다” → 하드웨어 스레드는 물리 코어의 실행 문맥이다.
 - “64GB DIMM 두 개면 2채널×두 소켓이다” → A7에서는 **소켓당 한 채널**, 전체 두 채널만 장착됐다.
@@ -175,5 +301,15 @@ A7 작업일지에는 NUMA0 논리 CPU가 0–31·64–95, NUMA1 논리 CPU가 3
 - “메모리 용량을 늘리면 지연도 절반이 된다” → 용량·대역폭·지연은 다른 지표다.
 - “NUMA 2개는 언제나 소켓 2개를 뜻한다” → NPS와 플랫폼 설정을 확인해야 한다.
 - “CPU를 핀하면 메모리도 따라온다” → CPU와 메모리 배치는 별도의 정책이다.
+- “캐시 일관성이 있으면 순서도 항상 코드 순서 그대로 보인다” → coherence와 ordering은 다른 성질이다.
+- “TLB는 캐시와 전혀 무관한 OS 기능이다” → TLB는 주소 변환 결과를 저장하는 하드웨어 캐시이며 OS 페이지 테이블과 함께 동작한다.
+- “DRAM은 전원을 켜 두면 가만히 보존된다” → DRAM 셀은 refresh가 필요하다.
+
+## Primary Sources
+
+- AMD, [EPYC 9355 product specifications](https://www.amd.com/en/products/processors/server/epyc/9005-series/amd-epyc-9355.html), [EPYC 9005 BIOS & Workload Tuning Guide](https://docs.amd.com/v/u/en-US/58467_amd-epyc-9005-tg-bios-and-workload)
+- Linux Kernel, [NUMA](https://docs.kernel.org/mm/numa.html), [NUMA memory policy](https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html), [Memory barriers](https://kernel.org/doc/html/latest/core-api/wrappers/memory-barriers.html)
+- Intel, [TLB and page-size change discussion](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/machine-check-error-avoidance-on-page-size-change.html)
+- Micron, [DDR5 SDRAM new features white paper](https://www.micron.com/content/dam/micron/global/public/products/white-paper/ddr5-new-features-white-paper.pdf), [Introducing Micron DDR5 SDRAM](https://www.micron.com/content/dam/micron/global/public/products/white-paper/ddr5-more-than-a-generational-update-wp.pdf)
 
 다음 장에서는 CPU와 장치 사이의 **PCIe 경로**를 본다. 그 경로의 대역폭은 이 장의 DRAM 채널 대역폭과 서로 다른 제약이다.

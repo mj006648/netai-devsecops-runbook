@@ -11,6 +11,8 @@ Architecture](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-
 Architecture](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HdfsDesign.html#Streaming_Data_Access) 따라서 HDFS를 데이터베이스 파일시스템, 일반 사용자 홈 디렉터리, 객체 저장소와 같은 의미로
 다루면 안 된다.
 
+왜 굳이 분산 파일 시스템이 필요한지부터 묻는다. 한 서버의 디스크 하나에 300 TiB 로그를 모두 넣으면 용량, 대역폭, 장애 복구가 한 장비에 묶인다. 디스크 하나가 250 MiB/s로 순차 읽기를 해도 300 TiB 전체를 한 번 훑으려면 매우 오래 걸린다. 여러 서버에 큰 파일을 block 단위로 나누고, 각 서버가 자기 block을 동시에 읽게 하면 aggregate bandwidth가 커진다. 또 서버 한 대가 죽어도 다른 서버의 replica가 있으면 파일 전체를 잃지 않을 수 있다. HDFS의 출발점은 “작은 파일을 POSIX처럼 예쁘게 다루기”가 아니라 “큰 파일을 여러 실패 가능한 서버 위에서 계속 읽고 처리하기”다.
+
 처음에는 세 계층을 분리한다.
 
 | 계층 | HDFS에서의 예 | 책임 | 흔한 오해 |
@@ -18,6 +20,17 @@ Architecture](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-
 | Namespace | `/data/sensor/day=2026-09-21/part-000` | 파일명, 디렉터리, 권한, 파일→블록 매핑 | 파일 내용 bytes도 NameNode에 있다고 착각 |
 | Logical block | `blk_...` 같은 HDFS 블록 | 큰 파일을 일정 단위로 나누는 논리 조각 | OS disk block과 같은 크기라고 착각 |
 | Replica payload | DataNode 로컬 저장소의 블록 파일 | 실제 bytes와 checksum 저장·전송 | 세 복제본이 하나의 RAID stripe라고 착각 |
+
+핵심 용어를 처음부터 고정한다.
+
+| 용어 | 한 문장 정의 | 비유 | 비유의 한계 |
+| --- | --- | --- | --- |
+| Distributed | 하나의 논리 시스템이 여러 노드에 나뉘어 동작함 | 여러 창고가 한 회사 재고를 나눠 보관 | 창고 비유와 달리 네트워크 지연·부분 장애·동시성 규칙이 핵심이다 |
+| Block | HDFS가 큰 파일을 나누는 논리 조각 | 긴 책을 여러 권으로 나눈 분권 | OS block이나 SSD page와 같은 물리 단위가 아니다 |
+| Replica | 같은 block bytes를 여러 failure domain에 복사한 사본 | 같은 문서를 다른 건물에 복사 | backup처럼 장기 보존·시점 복원을 자동 제공하지 않는다 |
+| Pipeline | write packet이 DataNode들을 순서대로 지나가는 전송 경로 | 사람 셋이 종이를 받아 넘기는 줄 | 실제 구현에는 socket, buffer, checksum, ACK, 실패 재구성이 있다 |
+| ACK | 특정 요청을 처리했다는 응답 | 접수증 | 접수증은 전체 파일 공개, 테이블 commit, 영구 보존을 모두 뜻하지 않는다 |
+| Lease | 한 writer가 파일 쓰기 권한을 잡고 있음을 나타내는 metadata 계약 | 회의실 예약 | writer가 죽으면 recovery 절차가 필요하고 즉시 누구나 이어 쓰는 것이 아니다 |
 
 ## 2. NameNode는 metadata, DataNode는 payload
 
@@ -109,6 +122,18 @@ HDFS는 같은 block replica를 같은 DataNode에 중복 배치하지 않는다
 Placement](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HdfsDesign.html#Replica_Placement:_The_First_Baby_Steps) 복제본 수는 DataNode 수와 failure domain 조건에도
 제약된다.
 
+Replica와 backup도 구분한다. Replica는 현재 값을 장애 시 계속 읽기 위한 중복 사본이다. Writer가 잘못된 데이터를 정상적으로 썼고 그 쓰기가 replica 3개에 모두 반영되면, replication은 그 잘못된 현재값도 성실히 복제한다. Backup은 보통 “어느 과거 시점으로 되돌아갈 수 있는가”를 다룬다. HDFS snapshot 기능이나 별도 백업 체계가 있더라도, 그것은 replication factor와 같은 말이 아니다.
+
+```text
+replication factor 3:
+  지금 block B0의 같은 bytes를 DN1, DN5, DN6에 둔다.
+  DN1이 죽어도 DN5/DN6에서 읽게 하려는 목적이다.
+
+backup / snapshot:
+  어제 10:00의 파일 상태로 돌아갈 수 있는가를 묻는다.
+  잘못된 overwrite, 삭제, application bug 복구 질문이다.
+```
+
 ## 6. Read path: metadata lookup 후 DataNode에서 직접 읽기
 
 HDFS client는 먼저 NameNode에서 파일 metadata와 block 위치를 얻는다. 그 뒤 실제 bytes는 가까운 DataNode replica에서 직접 읽는다. 공식 문서는 client가 NameNode에 metadata나 file modification을 문의하고 실제 I/O는 DataNode와 직접
@@ -156,6 +181,58 @@ DN3 -> DN2 -> DN1 -> Client
 
 ACK는 “client가 보낸 packet이 pipeline의 DataNode들에서 처리됐다는 응답”으로 이해한다. ACK가 곧 모든 독자에게 파일 전체가 보인다는 뜻은 아니다. ACK가 곧 모든 과거 block이 영구 저장장치에 fsync됐다는 뜻도 아니다. ACK, visibility, durability는 다른
 질문이다.
+
+300 MiB 파일을 더 미세하게 따라가면 다음과 같다. Packet 크기와 checksum chunk 크기는 구현·설정에 따라 달라질 수 있으므로 아래 값은 숫자 계산을 위한 가정이다.
+
+```text
+가정
+  file size             = 300 MiB
+  HDFS block size       = 128 MiB
+  replication factor    = 3
+  packet payload        = 64 KiB, 설명용
+  checksum chunk        = 512 B, 설명용
+
+Block B0, 128 MiB:
+  packet count          = 128 MiB / 64 KiB = 2048 packets
+  checksum chunks       = 128 MiB / 512 B = 262144 chunks
+
+Block B1, 128 MiB:
+  packet count          = 2048 packets
+
+Block B2, 44 MiB:
+  packet count          = 44 MiB / 64 KiB = 704 packets
+
+Total packets           = 4800 packets
+Total logical payload   = 300 MiB
+Total replica payload   = 900 MiB before metadata/checksum overhead
+```
+
+쓰기 흐름은 block마다 반복된다.
+
+```text
+1. Client -> NameNode
+   create /data/sensor/part-000, lease 획득
+
+2. Client -> NameNode
+   B0에 쓸 DataNode pipeline 요청
+
+3. NameNode -> Client
+   B0 pipeline = DN1(rack-a) -> DN5(rack-b) -> DN6(rack-b)
+
+4. Client -> DN1 -> DN5 -> DN6
+   P0, P1, ... P2047 packet과 checksum 전송
+
+5. DN6 -> DN5 -> DN1 -> Client
+   각 packet ACK가 역방향으로 돌아옴
+
+6. B0가 끝나면 B1 pipeline 요청
+   B1은 다른 DN 조합일 수 있음
+
+7. 마지막 B2 44 MiB까지 쓰고 close
+   NameNode metadata의 최종 파일 길이가 확정됨
+```
+
+중간 실패도 같은 그림으로 본다. DN5가 B1의 packet P300 처리 중 죽으면, client와 남은 DataNode는 실패를 감지하고 pipeline에서 DN5를 제외하거나 새 DataNode를 받아 pipeline을 재구성할 수 있다. 이미 ACK 받은 packet과 아직 ACK 받지 못한 packet을 구분해야 한다. “client가 write 함수를 호출했다”, “packet ACK를 받았다”, “file close가 성공했다”는 서로 다른 지점이다.
 
 ## 8. ACK, visibility, durability를 구분한다
 
@@ -216,6 +293,20 @@ Replication](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-h
 Lease는 “누가 현재 파일을 쓰는가”를 조정하는 metadata 개념으로 이해한다. Writer가 죽으면 lease recovery가 필요할 수 있다. Lease recovery가 끝나기 전에는 마지막 block 상태와 파일 길이 해석이 애매할 수 있다. 이 영역은 HBase WAL 같은 시스템이 HDFS sync
 semantics를 엄격히 보는 이유와 연결된다.
 
+Lease recovery를 단순 사건표로 쓰면 다음과 같다.
+
+```text
+t0  Client C1 creates file F and obtains lease.
+t1  C1 writes B0 completely and starts B1.
+t2  C1 receives ACK through packet P900 of B1.
+t3  C1 process dies before close.
+t4  NameNode observes lease timeout / recovery trigger.
+t5  DataNodes holding last block replicas agree on a recoverable length.
+t6  NameNode finalizes or recovers metadata so another client can proceed.
+```
+
+이 표에서 어려운 부분은 마지막 block이다. 어떤 replica는 더 많은 packet을 받았고, 어떤 replica는 덜 받았을 수 있다. Recovery는 “세 replica 중 아무거나 긴 것을 정답으로 채택”하는 식의 단순 투표가 아니다. block generation stamp, length, pipeline 상태, NameNode metadata가 함께 관여한다. 입문 단계에서 외울 핵심은 하나다. 열린 파일의 마지막 block은 닫힌 파일의 완성된 block보다 훨씬 조심해서 읽어야 한다.
+
 ## 12. Rack은 failure boundary이자 비용 boundary
 
 Rack awareness는 단순 위치 라벨이 아니다. 공식 문서는 rack-aware placement가 reliability, availability, network bandwidth utilization을 개선하기 위한 정책이라고 설명한다. [Replica
@@ -232,6 +323,37 @@ Placement](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdf
 ```
 
 Rack label이 틀리면 장애 경계 계산도 틀린다. 실제로 같은 전원·스위치·랙에 있는 노드를 다른 rack으로 라벨링하면 문서상 내구성은 좋아 보이지만 물리 장애에는 취약하다. 반대로 모든 노드를 같은 rack으로 라벨링하면 정책이 활용할 failure domain 정보가 부족하다.
+
+Rack 독립성은 “라벨이 다르다”가 아니라 “함께 죽을 가능성이 낮다”는 뜻이다. 아래 두 배치는 겉보기 replica count가 모두 3이지만 위험이 다르다.
+
+```text
+나쁜 배치, 라벨만 분리됨:
+  DN1 rack-a, DN2 rack-b, DN3 rack-c
+  실제로는 세 노드가 같은 PDU와 같은 ToR switch에 연결됨
+
+더 나은 배치:
+  DN1 rack-a, DN5 rack-b, DN9 rack-c
+  전원, 스위치, 케이블 경로, 장애 작업 단위가 서로 다름
+```
+
+실무 문서에서 rack, zone, room, datacenter를 쓸 때는 반드시 그 단어가 어떤 물리 실패를 독립으로 보는지 적는다. 같은 건물의 다른 rack은 같은 정전에는 함께 죽을 수 있다. 다른 availability zone도 같은 application bug, 잘못된 삭제, credential 유출에는 함께 영향을 받을 수 있다.
+
+## 12.1 Partition, quorum, split-brain은 왜 HDFS 장에서도 나오는가
+
+Partition은 네트워크나 시스템이 둘 이상으로 갈라져 서로 통신하지 못하는 상태다. Partition이라는 단어는 data partition처럼 “데이터를 나눈 조각”이라는 뜻으로도 쓰이므로 문맥을 확인해야 한다. 여기서 말하는 partition은 network partition이다.
+
+Quorum은 여러 참여자 중 결정을 인정하는 데 필요한 최소 동의 수다. HDFS block replica 자체가 매 쓰기마다 “3개 중 2개가 동의하면 commit”하는 일반 quorum database라는 뜻은 아니다. 다만 NameNode HA의 shared edits, ZooKeeper 기반 장애조치, 분산 metadata 시스템, Ceph monitor 같은 주변 시스템을 읽을 때 quorum은 핵심 단어다.
+
+```text
+3대가 metadata leader를 고르는 시스템에서 majority quorum:
+  전체 3대 중 2대 이상이 같은 leader를 인정해야 진행
+
+네트워크가 1대 / 2대로 갈라짐:
+  2대 쪽은 quorum 가능
+  1대 쪽은 단독 leader가 되면 split-brain 위험
+```
+
+Split-brain은 갈라진 양쪽이 모두 자신이 정답이라고 믿고 쓰기를 받아들이는 상태다. 파일 payload replica가 여러 개 있다는 사실만으로 split-brain 문제가 사라지지 않는다. “누가 쓰기 권한을 갖는가”, “metadata leader는 누구인가”, “어떤 로그가 정답인가”를 정하는 별도 규칙이 필요하다. HDFS 입문자가 이 단어를 알아야 하는 이유는, 저장 시스템 장애 분석에서 “데이터가 세 벌 있으니 괜찮다”보다 “어느 쪽이 쓰기를 결정할 권한을 가졌나”가 더 중요한 순간이 많기 때문이다.
 
 ## 13. Streaming과 append는 random update가 아니다
 
@@ -331,6 +453,18 @@ current block caveat를 확인해야 한다. writer가 `close()`하면 파일 me
 **질문 5.** HDFS 파일이 존재하면 Iceberg table에 자동으로 반영되는가?
 
 짧은 답: 아니다. 파일 bytes 저장과 table metadata commit은 별도 계층의 문제다.
+
+**질문 6.** Replication factor 3은 backup 3개와 같은가?
+
+짧은 답: 아니다. Replication은 현재 block 사본을 장애 대응용으로 유지하는 것이고, backup은 과거 시점 복원과 보존 정책을 다룬다.
+
+**질문 7.** Network partition과 data partition의 차이는 무엇인가?
+
+짧은 답: network partition은 노드들이 서로 통신하지 못하게 갈라진 장애 상태이고, data partition은 데이터를 key/range/hash 등으로 나눈 배치 단위다.
+
+**질문 8.** 300 MiB 파일을 64 KiB packet 가정으로 쓰면 packet은 몇 개인가?
+
+짧은 답: 300 MiB / 64 KiB = 4800 packet이다. 다만 실제 packet 크기는 구현과 설정에 따라 달라질 수 있다.
 
 ## 19. 확인한 주요 원문
 

@@ -64,6 +64,54 @@ SM은 IB 스위치 내장형 또는 별도 호스트에서 실행될 수 있다.
 ‘IP가 있으므로 TCP를 쓴다’는 추론은 틀리다.
 [NVIDIA의 RoCEv2 패킷 설명](https://docs.nvidia.com/doca/archive/2-10-0/RDMA%2Bover%2BConverged%2BEthernet/index.html)이 IP/UDP 캡슐화를 확인해 준다.
 
+
+### Ethernet frame, IP packet, TCP stream을 한 요청으로 추적하기
+
+서버 A의 애플리케이션이 서버 B의 `10.0.2.20:443`에 요청을 보낸다고 하자.
+애플리케이션은 보통 "TCP 연결에 bytes를 쓴다"고 생각한다.
+그 아래에서는 그 bytes가 작은 조각으로 나뉘어 IP packet이 되고, IP packet은 Ethernet frame 안에 담겨 NIC와 스위치를 지난다.
+
+```text
+애플리케이션 데이터: "GET / HTTP/1.1..."
+  ↓ TCP: 순서 번호, ACK, 재전송, 포트 443
+  ↓ IP: 출발지 10.0.1.10, 목적지 10.0.2.20, 라우팅
+  ↓ Ethernet: 출발지 MAC, 다음 홉 MAC, FCS
+  ↓ NIC/케이블/스위치/라우터
+```
+
+MAC 주소는 같은 링크 계층에서 NIC를 식별하는 주소다.
+IP 주소는 네트워크 사이에서 목적지를 찾기 위한 주소다.
+서브넷(subnet)은 IP 주소의 앞부분 몇 bit를 같은 지역 네트워크로 해석할지 정하는 범위다.
+예를 들어 `10.0.1.10/24`는 보통 `10.0.1.0`부터 `10.0.1.255`까지를 같은 subnet으로 본다는 뜻이다.
+`/24`는 앞 24bit가 네트워크 부분이라는 표기다.
+
+서버 A가 목적지 IP가 같은 subnet에 있다고 판단하면 ARP(Address Resolution Protocol)로 "10.0.1.20을 가진 장치의 MAC은 누구인가"를 묻는다.
+목적지가 다른 subnet이면 서버 A는 목적지 B의 MAC을 찾는 것이 아니라 기본 게이트웨이(router)의 MAC을 찾아 frame을 보낸다.
+라우터는 Ethernet frame을 벗기고 IP packet의 목적지를 보고 다음 네트워크로 새 frame을 만들어 보낸다.
+즉, IP 목적지는 끝까지 B지만 Ethernet 목적지 MAC은 홉마다 바뀔 수 있다.
+
+```text
+다른 subnet으로 가는 경우:
+A(10.0.1.10) → frame dst MAC = router R의 MAC
+IP dst = 10.0.2.20
+
+R이 다음 링크로 전달:
+R → frame dst MAC = B 또는 다음 라우터의 MAC
+IP dst = 여전히 10.0.2.20
+```
+
+TCP stream은 바이트의 순서 있는 흐름이다.
+애플리케이션은 message 경계를 보낸다고 생각해도 TCP는 "첫 번째 byte, 두 번째 byte..."의 순서를 관리한다.
+TCP는 sequence number와 ACK로 어떤 byte까지 받았는지 확인하고, 손실이 의심되면 재전송한다.
+흐름 제어(window)는 수신자가 감당할 수 있는 양을 제한하고, 혼잡 제어는 네트워크가 감당할 수 있는 속도를 추정한다.
+그래서 TCP는 신뢰성을 제공하지만 지연과 재전송 정책도 함께 갖는다.
+
+UDP socket은 datagram 단위다.
+각 UDP datagram은 독립적인 메시지처럼 운반되며 TCP처럼 순서 보장, 재전송, 흐름 제어를 제공하지 않는다.
+그렇다고 UDP를 쓰는 애플리케이션이 항상 불안정하다는 뜻은 아니다.
+QUIC, RoCEv2, 게임 프로토콜처럼 필요한 신뢰성이나 혼잡 제어를 상위 계층에서 설계할 수 있다.
+핵심은 "UDP 포트가 있다"와 "TCP stream 의미론이다"를 구분하는 것이다.
+
 | 경로 | 물리·링크 패브릭 | IP/TCP의 역할 | 필요한 상대 환경 |
 |---|---|---|---|
 | 보통 Ethernet/TCP | Ethernet | IP 주소·TCP 연결로 데이터 교환 | Ethernet 포트, L2/L3 경로 |
@@ -112,6 +160,56 @@ RDMA 데이터 경로의 개념: 등록 버퍼 ↔ RNIC ═══ 패브릭 ═�
 이 그림은 경로 차이를 보여 주기 위한 것이다.
 모든 소켓 전송이 반드시 같은 횟수로 복사되는 것도, 모든 RDMA 전송이 같은 하드웨어 경로를 쓰는 것도 아니다.
 
+
+### DMA에서 RDMA verbs까지: 준비, 전송, 완료
+
+DMA는 장치가 CPU 대신 메모리와 장치 사이의 byte 이동을 수행하는 메커니즘이다.
+CPU가 빠지는 것이 아니라, CPU가 매 byte를 복사하지 않도록 주소와 권한, descriptor를 준비한다는 뜻이다.
+일반 NIC 송신도 대략 다음 순서로 볼 수 있다.
+
+```text
+1. 애플리케이션이 버퍼에 데이터를 둔다.
+2. 커널/드라이버가 NIC가 접근할 수 있는 DMA 주소를 준비한다.
+3. 송신 descriptor가 NIC queue에 들어간다.
+4. NIC가 DMA로 데이터를 읽고 frame을 만든다.
+5. 완료 interrupt 또는 polling으로 소프트웨어가 completion을 확인한다.
+```
+
+RDMA verbs에서는 이 준비가 더 노골적으로 드러난다.
+PD(Protection Domain)는 자원들을 묶는 보호 경계이고, MR(Memory Region)은 등록된 메모리 범위다.
+등록된 MR에는 lkey와 rkey 같은 key가 붙는다.
+lkey는 로컬 RNIC가 그 memory region에 접근할 때 쓰고, rkey는 원격 peer에게 제한적으로 알려 원격 RDMA 작업을 허용할 때 쓴다.
+CQ(Completion Queue)는 작업 완료를 확인하는 queue이고, QP(Queue Pair)는 send/receive 또는 read/write 작업을 내보내는 통로다.
+
+```text
+RDMA write의 개념 순서:
+1. 양쪽 프로세스가 PD, CQ, QP를 만든다.
+2. 수신 측이 버퍼를 MR로 등록하고 rkey와 주소를 안전한 제어 채널로 전달한다.
+3. 송신 측이 RDMA Write work request를 QP에 올린다.
+4. RNIC가 패브릭을 통해 원격 RNIC로 데이터를 보낸다.
+5. 송신 측 CQ에 completion이 올라와 "NIC 작업 완료"를 알린다.
+```
+
+completion은 "내 work request를 RNIC 관점에서 처리했다"는 신호다.
+그것이 곧 원격 애플리케이션이 데이터를 읽고 업무적으로 처리했다는 뜻은 아니다.
+RDMA Write는 원격 CPU의 `recv()` 호출 없이 원격 registered memory를 바꿀 수 있지만, 원격 프로그램은 어떤 버퍼가 언제 유효해졌는지 별도의 동기화 규칙을 가져야 한다.
+잘못된 rkey 관리, 오래된 주소 공유, 버퍼 재사용 순서 오류는 데이터 손상으로 이어질 수 있다.
+
+### 원격 메모리 도착과 영속성은 다르다
+
+RDMA로 원격 서버의 DRAM에 데이터가 도착했다고 해서 그 데이터가 디스크나 영구 저장장치에 안전하게 기록됐다는 뜻은 아니다.
+DRAM은 전원이 사라지면 내용이 사라진다.
+원격 애플리케이션이 그 데이터를 파일에 쓰고 `fsync` 같은 영속성 보장 절차를 완료했는지, 또는 원격 장치가 persistent memory semantics를 제공하는지는 별도 문제다.
+
+```text
+RDMA Write 완료가 말하는 것: 원격 등록 메모리로 전송이 완료됨
+애플리케이션 처리 완료가 말하는 것: 원격 프로그램이 그 데이터를 해석하고 상태를 갱신함
+저장장치 영속화가 말하는 것: 전원 장애 뒤에도 남는 매체에 필요한 순서로 기록됨
+```
+
+분산 시스템에서 replication, log append, commit ACK 같은 단어를 볼 때 이 경계를 구분한다.
+네트워크 전송 완료를 데이터베이스 commit이나 파일시스템 영속화와 같은 말로 쓰면 장애 분석이 틀어진다.
+
 ## 4. RoCE 패브릭에서 ‘연결됨’ 뒤에 남는 일
 
 RoCEv2는 Ethernet/IP 장비를 활용하지만, 높은 처리량과 낮은 지연을 함께 얻으려면 혼잡 관리를 설계해야 한다.
@@ -133,6 +231,41 @@ Jumbo MTU는 패킷당 오버헤드를 줄일 수 있지만 경로의 모든 관
 서로 다른 MTU, 케이블·광모듈 호환 문제, FEC 불일치는 연결 실패나 성능 저하를 낳을 수 있다.
 **Breakout**은 한 고속 포트를 여러 낮은 속도 포트로 나누는 방식이지만 양쪽 장치의 포트·레인·케이블 지원이 맞아야 한다.
 스위치의 외부 **uplink**도 서버 여러 대가 공유하므로 서버 NIC 속도만 합산해 랙 밖 처리량으로 해석할 수 없다.
+
+
+### MTU, MSS, BDP를 단위까지 맞춰 계산하기
+
+MTU(Maximum Transmission Unit)는 링크 계층이 한 frame에 실을 수 있는 payload 크기의 상한이다.
+일반 Ethernet에서 MTU 1500이라고 말할 때 보통 IP packet 크기 상한을 뜻한다.
+TCP MSS(Maximum Segment Size)는 TCP payload의 최대 크기다.
+IPv4 헤더 20bytes와 TCP 헤더 20bytes만 있는 단순한 경우 MSS는 `1500 - 20 - 20 = 1460bytes`다.
+옵션, VLAN, 터널, IPv6, RoCE 헤더가 있으면 계산이 달라진다.
+
+```text
+synthetic IPv4/TCP 예:
+Ethernet MTU = 1500 bytes
+IP header = 20 bytes
+TCP header = 20 bytes
+TCP MSS = 1460 bytes
+```
+
+BDP(Bandwidth-Delay Product)는 링크를 꽉 채우기 위해 비행 중이어야 하는 데이터량이다.
+단위 실수를 막으려면 bit/s와 byte를 반드시 맞춘다.
+100Gb/s 링크와 왕복 지연 RTT 80µs의 예를 보자.
+
+```text
+100Gb/s = 100 × 10^9 bit/s = 12.5 × 10^9 byte/s
+RTT 80µs = 80 × 10^-6 s
+BDP = 12.5 × 10^9 × 80 × 10^-6 = 1,000,000 bytes ≈ 0.95MiB
+```
+
+이 경로에서 단일 TCP 흐름이 100G에 가까워지려면 대략 1MB 이상의 window가 필요하다는 감이 생긴다.
+실제 성능은 congestion control, offload, CPU, NIC queue, interrupt, NUMA, loss, application write 크기에 영향을 받는다.
+BDP는 "왜 작은 window나 작은 message가 고속 링크를 못 채우는가"를 이해하는 출발점이다.
+
+MTU를 키우면 큰 전송에서 헤더 비율과 packet rate를 줄일 수 있다.
+하지만 경로 중 하나라도 MTU를 감당하지 못하면 fragmentation, drop, 성능 저하가 생길 수 있다.
+RoCE 패브릭에서는 loss와 pause, ECN, PFC 설계가 함께 얽히므로 jumbo MTU 하나만으로 성능을 약속하지 않는다.
 
 ## 5. 숫자를 읽는 순서: 포트, PCIe, 응용 처리량
 
@@ -260,5 +393,17 @@ RDMA를 활성화하면 여러 서버의 GPU VRAM이 자동으로 하나의 공�
 **문제 6.** RoCEv2 패킷이 IP/UDP를 사용한다는 사실은 TCP와 같은 전송이라는 뜻인가?
 
 **해설.** 아니다. IP/UDP는 패킷을 운반하는 헤더이고, RDMA의 작업·권한·완료 의미론은 TCP 바이트 스트림과 다르다. 혼잡과 손실 정책도 패브릭에 맞춰 설계해야 한다.
+
+**문제 7.** MTU 1500, IPv4 20bytes, TCP 20bytes라면 TCP MSS는 얼마인가?
+
+**해설.** 옵션이 없다는 단순 가정에서는 `1500 - 20 - 20 = 1460bytes`다. VLAN, 터널, TCP option이 있으면 달라진다.
+
+**문제 8.** 100Gb/s 링크와 RTT 80µs의 BDP는 대략 얼마인가?
+
+**해설.** 100Gb/s는 12.5GB/s이고, `12.5×10^9 × 80×10^-6 = 1,000,000bytes`다. 약 0.95MiB다.
+
+**문제 9.** RDMA Write completion을 받으면 원격 디스크에 데이터가 영구 저장됐다고 말할 수 있는가?
+
+**해설.** 없다. completion은 RNIC 작업 완료의 증거다. 원격 애플리케이션 처리와 저장장치 영속화는 별도 동기화와 flush/commit 증거가 필요하다.
 
 [이전: GPU·NPU 실행 경로](05-gpu-npu-execution.md) · [다음: 가속기 간 연결](07-accelerator-interconnects.md) · [교재 목차](README.md)

@@ -2,7 +2,7 @@
 
 [학습 안내](README.md) · 이전: [NIC·RDMA](06-networking-rdma.md) · 다음: [전원·냉각·관리](08-power-cooling-serviceability.md)
 
-공식 자료 확인 기준은 **2026-09-21**이다. 이 장은 기술 이름뿐 아니라 연결 대상, 프로토콜의 역할, 제품 지원 상태, 숫자의 집계 범위를 비교한다. 표준의 발표와 구매 가능한 제품, 실제 서버에 설치된 기능은 각각 다른 증거가 필요하다.
+공식 자료 확인 기준은 **2026-09-22**이다. 이 장은 기술 이름뿐 아니라 연결 대상, 프로토콜의 역할, 제품 지원 상태, 숫자의 집계 범위를 비교한다. 표준의 발표와 구매 가능한 제품, 실제 서버에 설치된 기능은 각각 다른 증거가 필요하다.
 
 ## 1. 왜 PCIe 외에 다른 연결이 필요한가?
 
@@ -50,6 +50,28 @@ NVIDIA **GB200 NVL72**는 72 GPU와 36 Grace CPU를 **한 랙**에 연결하는 
 | CXL | CPU·메모리 장치·가속기 등 | 지원 타입의 메모리 접근·일관성·확장 | GPU collective 링크와 같은 제품 범주가 아님 |
 
 패브릭(fabric)은 여러 endpoint와 스위치·링크를 연결한 통신 구조를 뜻한다. 케이블 하나의 이름이 아니다. endpoint, 스위치, 관리 소프트웨어와 애플리케이션 지원을 함께 봐야 한다.
+
+
+### coherence와 consistency는 같은 말이 아니다
+
+가속기 연결에서 "메모리를 공유한다"는 표현은 위험할 정도로 넓다.
+두 장치가 같은 주소를 읽고 쓸 수 있는지, cache가 같은 값을 보도록 유지되는지, 여러 write의 순서가 어떻게 보이는지는 서로 다른 질문이다.
+
+**Coherence(캐시 일관성)**는 보통 같은 메모리 위치에 대한 여러 cache 사본이 서로 모순되지 않게 유지되는 성질을 말한다.
+CPU core 0이 주소 X를 `1`로 썼는데 CPU core 1의 cache가 오래된 `0`을 계속 정답처럼 쓰면 coherence 문제가 생긴다.
+CXL.cache 같은 프로토콜은 이런 계층의 기능을 다룬다.
+
+**Consistency(메모리 일관 모델)**는 여러 메모리 연산의 순서가 다른 실행 주체에게 어떻게 보이는지에 관한 규칙이다.
+예를 들어 한 thread가 `data=42`를 쓰고 `ready=1`을 썼을 때, 다른 thread가 `ready=1`을 보고도 `data`의 예전 값을 볼 수 있는지 같은 문제다.
+barrier, fence, acquire/release 같은 단어가 이 영역에 나온다.
+
+```text
+coherence 질문: 같은 주소 X의 cache 사본들이 최신 값을 맞추는가?
+consistency 질문: X를 쓴 뒤 Y를 썼다는 순서가 다른 실행 주체에게 어떻게 보이는가?
+```
+
+NVLink, CXL, UALink 같은 이름을 볼 때 "어떤 주소 공간을 공유하는가", "cache coherence가 있는가", "atomic은 어떤 범위에서 보장되는가", "프로그램이 어떤 fence를 써야 하는가"를 분리해 읽는다.
+atomic 지원은 특정 연산을 쪼개지지 않게 처리한다는 뜻이지, 모든 메모리 접근 순서를 자동으로 사람이 기대하는 순서로 만들어 준다는 뜻은 아니다.
 
 ## 4. NVLink와 NVSwitch
 
@@ -102,7 +124,7 @@ UALink 200G 1.0은 **2025-04-08** 공개됐고, lane당 200G급 연결과 최대
 
 ### 2026년에는 어디까지 공개됐는가?
 
-**2026-04-07 공개된 UALink 2.0 관련 규격은 이미 공개·비준된 상태**다. 단순한 향후 계획으로 적지 않는다. 구성은 Common 2.0, 200G Data Link/Physical Layers 2.0, Manageability 1.0, Chiplet 1.0 등이다. in-network compute와 관리·칩렛 통합을 확장한다. [UALink 2.0 공식 발표](https://ualinkconsortium.org/wp-content/uploads/2026/04/UALink-2.0-Specification-PR_FINAL.pdf).
+**2026-04-07 공개된 UALink 2.0 관련 규격은 이미 공개·비준된 상태**다. 단순한 향후 계획으로 적지 않는다. 2026-09-22에 확인한 UALink 공식 specification 페이지는 Common 2.0, 200G Data Link/Physical Layers 2.0, Manageability 1.0, Chiplet 1.01, 128G Data Link/Physical Layers 1.0 등을 공개 사양으로 제시한다. in-network compute와 관리·칩렛 통합을 확장한다. [UALink 2.0 공식 발표](https://ualinkconsortium.org/wp-content/uploads/2026/04/UALink-2.0-Specification-PR_FINAL.pdf), [UALink 사양 페이지](https://ualinkconsortium.org/specification/).
 
 In-network compute는 통신 경로에서 지원되는 집계 같은 연산을 수행해 endpoint의 이동·처리 부담을 줄이는 접근이다. 스위치가 임의의 모델 전체를 대신 실행한다는 뜻은 아니다. 어떤 연산을 어느 장치가 지원하는지는 실제 구현을 본다.
 
@@ -114,7 +136,7 @@ In-network compute는 통신 경로에서 지원되는 집계 같은 연산을 �
 
 UALink가 밀접한 가속기 집합의 scale-up 메모리 트랜잭션 연결을 중심으로 한다면, Ultra Ethernet은 서버·실행 집합 사이 Ethernet 통신을 중심으로 한다. 서로 경쟁하는 부분을 논의할 수는 있지만 같은 케이블의 두 상표처럼 취급하면 기술 계층을 놓친다.
 
-UEC의 최초 1.0 공개는 **2025-06-11**, 2026-09-21 확인 시 최신 공개판은 **1.0.3(2026-07-16)**이다. 이미 설치한 ConnectX-6나 Ethernet 스위치가 이 규격을 자동으로 전부 구현한다고 쓰지 않는다. [UEC 공개 버전 이력](https://ultraethernet.org/specification-history/), [UEC 1.0 발표](https://ultraethernet.org/ultra-ethernet-consortium-uec-launches-specification-1-0-transforming-ethernet-for-ai-and-hpc-at-scale/).
+UEC의 최초 1.0 공개는 **2025-06-11**, 2026-09-22 확인 시 최신 공개판은 **1.0.3(2026-07-16)**이다. 이미 설치한 ConnectX-6나 Ethernet 스위치가 이 규격을 자동으로 전부 구현한다고 쓰지 않는다. [UEC 공개 버전 이력](https://ultraethernet.org/specification-history/), [UEC 1.0 발표](https://ultraethernet.org/ultra-ethernet-consortium-uec-launches-specification-1-0-transforming-ethernet-for-ai-and-hpc-at-scale/).
 
 RoCE와 Ultra Ethernet도 같은 이름이 아니다. 06장에서 본 기존 RDMA 스택과 어떤 호환·전환 경로를 제품이 제공하는지는 NIC·드라이버·네트워크의 구체적인 지원 문서로 확인한다.
 
@@ -139,9 +161,21 @@ CXL 메모리도 접근 경로의 대역폭과 지연이 있다. 기존 CPU에 �
 
 CXL 4.0은 **2025년 11월 공개된 규격**이며 128GT/s, bundled port와 메모리 RAS 확장을 설명한다. 규격의 128GT/s를 128GB/s로 읽지 않는다. **CXL 4.0 공개 ≠ 우리 EPYC 보드의 CXL 4.0 지원**이다. GPU간 collective를 위한 NVLink를 대체한다고 일반화하지도 않는다. [CXL 공식 개요](https://computeexpresslink.org/about-cxl/).
 
+
+### CXL을 한 문장으로 줄이면 무엇인가
+
+CXL은 "PCIe처럼 꽂는 모든 장치를 빠르게 만드는 마법"이 아니다.
+가장 짧게 말하면, CXL은 CPU와 장치 사이에서 메모리 접근과 cache coherence가 필요한 경우를 위해 PCIe 물리 계층 위에 추가 프로토콜을 얹은 표준이다.
+CXL.io는 장치를 발견하고 설정하는 I/O 성격, CXL.mem은 호스트가 장치 메모리에 접근하는 성격, CXL.cache는 장치가 호스트 메모리를 cache coherent하게 다루는 성격이다.
+
+CXL Type 3 메모리 확장 장치를 붙이면 OS가 추가 NUMA memory처럼 볼 수 있는 구성이 가능하지만, 이것이 GPU HBM을 늘린다는 뜻은 아니다.
+Type 2 가속기는 장치 메모리를 가진 accelerator 범주지만, 실제 제품이 어떤 CXL 기능을 구현했는지 봐야 한다.
+CXL switch는 여러 CXL 장치를 연결할 수 있지만, collective 통신 라이브러리의 GPU all-reduce를 자동으로 대신하지 않는다.
+CXL의 핵심 단어는 memory semantics이고, NVLink/UALink/NIC의 핵심 단어와 겹치는 부분이 있어도 설계 목표와 제품 범주가 다르다.
+
 ## 보충: Infinity Fabric·UCIe·CPO는 어느 위치인가?
 
-**AMD Infinity Fabric/xGMI:** AMD 공식 문서는 xGMI를 Infinity Fabric 기반 GPU 간 고속 연결로 설명한다. AMD CPU 내부·소켓 연결 문맥의 Infinity Fabric과 가속기 제품의 xGMI를 같은 커넥터로 이해하면 안 된다. 지원 Instinct SKU와 OAM/baseboard·토폴로지 조건을 확인한다. AMD가 UALink 생태계에 참여한다는 사실만으로 기존 Instinct 제품이 모두 UALink endpoint가 되지는 않는다. [AMD xGMI 문서](https://instinct.docs.amd.com/projects/virt-drv/en/mainline-9.0.0.k/userguides/XGMI_configuration.html), [AMD MI300 계열 플랫폼](https://www.amd.com/en/products/accelerators/instinct/mi300.html).
+**AMD Infinity Fabric/xGMI:** AMD 공식 문서는 xGMI를 Infinity Fabric 기반 GPU 간 고속 연결로 설명한다. 여기서 xGMI는 약어를 임의로 풀어 쓴 이름이 아니라 AMD Instinct GPU들이 서로 통신할 때 쓰는 가속기 연결 기술 이름으로 이해한다. AMD CPU 내부·소켓 연결 문맥의 Infinity Fabric과 가속기 제품의 xGMI를 같은 커넥터로 이해하면 안 된다. 지원 Instinct SKU와 OAM/baseboard·토폴로지 조건을 확인한다. AMD가 UALink 생태계에 참여한다는 사실만으로 기존 Instinct 제품이 모두 UALink endpoint가 되지는 않는다. [AMD xGMI 문서](https://instinct.docs.amd.com/projects/virt-drv/en/mainline-9.0.0.k/userguides/XGMI_configuration.html), [AMD MI300 계열 플랫폼](https://www.amd.com/en/products/accelerators/instinct/mi300.html).
 
 **UCIe(Universal Chiplet Interconnect Express):** 주로 하나의 패키지 안에 있는 여러 die/chiplet 사이의 연결 규격이다. 칩렛은 큰 칩을 여러 작은 반도체 조각으로 구성하는 설계 단위다. 패키지 내부 연결, 카드 사이 연결, 랙 사이 연결을 같은 계층으로 놓지 않는다. UALink 2.0의 Chiplet 규격은 이 설계 계층과의 접점을 다루지만, UCIe 자체가 랙의 GPU 스위치라는 뜻은 아니다. [UCIe 공식 규격 소개](https://www.uciexpress.org/specifications).
 
@@ -183,9 +217,57 @@ P=4, S=64MiB라면 각 참여자 전송량은 96MiB다. 병목 경로의 유효 
 
 네 장 모두 같은 NUMA라는 것은 소켓 간 경로를 피할 가능성을 높이는 배치 정보다. 네 장 모두 같은 스위치에 연결됐다는 뜻도, collective가 어떤 경로를 선택했는지 증명하는 값도 아니다. 10장에서 다룰 A7 NPU 네 장의 2+2 배치가 정확히 이 사례다.
 
+
+### 4개 참여자의 ring all-reduce 단계
+
+참여자 `A`, `B`, `C`, `D`가 있고 각자 64MiB gradient를 갖는다고 하자.
+ring all-reduce는 보통 데이터를 4조각으로 나눈 뒤 reduce-scatter와 all-gather 두 구간을 돈다.
+각 조각은 16MiB다.
+아래는 알고리즘 감각을 위한 개념도이며 실제 NCCL/RCCL/런타임의 chunking, channel 수, topology 선택과 같다고 단정하지 않는다.
+
+```text
+초기:
+A: a0 a1 a2 a3
+B: b0 b1 b2 b3
+C: c0 c1 c2 c3
+D: d0 d1 d2 d3
+목표: 모든 참여자가 [a0+b0+c0+d0, ..., a3+b3+c3+d3]를 갖기
+```
+
+reduce-scatter 3단계에서는 각 노드가 오른쪽 이웃에게 조각 하나를 보내고, 받은 조각을 자기 조각과 더해 다음 단계로 넘긴다.
+3단계가 끝나면 각 노드는 전체 합의 1/4 조각 하나를 갖는다.
+all-gather 3단계에서는 그 완성 조각들을 다시 돌려 모두가 전체 결과를 갖게 한다.
+
+```text
+P=4, 조각 크기 = S/P = 16MiB
+reduce-scatter 단계 수 = P-1 = 3
+all-gather 단계 수 = P-1 = 3
+각 단계마다 각 참여자는 16MiB 송신
+각 참여자 총 송신량 = 6 × 16MiB = 96MiB
+```
+
+통신 시간은 latency와 bandwidth를 함께 본다.
+단계마다 독립적인 고정 지연을 `α`, 병목 유효 대역폭을 `B`, 전체 메시지를 `S`라고 두면 ring all-reduce의 거친 모델은 다음처럼 쓸 수 있다.
+
+```text
+시간 ≈ 2(P-1) × α + 2(P-1)/P × S / B
+```
+
+P=4, S=64MiB, B=10GB/s, α=5µs라는 synthetic 값을 넣으면 다음과 같다.
+
+```text
+latency 항 = 2×3×5µs = 30µs = 0.03ms
+data 항 = 96MiB / 10GB/s ≈ 10.07ms
+합계 ≈ 10.10ms
+```
+
+같은 조건에서 S가 64KiB라면 data 항은 약 0.010ms이고 latency 항 0.03ms가 더 눈에 띈다.
+그래서 작은 메시지 collective는 bandwidth보다 단계 수와 latency가, 큰 메시지는 bandwidth와 토폴로지가 더 중요해진다.
+GPU가 많을수록 무조건 빠르다는 말이 성립하지 않는 이유다.
+
 ## 11. 표준·제품·현장을 나눠 기록하기
 
-| 기술/제품 | 2026-09-21 기준 공식 근거의 상태 | A7에 적용할 때 |
+| 기술/제품 | 2026-09-22 기준 공식 근거의 상태 | A7에 적용할 때 |
 |---|---|---|
 | RTX PRO 6000 Server Edition | NVLink 미지원 명시 | PCIe 기반 통신을 검토 |
 | B200/HGX·GB200 | NVLink/NVSwitch 시스템 사양 공개 | 현재 RTX 카드의 기능으로 전용하지 않음 |
@@ -215,5 +297,13 @@ P=4, S=64MiB라면 각 참여자 전송량은 96MiB다. 병목 경로의 유효 
 **문제 4.** CXL 메모리를 추가하면 NPU 네 장이 모두 같은 HBM을 공유하게 되는가?
 
 **해설:** 아니다. CXL 메모리의 접근 주체와 일관성·배정은 타입과 플랫폼에 달려 있다. NPU의 HBM과 CXL 메모리는 별개이며 해당 NPU의 지원이 확인돼야 한다.
+
+**문제 5.** 4노드 ring all-reduce에서 각 참여자의 입력이 64MiB이면 이상적 ring 기준 각 참여자는 총 얼마를 보내는가?
+
+**해설:** `2(P-1)/P × S = 2×3/4×64MiB = 96MiB`다. 16MiB 조각을 6단계 동안 보낸다고 봐도 된다.
+
+**문제 6.** coherence와 consistency의 차이를 한 문장으로 말하면?
+
+**해설:** coherence는 같은 주소의 여러 cache 사본이 맞는가를 묻고, consistency는 여러 메모리 연산의 순서가 다른 실행 주체에게 어떻게 보이는가를 묻는다.
 
 [학습 안내](README.md) · 다음: [08. 전원·냉각·BMC·정비](08-power-cooling-serviceability.md)
