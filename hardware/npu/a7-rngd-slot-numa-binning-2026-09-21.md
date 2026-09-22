@@ -7,6 +7,7 @@
 
 ## Current status
 
+- **2026-09-22 후속:** [슬롯 이동 후 진단](a7-rngd-post-move-diagnostics-2026-09-22.md)에서 CARD-A의 SLOT18 이전, 네 장 NUMA1·Gen5 x16 연결과 binning·전력 제한을 재확인했다. 아래 완료·미완료 표시는 2026-09-21 조회 당시의 기록이다.
 - **추가 조사:** [GPU·NPU·NIC 증설 검토](a7-expansion-plan-2026-09-21.md)에 16:59–17:04 KST 실측 RAM·NIC·PCIe 상위 링크·전원 상태와 GPU 최종 4장 가정의 슬롯 배치안을 기록했다.
 - **완료:** 읽기 전용 원격 조회, 실제 PCIe/NUMA/슬롯 대조, 공식 후면 배치도 확인.
 - **권고:** CARD-A(npu0)를 SLOT10에서 SLOT18로 이전. 실제 이전은 아직 하지 않았다.

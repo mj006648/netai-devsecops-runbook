@@ -3,6 +3,7 @@
 - 대상: XFUSION G6550 V8 (Turin), AMD EPYC 9355 × 2.
 - 추가 조회: 2026-09-21 약 16:59–17:04 KST. RAID 후속 조회: 17:18–17:21 KST. SSH와 BMC Redfish GET으로 하드웨어 정보·구성·상태만 읽었다.
 - 연결 문서: [NPU 슬롯·NUMA·binning 작업일지](a7-rngd-slot-numa-binning-2026-09-21.md).
+- 후속 기록: [2026-09-22 슬롯 이동 후 진단](a7-rngd-post-move-diagnostics-2026-09-22.md). CARD-A의 SLOT10→18 이전은 확인됐으며, 이 문서의 GPU·NIC 증설안과 2026-09-21 실측표는 당시 기록으로 유지한다.
 - 학습 자료: [서버 하드웨어 교재](../learning/server-hardware/README.md) — 구성요소 원리, 최신 연결 기술, A7 설계 실습.
 - 범위: 설정 변경, 카드 이동, 펌웨어 갱신, 재부팅, 진단·부하 테스트는 수행하지 않았다. 실제 시리얼·UUID·접속 주소·인증 정보는 공개하지 않는다.
 

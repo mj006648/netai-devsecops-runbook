@@ -13,6 +13,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-22 | Hardware / NPU | [A7 RNGD 슬롯 이동 후 진단](hardware/npu/a7-rngd-post-move-diagnostics-2026-09-22.md) | SLOT10→18 이동·4장 NUMA1/Gen5 x16 확인, binning·225W 제한 재확인, power-sense 경고 분석 / 부하 진단은 장치 점유로 보류 |
 | 2026-09-21 | Linux / Data Systems | [데이터 시스템 밑바닥부터 배우기](kubernetes/storage/data-systems-foundations/) | OS 읽기·쓰기·fsync, 파일시스템·SSD, HDFS·Ceph·S3, DB WAL·인덱스, Parquet·Iceberg, 실험 해석과 안전한 로컬 실습 |
 | 2026-09-21 | Hardware / Learning | [서버 하드웨어 학습 교재](hardware/learning/server-hardware/README.md) | 11개 장: CPU·RAM·PCIe·RAID·GPU/NPU·NIC·전원·냉각, NVLink·UALink·UEC·CXL, A7 실습·계산·해설 |
 | 2026-09-21 | Hardware / NPU·GPU·NIC | [A7 가속기 증설 검토](hardware/npu/a7-expansion-plan-2026-09-21.md) | GPU 4장+NPU 4장 가정의 슬롯 배치안, RAM 128GB/2 DIMM, 200G NIC DOWN, 공유 링크·전원·OS RAID1 실측 / 증설 미실행 |
