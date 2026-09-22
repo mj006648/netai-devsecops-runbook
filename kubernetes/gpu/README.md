@@ -2,6 +2,10 @@
 
 TwinX/MiniX 클러스터의 GPU Operator, NVIDIA DRA, MIG, GPU node 운영 기록을 모아둡니다.
 
+## AI 인프라를 처음 공부한다면
+
+[AI 인프라 교재](../../ai/learning/ai-infrastructure/README.md)에서 모델·GPU 실행·메모리·학습·분산 통신·LLM 추론·서빙을 먼저 연결합니다. [GPU 클러스터 장](../../ai/learning/ai-infrastructure/09-gpu-clusters-and-placement.md)은 아래 운영 사례를 이해하는 선수지식을 설명합니다.
+
 ## Index
 
 | Last update | Topic | Document |

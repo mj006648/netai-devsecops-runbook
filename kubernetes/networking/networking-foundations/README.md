@@ -1,6 +1,6 @@
 # 네트워크의 밑바닥부터 Linux·eBPF·Kubernetes까지
 
-[통합 학습 안내](../../../learning/README.md) · [Linux·커널](../../../linux/learning/linux-kernel/README.md) · [NIC·RDMA 하드웨어](../../../hardware/learning/server-hardware/06-networking-rdma.md)
+[통합 학습 안내](../../../learning/README.md) · [Linux·커널](../../../linux/learning/linux-kernel/README.md) · [NIC·RDMA 하드웨어](../../../hardware/learning/server-hardware/06-networking-rdma.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
 **스위치, 라우터, 패킷이라는 말을 처음 듣는 사람**을 위한 교재다. 전기·빛으로 정보를 보내는 원리에서 시작해 프레임·주소·경로·연결·애플리케이션을 순서대로 설명한다. 이후 같은 패킷을 Linux 커널 안에서 추적하고, eBPF가 어느 지점에 어떤 역할로 들어가는지 연결한다. 마지막에는 Kubernetes와 Cilium을 배운다.
 

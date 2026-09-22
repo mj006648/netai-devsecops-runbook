@@ -6,7 +6,7 @@
 
 목표는 제품 이름을 외우는 것이 아니다. **어떤 바이트가 어디에 있고, 누가 언제 성공을 응답하며, 장애 후 무엇을 복구할 수 있는지** 설명하는 것이다. 박사과정 수준의 연구를 위한 기반 학습용이며, 이 자료만으로 연구 역량이나 학위 수준이 완성된다는 뜻은 아니다.
 
-[네 교재 통합 학습 순서](../../../learning/README.md) · [Linux·커널 독립 교재](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF 독립 교재](../../networking/networking-foundations/README.md)
+[다섯 교재 통합 학습 순서](../../../learning/README.md) · [Linux·커널 독립 교재](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF 독립 교재](../../networking/networking-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
 파일 descriptor·프로세스·커널이라는 단어가 처음이면 00b 안내를 통해 운영체제 입문부터 읽는다. 본문에는 한글 한 글자 쓰기, 작은 파일시스템 이미지, DB 페이지·인덱스·복구 로그를 숫자와 시간표로 따라가는 예제를 넣었다. 단어를 찾을 때는 [10장 사전](10-glossary.md)을 이용한다.
 

@@ -1,6 +1,6 @@
 # Linux·운영체제·커널: 프로그램이 실행되는 밑바닥부터
 
-[통합 학습 안내](../../../learning/README.md) · [하드웨어](../../../hardware/learning/server-hardware/README.md) · [네트워크](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md)
+[통합 학습 안내](../../../learning/README.md) · [하드웨어](../../../hardware/learning/server-hardware/README.md) · [네트워크](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
 이 교재는 **커널, 프로세스, 메모리, 파일이 무슨 뜻인지 모르는 독자**를 출발점으로 한다. 앞에서는 컴퓨터 자원을 나눠 쓰는 이유와 셸 명령의 문법을 설명하고, 뒤에서는 커널이 관리하는 자료구조·실행 순서·동기화·장애를 다룬다. 특정 배포판의 명령 모음이나 커널 소스 전체를 대신하는 문서는 아니다. 원리를 이해한 뒤 실제 구현과 관측 결과를 읽기 위한 경로다.
 

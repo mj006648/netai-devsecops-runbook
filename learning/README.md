@@ -1,10 +1,10 @@
-# 처음 배우는 인프라: 전기 신호에서 커널·네트워크·데이터 시스템까지
+# 처음 배우는 인프라: 전기 신호에서 커널·네트워크·데이터 시스템·AI까지
 
 이 학습 과정은 **컴퓨터 용어를 처음 만나는 사람**이 읽을 출발점과, 이미 기초를 아는 사람이 설계·실험으로 나아갈 경로를 함께 제공한다. 출발점에서는 비트·전압·명령·파일 같은 단어를 풀고, 뒤에서는 같은 대상을 주소 변환·큐·복구·격리·측정의 관점으로 다시 본다.
 
 읽기만으로 특정 학위 수준이나 운영 숙련을 보장할 수는 없다. 여기서 목표로 삼는 실력은 **원리를 자기 말로 설명하고, 작은 예제를 손으로 계산하고, 안전한 실습으로 확인하고, 관측하지 않은 것은 구별해서 말하는 능력**이다. 대학원 단계에서는 여기에 기존 연구 비교, 반례 구성, 재현 가능한 실험이 더해진다.
 
-## 네 권의 교재와 맡은 질문
+## 다섯 권의 교재와 맡은 질문
 
 | 교재 | 가장 아래에서 시작하는 질문 | 연결되는 심화 주제 |
 | --- | --- | --- |
@@ -12,6 +12,7 @@
 | [Linux·운영체제·커널](../linux/learning/linux-kernel/README.md) | 여러 프로그램이 한 컴퓨터를 어떻게 나누어 쓰는가? | 부팅·syscall·스케줄링·메모리·동기화·드라이버·격리 |
 | [네트워크](../kubernetes/networking/networking-foundations/README.md) | 신호로 표현한 바이트가 다른 컴퓨터에 어떻게 도착하는가? | 스위치·라우터·TCP/IP·DNS/TLS·Linux 패킷 경로·eBPF·Cilium |
 | [데이터 시스템](../kubernetes/storage/data-systems-foundations/README.md) | 파일을 읽고 쓴다는 것은 어떤 작업이며 언제 저장 완료인가? | 파일시스템·SSD·HDFS·Ceph/S3·DB·Parquet·Iceberg·논문 실험 |
+| [AI 인프라](../ai/learning/ai-infrastructure/README.md) | 모델의 숫자 계산이 어떻게 GPU 작업과 사용자 응답이 되는가? | 텐서·역전파·메모리·분산 학습·LLM 추론·서빙·복구·클러스터 |
 
 네트워크 교재가 `kubernetes/` 아래 있다고 Kubernetes부터 알아야 하는 것은 아니다. 앞부분은 일반 네트워크 기초이며 Kubernetes는 뒤쪽 응용이다. Linux 교재와 하드웨어 교재도 특정 랩 장비가 없어도 학습할 수 있다. A7 같은 실제 사례는 기본 원리 뒤에 읽는다.
 
@@ -31,6 +32,8 @@
 | H. 운영 경로 | 네트워크 [05](../kubernetes/networking/networking-foundations/05-linux-packet-path.md)–[08](../kubernetes/networking/networking-foundations/08-troubleshooting-and-labs.md), Linux [07](../linux/learning/linux-kernel/07-observation-and-troubleshooting.md) | 패킷이 지나가는 hook·queue·namespace와 관측 위치를 설명한다 |
 | I. 저장 서비스 | 데이터 [03](../kubernetes/storage/data-systems-foundations/03-hdfs-distributed-files.md)–[06](../kubernetes/storage/data-systems-foundations/06-parquet-arrow-iceberg.md) | 복제·WAL·snapshot의 성공 응답과 장애 범위를 구별한다 |
 | J. 가속·설계·연구 | 하드웨어 [05](../hardware/learning/server-hardware/05-gpu-npu-execution.md)–[10](../hardware/learning/server-hardware/10-a7-design-exercises.md), 데이터 [07](../kubernetes/storage/data-systems-foundations/07-measurement-and-paper-reading.md)·[09](../kubernetes/storage/data-systems-foundations/09-study-roadmap-and-questions.md) | 병목 가설 하나, 반례 하나, 공정한 비교 실험 하나를 작성한다 |
+| K. AI 작업 연결 | AI [00](../ai/learning/ai-infrastructure/00-ai-workloads-and-models.md)–[03](../ai/learning/ai-infrastructure/03-memory-precision-and-capacity.md), [실습](../ai/learning/ai-infrastructure/11-local-labs-and-research.md) | 한 번의 학습 계산과 추론 메모리 예산을 손으로 검산한다 |
+| L. AI 학습·서비스 | AI [04](../ai/learning/ai-infrastructure/04-training-and-input-pipelines.md)–[10](../ai/learning/ai-infrastructure/10-observation-benchmarking-and-cost.md) | 분산 실행·서빙 지연·체크포인트 복구·자원 배치의 조건을 설명한다 |
 
 한 번 읽고 모든 것을 기억할 필요는 없다. 같은 `주소`도 처음에는 위치를 구별하는 번호로, 다음에는 가상 주소·LBA·IP 주소처럼 서로 다른 관리자의 이름 공간으로 이해하게 된다.
 
@@ -88,7 +91,7 @@ Unix는 처음부터 C로 만든 완제품이 아니었다. 초기 구현에서 
 
 역사적 자료의 성능 수치는 당시 하드웨어·workload에 대한 것이다. 설계 동기는 배울 수 있지만 수십 년 전 수치를 지금의 SSD나 클라우드에 그대로 적용하지 않는다.
 
-## 5. 네 교재를 잇는 한 번의 저장 요청
+## 5. 기초 교재를 잇는 한 번의 저장 요청
 
 사용자가 웹 API에 문자열 `가A`를 저장한다고 가정하자. UTF-8에서는 4바이트이며 HTTP 헤더·TLS·전송 헤더 크기는 별도다. 다음은 가능한 **특정 구현 예시**이지 모든 웹 서비스의 고정 경로가 아니다.
 
@@ -140,3 +143,17 @@ Unix는 처음부터 C로 만든 완제품이 아니었다. 초기 구현에서 
 예제 코드 실행 성공은 그 예제가 확인한 계약의 근거다. 모델 계산은 실제 하드웨어 측정이 아니고, readback은 전원 장애 시험이 아니며, 로컬 패킷 파싱은 실제 네트워크 전체를 검증한 것이 아니다. 더 깊은 실험으로 넘어갈 때는 격리 환경·복구 방법·자원 예산·완료 조건을 먼저 명시한다.
 
 [2026-09-22 교재·실습 검증 기록](VALIDATION.md)에서 실행한 검사와 검증하지 않은 범위를 확인할 수 있다.
+
+## 9. AI 인프라로 이어가는 경로
+
+앞의 네 기초 교재는 AI 인프라를 배우는 기반이다. 모델이 사용하는 숫자·메모리·프로세스·파일·통신을 설명할 수 있다면 AI 실행을 이해할 준비가 된 것이다. 여기에 모델 계산과 학습 상태, GPU별 메모리 예산, 요청 스케줄링과 성능 측정이 더 필요하다.
+
+[AI 인프라 교재](../ai/learning/ai-infrastructure/README.md)는 이 연결을 맡는다. 기존 네 권을 모두 완독해야 시작하는 구조는 아니다. CPU·RAM·byte·프로세스가 익숙하면 AI 00–03장을 읽고, 막히는 기초 개념을 연결 문서에서 보충한다.
+
+- 학습 중심: 입력 → forward → loss → backward → optimizer → 분산 gradient 통신 → 체크포인트를 추적한다.
+- 추론 중심: 요청 → tokenization → 대기열 → prefill·decode → 스트리밍·취소를 추적한다. 이 경로는 autoregressive LLM 사례다.
+- 운영 중심: 모델 품질을 고정하고 GPU 메모리·데이터 공급·통신·지연 목표·복구·비용을 함께 비교한다.
+
+AI [로컬 실습](../ai/learning/ai-infrastructure/11-local-labs-and-research.md)은 GPU 없이 gradient 검산, 크기가 다른 배치의 평균, KV cache 용량, collective 통신량, 큐 지연, 복구 상태의 차이를 확인한다. 실제 GPU 학습·서빙은 이 계산 모형 다음의 별도 실험이다.
+
+[AI 교재 검증 기록](../ai/learning/ai-infrastructure/VALIDATION.md)에서 추가 교재의 검사를 확인한다. 위의 기존 네 교재 검증 기록과 범위를 구분한다.

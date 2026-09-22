@@ -4,7 +4,7 @@
 
 이 교재의 목표는 부품 이름을 외우는 데 있지 않다. 서버의 블록도와 실제 조회 결과를 보고 **데이터가 어디에 저장되고, 어느 경로를 지나며, 무엇을 공유하고, 어느 조건에서 느려지는지** 설명할 수 있게 하는 것이다. 새 GPU나 NIC를 구매할 때도 물리 공간, 연결 대역폭, 소프트웨어 지원, 전원·냉각을 함께 판단할 수 있어야 한다.
 
-[네 교재 통합 학습 순서](../../../learning/README.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md)
+[다섯 교재 통합 학습 순서](../../../learning/README.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
 처음에는 정확한 이름을 외우기보다 **왜 필요한가 → 실제로 무엇이 움직이는가 → 숫자로 계산할 수 있는가 → 어느 조건에서 설명이 달라지는가** 순서로 읽는다. 고급 제품 사양과 A7 사례는 기본 원리를 배운 뒤 확인한다.
 

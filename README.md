@@ -9,12 +9,13 @@
 
 ## 처음 공부하는 사람을 위한 교재
 
-[전기 신호부터 인프라까지: 네 교재의 통합 학습 순서](learning/README.md)에서 시작합니다. 하드웨어·운영체제·네트워크·데이터 시스템을 용어의 뜻, 등장 이유, 동작 추적, 계산, 실습, 해설 문제로 연결합니다.
+[전기 신호부터 인프라까지: 다섯 교재의 통합 학습 순서](learning/README.md)에서 시작합니다. 하드웨어·운영체제·네트워크·데이터 시스템·AI 인프라를 용어의 뜻, 등장 이유, 동작 추적, 계산, 실습, 해설 문제로 연결합니다.
 
 - [서버 하드웨어](hardware/learning/server-hardware/README.md): 전기·논리회로부터 CPU·메모리·PCIe·GPU·스토리지·전원·냉각.
 - [Linux·운영체제·커널](linux/learning/linux-kernel/README.md): 프로그램·셸부터 부팅·스케줄링·주소 변환·동기화·I/O·격리.
 - [네트워크·eBPF](kubernetes/networking/networking-foundations/README.md): 신호·스위치·라우터·패킷부터 TCP/IP·DNS/TLS·Linux·XDP/TC·Cilium.
 - [파일·데이터 시스템](kubernetes/storage/data-systems-foundations/README.md): 파일 읽기·쓰기·파일시스템부터 분산 저장·DB·분석 포맷·실험 설계.
+- [AI 인프라](ai/learning/ai-infrastructure/README.md): 모델·텐서·GPU 실행부터 학습·분산 통신·LLM 추론·서빙·체크포인트·클러스터·측정.
 
 ## Quick map
 
@@ -22,6 +23,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-22 | AI / Learning | [AI 인프라 독립 교재](ai/learning/ai-infrastructure/README.md) | 13개 장: 모델 계산·GPU 메모리·학습·분산 실행·KV cache·서빙·복구·GPU 클러스터, 로컬 실습·해설 |
 | 2026-09-22 | Learning | [인프라 기초 통합 교재](learning/README.md) | 하드웨어·Linux 커널·네트워크/eBPF·데이터 시스템, 선수지식·계산·추적·안전한 실습·해설 |
 | 2026-09-22 | Hardware / NPU | [A7 RNGD 슬롯 이동 후 진단](hardware/npu/a7-rngd-post-move-diagnostics-2026-09-22.md) | SLOT10→18 이동·4장 NUMA1/Gen5 x16 확인, binning·225W 제한 재확인, power-sense 경고 분석 / 부하 진단은 장치 점유로 보류 |
 | 2026-09-22 | Linux / Data Systems | [데이터 시스템 밑바닥부터 배우기](kubernetes/storage/data-systems-foundations/) | OS 읽기·쓰기·fsync, 파일시스템·SSD, HDFS·Ceph·S3, DB WAL·인덱스, Parquet·Iceberg, 실험 해석과 안전한 로컬 실습 |
@@ -65,7 +67,8 @@
   - **[kubernetes/apps/](kubernetes/apps/)** — Kubernetes 위에서 운영되는 포털, 카탈로그, 쿼리 엔진 등 앱 운영
   - **[kubernetes/multicluster/](kubernetes/multicluster/)** — Karmada, ScaleX-POD, multi-cluster placement 실험과 운영
   - **[kubernetes/incidents/](kubernetes/incidents/)** — Kubernetes 장애 기록, postmortem, cross-component failure
-- **[learning/](learning/README.md)** — 처음 배우는 인프라의 선수지식·네 교재 읽기 순서·역사·평가
+- **[learning/](learning/README.md)** — 처음 배우는 인프라의 선수지식·다섯 교재 읽기 순서·역사·평가
+- **[ai/](ai/README.md)** — AI 학습·추론·GPU 클러스터·서빙·측정 교재
 - **[linux/](linux/README.md)** — 운영체제·커널·프로세스·메모리·동기화·격리·진단 교재
 - **[hardware/](hardware/)** — PSU, BMC/IPMI, NIC cabling, rack 등 Kubernetes 바깥 물리 인프라 이슈
   - **[hardware/learning/server-hardware/](hardware/learning/server-hardware/README.md)** — 하드웨어 구성요소·최신 인터커넥트·A7 설계 학습
