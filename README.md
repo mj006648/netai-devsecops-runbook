@@ -23,6 +23,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-09-23 | Hardware / Inventory | [TwinX GPU 노드 5대 증설 실측](hardware/inventory/twinx-gpu-node-expansion-2026-09-23.md) | CPU·DIMM·NUMA, 기존 GPU/NIC/NVMe의 PCIe 세대·레인·점유, 12장 추가 요구 대비 슬롯 상한과 병목 |
 | 2026-09-22 | AI / Learning | [AI 인프라 독립 교재](ai/learning/ai-infrastructure/README.md) | 13개 장: 모델 계산·GPU 메모리·학습·분산 실행·KV cache·서빙·복구·GPU 클러스터, 로컬 실습·해설 |
 | 2026-09-22 | Learning | [인프라 기초 통합 교재](learning/README.md) | 하드웨어·Linux 커널·네트워크/eBPF·데이터 시스템, 선수지식·계산·추적·안전한 실습·해설 |
 | 2026-09-22 | Hardware / NPU | [A7 RNGD 슬롯 이동 후 진단](hardware/npu/a7-rngd-post-move-diagnostics-2026-09-22.md) | SLOT10→18 이동·4장 NUMA1/Gen5 x16 확인, binning·225W 제한 재확인, power-sense 경고 분석 / 부하 진단은 장치 점유로 보류 |
@@ -71,6 +72,7 @@
 - **[ai/](ai/README.md)** — AI 학습·추론·GPU 클러스터·서빙·측정 교재
 - **[linux/](linux/README.md)** — 운영체제·커널·프로세스·메모리·동기화·격리·진단 교재
 - **[hardware/](hardware/)** — PSU, BMC/IPMI, NIC cabling, rack 등 Kubernetes 바깥 물리 인프라 이슈
+  - **[hardware/inventory/](hardware/inventory/twinx-gpu-node-expansion-2026-09-23.md)** — TwinX GPU 노드 실측·PCIe/NUMA 배치·증설 후보
   - **[hardware/learning/server-hardware/](hardware/learning/server-hardware/README.md)** — 하드웨어 구성요소·최신 인터커넥트·A7 설계 학습
   - **[hardware/npu/](hardware/npu/)** — NPU 전용 작업일지, PCIe/NUMA 배치, binning·진단 결과
 - **[templates/](templates/)** — 새 runbook/incident 작성 템플릿
