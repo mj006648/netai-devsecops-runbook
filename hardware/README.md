@@ -4,7 +4,7 @@ Kubernetes 바깥의 물리 인프라 기록입니다. PSU, BMC/IPMI, NIC cablin
 
 | Last update | Area | Topic | Document |
 | --- | --- | --- | --- |
-| 2026-09-23 | Inventory / GPU expansion | TwinX GPU 노드 5대 CPU·DIMM·NUMA·PCIe 실측, 기존 카드 점유와 추가 12장 장착 상한·병목 | [GPU 노드 증설 실측](inventory/twinx-gpu-node-expansion-2026-09-23.md) |
+| 2026-10-01 | Inventory / GPU expansion | TwinX 5대의 슬롯별 장착 장치·빈 PCIe/DIMM·추가 장착 후보, Gen/레인 재실측과 RM352 레인 공유 | [노드별 장착 장치·빈 슬롯](inventory/twinx-gpu-node-expansion-2026-09-23.md) |
 | 2026-09-22 | NPU | A7 SLOT10→18 이동 확인, 4장 NUMA1·Gen5 x16, binning·전력 제한·power-sense 경고 및 진단 범위 | [이동 후 진단](npu/a7-rngd-post-move-diagnostics-2026-09-22.md) |
 | 2026-09-22 | Learning | 전기·비트·논리회로·CPU·RAM·PCIe·RAID·GPU/NPU·NIC·전원·냉각, NVLink·UALink·CXL 최신 기술과 A7 설계 실습 | [서버 하드웨어 학습 교재](learning/server-hardware/README.md) |
 | 2026-09-21 | NPU / GPU / NIC | A7 GPU·NPU 슬롯 배치안, RAM 2/24 DIMM, 기존 200G NIC, 공유 대역폭·전원 조사 | [A7 증설 검토](npu/a7-expansion-plan-2026-09-21.md) |

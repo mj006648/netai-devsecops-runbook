@@ -1,171 +1,320 @@
-# TwinX GPU 노드 5대 실측 인벤토리와 가속기 증설 판단
+# TwinX GPU 노드별 장착 장치·빈 슬롯·추가 장착 후보
 
-조사일: **2026-09-23 UTC** · 범위: `sv4000-1`, `sv4000-2`, `rm352-1`, `rm352-2`, `l40s`. Edgebox와 control-plane은 제외했다. **장치 이동·부하 시험·섀시 개방은 하지 않았다.** 이 문서는 현재 장착 상태와 보드 수준의 확장 상한을 구분한다.
+최초 조사: **2026-09-23 UTC** · 재확인: **2026-10-01 05:22 UTC**
 
-## 먼저 결정에 필요한 숫자
+대상: `sv4000-1`, `sv4000-2`, `rm352-1`, `rm352-2`, `l40s`. 5대 모두 SSH로 CPU·DIMM·GPU·PCIe·SSD·펌웨어 슬롯 정보를 다시 읽었다. 카드 이동, BIOS 변경, 부하 시험, 섀시 개방은 하지 않았다.
 
-| 노드 | 실제 플랫폼 / 물리 CPU 수·총 코어 수 | NUMA 영역 수 | 실장 RAM / 빈 DIMM | 현재 GPU | 신규 x16급 카드 자리 후보¹ |
-| --- | --- | ---: | --- | --- | ---: |
-| `sv4000-1` | ASUS ESC4000A-E12 / EPYC 9124 **1개·16코어** | **1개** | 64 GB×4 = 256 GB / 8 | RTX A6000×2, A100 PCIe 40GB×1 | **1**, Gen5 x16 설계 |
-| `sv4000-2` | ASUS ESC4000A-E12 / EPYC 9124 **1개·16코어** | **1개** | 64 GB×4 = 256 GB / 8 | L40×2, A100 PCIe 40GB×1 | **1**, Gen5 x16 설계 |
-| `rm352-1` | ASRock Rack SPC621D8 보드 / Xeon Silver 4310 **1개·12코어** | **1개** | 32 GB×6 = 192 GB / 2 | Quadro RTX 6000×1, A10×1 | **최대 2**, Gen4 x16 보드 슬롯 |
-| `rm352-2` | ASRock Rack SPC621D8 보드 / Xeon Silver 4310 **1개·12코어** | **1개** | 32 GB×6 = 192 GB / 2 | Quadro RTX 6000×1, A10×1 | **최대 1**, Gen4 x16 보드 슬롯 |
-| `l40s` | ASUS ESC8000A-E12 / EPYC 9254 **2개·총 48코어** | **2개** | 64 GB×12 = 768 GB / 12 | L40S×8 | **0**: GPU 베이 8/8 사용 |
+## 먼저 보는 구성표
 
-이 표의 CPU 수는 **실제로 장착된 프로세서/소켓 수**이고, NUMA는 **영역 개수**다. 아래 장치별 표의 `NUMA 0`·`NUMA 1`은 개수가 아닌 **영역 번호**다. 따라서 `l40s`는 CPU 2개와 NUMA 영역 2개(번호 0, 1)를 가진다.
+| 노드 | GPU 슬롯 설계 / 현재 GPU | 현재 추가 NIC | 기존 카드의 연결 폭을 유지하는 x16 추가 후보 | RAM / 빈 DIMM |
+| --- | --- | --- | --- | --- |
+| [sv4000-1](#sv4000-1) | Gen5 x16 GPU 베이 4개 / A6000×2 + A100×1 | ConnectX-5 Ex 100G×1 | **GPU 베이 1개 후보** | 256 GB / **8개** |
+| [sv4000-2](#sv4000-2) | Gen5 x16 GPU 베이 4개 / L40×2 + A100×1 | ConnectX-5 100G×1 | **GPU 베이 1개 후보** | 256 GB / **8개** |
+| [rm352-1](#rm352-1) | Gen4, x16 형상 4개 + x8 형상 3개 / RTX 6000 + A10 | ConnectX-5 Ex 100G + X540 10G | **PCIE1 1개 후보** | 192 GB / **2개** |
+| [rm352-2](#rm352-2) | Gen4, x16 형상 4개 + x8 형상 3개 / RTX 6000 + A10 | ConnectX-5 100G + X540 10G | **확정 가능한 후보 없음**; 남은 것은 x8/레인 공유 자리 | 192 GB / **2개** |
+| [l40s](#l40s) | Gen5 x16 GPU 베이 8개 / L40S×8 | ConnectX-5 100G×1 | **GPU 베이 없음**; 소형 NIC·M.2 후보는 별도 | 768 GB / **12개** |
 
-¹ ASUS의 **완전한 이중 폭 GPU 베이** 수와 ASRock Rack 보드의 **x16 슬롯 잔여 수**를 센 것이다. RM352의 실제 섀시 모델·라이저·인접 슬롯 간격·전원 케이블·냉각은 미확인이다. 따라서 **5개는 장착 보증이 아닌 낙관적 상한**이며, RM352에서 실제 사용 가능한 수는 더 적을 수 있다. `l40s`의 빈 NIC/스토리지용 PCIe 자리는 9번째 GPU 베이가 아니다.
+**“후보”는 장착 보증이 아니다.** 빈 커넥터가 있어도 큰 카드가 옆 슬롯을 가리거나 전원·냉각·라이저가 맞지 않을 수 있다. 아래 표는 장착 장치와 전기적 연결을 보여 주며, 빈 자리의 실제 간격·케이블은 현장 확인이 필요하다.
 
-요청한 **추가 NPU 4장 + AMD GPU 4장 + RTX PRO 6000 4장 = 12장**을 모두 이 5대에 기존 카드 유지 조건으로 넣을 수 없다. NPU를 Furiosa RNGD, PRO 6000을 Blackwell **Server Edition**으로 가정하면 두 제품 모두 이중 폭 x16 카드다. **이 두 종류 8장만으로도 위 5자리 상한을 3장 초과**한다. AMD GPU도 이중 폭 x16이면 총 **최소 7자리 부족**하다. Gen5 x16 설계의 빈 GPU 베이는 두 SV4000의 **2자리뿐**이다. AMD GPU의 정확한 모델·PCIe/OAM 형태·두께·소비전력은 확인 전이므로 장착 수 계산에 확정값으로 쓰지 않는다. [RNGD 공식 사양](https://developer.furiosa.ai/docs/v2024.2.1/en/overview/rngd.html), [RTX PRO 6000 Blackwell 제품군 사양](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000-family/).
+- **Gen**은 PCIe 세대, **x16/x8/x4/x1**은 사용하는 레인 수다. Gen5 슬롯에 Gen4 카드가 꽂히면 Gen4로 연결된다.
+- **현재 협상**은 이번 조회 순간의 값이다. 유휴 GPU의 Gen1/Gen2는 절전 상태일 수 있다. 카드 지원 세대와 구분해서 읽는다.
+- **PCIE 번호는 펌웨어 명칭**이다. 후면 실물 라벨과 대조하지 않았다. 특히 RM352의 일부 번호는 링크 폭과 맞지 않아 **추정**으로 표시했다. PCI 주소·루트 포트는 맨 아래 [실측 상세](#실측-상세)에서 볼 수 있다.
 
-## 증거 범위와 표기
+## sv4000-1
 
-- 5대에 SSH 키로 읽기 전용 접속하여 `lscpu`, `dmidecode`, `lspci -Dnn/-tv`, PCI sysfs 링크·NUMA, `nvidia-smi`, `lsblk`를 수집했다. Kubernetes API에서 Ready·스케줄 가능 여부·GPU 자원을 별도 확인했다.
-- `BDF`는 조사 당시의 PCI 주소이고 실물 슬롯 라벨이 아니다. 재부팅·BIOS 변경·카드 이동 후 달라질 수 있다. SMBIOS 슬롯의 `In Use`/주소와 Linux 슬롯 번호에는 중복·불일치가 있어 **RM352의 정확한 물리 슬롯 ↔ BDF 매핑은 현장 대조 전 미확정**이다.
-- 링크 표기는 `실제 협상 폭 / 세대`다. 일부 유휴 GPU는 절전 때문에 순간 속도가 Gen1로 보였다. **x16 폭은 정상이고 유휴 Gen1만으로 병목이라고 판단하지 않는다.** 부하 중 재측정은 아직 하지 않았다.
-- GB는 DIMM/제품 표기 용량이다. Linux의 GiB·사용 가능 메모리는 예약 영역 때문에 더 작다. 공개 문서에는 BMC 주소, 로그인 정보, 카드 UUID·시리얼을 싣지 않았다.
+**ASUS ESC4000A-E12 · EPYC 9124 1개, 16코어/32스레드 · NUMA 0**
 
-## CPU·메모리·NUMA
+큰 GPU용 자리는 **Gen5 x16 이중 폭 베이 4개**, 현재 GPU는 **3장**이다. 작은 NIC/RAID 자리는 GPU 베이와 별도다.
 
-| 노드 | 논리 CPU / 로컬 메모리 | 꽂힌 DIMM 위치, 속도 | 해석 |
+아래 PCIE 슬롯 쌍은 펌웨어 보고를 묶은 **베이 대응 추정**이다. 빈 실물 베이의 라벨·위치는 아직 확정하지 않았다.
+
+| 자리 / 펌웨어 보고 | 현재 꽂힌 장치 | 장치 지원 / 현재 협상 | 상태 |
 | --- | --- | --- | --- |
-| `sv4000-1/2` | 각 16C/32T, 단일 NUMA 0 | 각 DDR5-4800 64 GB×4: A1·C1·G1·I1, 12개 중 4개 | 12채널 플랫폼에서 4채널만 채웠다. 호스트 메모리 공급 대역폭 검토 대상. |
-| `rm352-1/2` | 각 12C/24T, 단일 NUMA 0 | 각 DDR4-2666 32 GB×6: A·B·D·E·F·H, 8개 중 6개 | C·G 채널 미장착. 196 GB로 적힌 기존 목록은 실장 기준 **192 GB**로 수정해서 해석. |
-| `l40s` | 24C/48T×2 = 48C/96T, NUMA 0·1 | 각 소켓에 DDR5-4800 64 GB×6: A·B·C·G·H·I, 전체 24개 중 12개 | 각 소켓 RAM 384 GB, Linux NUMA 메모리 약 378 GiB. 두 소켓 모두 12채널 중 6채널만 채움. |
+| GPU — PCIE1/2 보고 | RTX A6000 48 GB #2 | Gen4 x16 / 유휴 **Gen1 x16** | 장착 |
+| GPU — PCIE3/4 보고 | **빈 GPU 베이 후보** | **Gen5 x16 설계**, 미장착 | 추가 GPU/NPU **1장 후보**; 정확한 실물 베이 대조 필요 |
+| GPU — PCIE8/9 보고 | RTX A6000 48 GB #0 | Gen4 x16 / 유휴 **Gen1 x16** | 장착 |
+| GPU — PCIE10/11 보고 | A100 PCIe 40 GB #1 | Gen4 x16 / **Gen4 x16** | 장착 |
+| NIC — PCIE5 보고 | ConnectX-5 Ex, 100G 2포트 | Gen4 x16 / **Gen4 x16** | 카드 1장; 두 포트가 링크를 공유 |
+| NVMe 경로 | Samsung MZQL23T8HCLS, 약 3.84 TB | Gen4 x4 / **Gen4 x4** | SSD 1개; GPU 베이와 별도 |
+| 온보드 LAN | Intel I350, 1G 2포트 | Gen2 x4 / Gen2 x4 | 온보드; 추가 카드 자리로 세지 않음 |
+| 소형 확장 — PCIE6/7·PIKE 보고 | 펌웨어 `Available` | 실제 라이저·SKU에 따른 규격 확인 필요 | NIC/RAID 후보; 추가 대형 GPU 자리로 합산하지 않음 |
 
-빈 DIMM 수는 증설 가능성을 뜻할 뿐, 메모리 속도·RDIMM 종류·채널 균형·OEM 메모리 QVL을 무시하고 임의 증설해도 된다는 뜻이 아니다. 채널 미장착은 **잠재적** 메모리 대역폭 제약이며, 이 조사에서는 STREAM/실제 추론 처리량을 측정하지 않았다. [ASUS ESC4000A-E12 사양](https://dlcdnets.asus.com/pub/ASUS/server/ESC4000A-E12/Datasheet/DataSheet_ESC4000A-E12_20221020.pdf), [ASUS ESC8000A-E12 사양](https://servers.asus.com/products/detail/overview/ESC8000A-E12), [SPC621D8 설명서](https://download.asrock.com/Manual/SPC621D8.pdf).
+**여기에 추가할 수 있는 것:** 남은 큰 GPU 베이에 PCIe x16 GPU/NPU **1장**이 우선 후보다. RNGD나 RTX PRO 6000 Server Edition도 인터페이스상 검토 대상이지만 카드 크기·OEM 지원·보조전원·패시브 냉각 확인이 필요하다.
 
-## 슬롯 설계와 현재 점유를 세는 기준
+**메모리:** DDR5, 현재 4800 MT/s. **A1·C1·G1·I1에 각 64 GB**, **B1·D1·E1·F1·H1·J1·K1·L1은 비어 있다**. 총 256 GB, 12개 중 4개 장착.
 
-| 플랫폼 | 제조사에 명시된 슬롯 구조 | 이 조사에서 확장 판단에 사용한 부분 |
+**전원·디스크:** PSU 2600 W×2, 펌웨어 Present/OK. 1+1 중복 유지 시 한 모듈 용량으로 예산을 잡는다. SATA SSD 약 447 GiB + NVMe 약 3.5 TiB. 빈 디스크 베이 수는 확인하지 않았다.
+
+## sv4000-2
+
+**ASUS ESC4000A-E12 · EPYC 9124 1개, 16코어/32스레드 · NUMA 0**
+
+큰 GPU용 자리는 **Gen5 x16 이중 폭 베이 4개**, 현재 GPU는 **3장**이다.
+
+아래 PCIE 슬롯 쌍은 펌웨어 보고를 묶은 **베이 대응 추정**이다. 빈 실물 베이의 라벨·위치는 아직 확정하지 않았다.
+
+| 자리 / 펌웨어 보고 | 현재 꽂힌 장치 | 장치 지원 / 현재 협상 | 상태 |
+| --- | --- | --- | --- |
+| GPU — PCIE1/2 보고 | L40 48 GB #1 | Gen4 x16 / **Gen4 x16** | 장착 |
+| GPU — PCIE3/4 보고 | A100 PCIe 40 GB #2 | Gen4 x16 / **Gen4 x8** | 장착; 연결 폭이 카드 최대의 절반 |
+| GPU — PCIE8/9 보고 | L40 48 GB #0 | Gen4 x16 / 유휴 **Gen1 x16** | 장착 |
+| GPU — PCIE10/11 보고 | **빈 GPU 베이 후보** | **Gen5 x16 설계**, 미장착 | 추가 GPU/NPU **1장 후보**; 정확한 실물 베이 대조 필요 |
+| NIC — PCIE5 보고 | ConnectX-5, 100G 2포트 | Gen3 x16 / **Gen3 x16** | 카드 1장 |
+| NVMe 경로 | Samsung MZQL23T8HCLS, 약 3.84 TB | Gen4 x4 / **Gen4 x4** | SSD 1개 |
+| 온보드 LAN | Intel I350, 1G 2포트 | Gen2 x4 / Gen2 x4 | 온보드 |
+| 소형 확장 — PCIE6/7·PIKE 보고 | 펌웨어 `Available` | 실제 라이저·SKU에 따른 규격 확인 필요 | NIC/RAID 후보; GPU 베이와 별도 |
+
+**여기에 추가할 수 있는 것:** 남은 큰 GPU 베이에 PCIe x16 GPU/NPU **1장 후보**. 조건은 `sv4000-1`과 같다.
+
+**먼저 확인할 것:** A100은 이번에도 **Gen4 x8**이다. 카드와 상위 루트 포트의 최대 폭은 x16이지만 현재 둘 다 x8로 연결되어 있다. 유휴 Gen1과 다른 문제이며, 슬롯·라이저·BIOS 분기·접점을 대조해야 한다. 빈 베이로 옮기면 해결된다고 단정하지 않는다. A100의 MIG 모드는 현재 Enabled다.
+
+**메모리:** DDR5, 현재 4800 MT/s. **A1·C1·G1·I1에 각 64 GB**, **B1·D1·E1·F1·H1·J1·K1·L1은 비어 있다**. 총 256 GB.
+
+**전원·디스크:** PSU 2600 W×2, Present/OK. SATA SSD 약 466 GiB + NVMe 약 3.5 TiB. 빈 디스크 베이 수는 미확인.
+
+## rm352-1
+
+**ASRock Rack SPC621D8 · Xeon Silver 4310 1개, 12코어/24스레드 · NUMA 0**
+
+실제 섀시 SKU·라이저·PSU 정격은 미확인이다. 보드의 슬롯은 **Gen4**이고, x16 형상 4개와 x8 형상 3개가 있다. **모두 동시에 x16/x8 최대 폭을 제공하는 구조가 아니다.**
+
+| 보드 자리 | 현재 꽂힌 장치 / 상태 | 연결과 추가 장착 판단 |
 | --- | --- | --- |
-| ESC4000A-E12 (`sv4000-1/2`) | 후면 **Gen5 x16 FHFL 이중 폭 GPU 4개** 또는 Gen5 x8 단일 폭 GPU 8개. 별도 FHHL x16 NIC 1개, FHHL x16/x8 또는 OCP 선택 1개, LP/HL x8 1개. SKU1에는 전면 LP/HL x8 추가 | 각각 GPU 3장이므로 이중 폭 GPU 베이 1개씩. 작은 NIC/RAID 자리를 PRO 6000·RNGD용 FHFL GPU 자리로 합산하지 않음 |
-| SPC621D8 (`rm352-1/2`) | 보드 **PCIE1·3·5·7 = Gen4 x16**, **PCIE2·4·6 = Gen4 x8**. M.2 한 개 Gen3 x4, 다른 한 개 Gen3 x1/SATA | `rm352-1`: x16 GPU 2개 + x8 NIC 2개 → x16 최대 2개 후보. `rm352-2`: x16 GPU 2개 + x16 NIC 1개 + x8 NIC 1개 → x16 최대 1개 후보. 물리 이중 폭 공간·섀시 PSU는 별도 |
-| ESC8000A-E12 (`l40s`) | **Gen5 x16 FHFL 이중 폭 GPU 8개**, 별도 NIC/RAID 슬롯은 SKU별 변형 | GPU 8장으로 GPU 자리는 0. NIC/RAID 슬롯은 GPU 자리와 구분 |
+| **PCIE1** — 펌웨어 빈 자리 보고 | **빈 x16 후보** | 보드상 **독립 Gen4 x16**. GPU/NPU 또는 x16 NIC **1장 후보**; 이중 폭 간격·전원 확인 필요 |
+| PCIE2 — 펌웨어 대응 | ConnectX-5 Ex, 100G 2포트 | **Gen4 x8**. PCIE3과 레인을 나눔 |
+| PCIE3 — 펌웨어 대응 | Intel X540-AT2, 10G 2포트 | **Gen2 x8**. 보드의 이 그룹은 현재 x8+x8 |
+| PCIE4 — **추정** | PCIe 장치 없는 자리 후보 | Gen4 x8 후보. 여기에 꽂으면 PCIE5 GPU가 x8로 줄 수 있음; GPU 두께가 자리를 가릴 수도 있음 |
+| PCIE5 — **추정** | Quadro RTX 6000 24 GB #0 | Gen3 x16 지원 / 현재 유휴 **Gen1 x16** |
+| PCIE6 — **추정** | PCIe 장치 없는 자리 후보 | Gen4 x8 후보. 여기에 꽂으면 PCIE7의 A10이 x8로 줄 수 있음 |
+| PCIE7 — **추정** | A10 24 GB #1 | Gen4 x16 지원 / 현재 유휴 **Gen1 x16** |
+| M2_1 — x4 경로 | **NVMe 미장착 후보** | Gen3 x4 M.2 SSD 후보. 이 경로에는 NVMe가 열거되지 않음; 실물 확인 필요 |
+| M2_2 — x1 경로 | Samsung 970 EVO Plus **2 TB** | **Gen3 x1**. SSD 자체는 x4 지원 |
+| 온보드 LAN / SATA | Intel I210 1G×2 / SATA SSD 약 447 GiB | PCIe 추가 카드 슬롯과 별도 |
 
-위 표의 x16/x8은 **제조사 배선/슬롯 설계**이고, 아래 장치별 표는 **현재 협상된 실제 링크**다. 예를 들어 Gen5 x16 슬롯의 Gen4 GPU는 정상적으로 Gen4로 연결될 수 있다. 또한 슬롯이 비어도 이중 폭 카드가 옆의 NIC, 케이블 또는 섀시 벽과 간섭할 수 있다.
+**여기에 추가할 수 있는 것:** 기존 카드의 연결 폭을 유지하려면 **PCIE1이 우선 후보**다. GPU/NPU를 넣을 경우 **Gen4 x16**으로 검토하며, Gen5 x16 대역폭을 제공하는 자리가 아니다. 나머지 빈 x8 후보는 NIC·NVMe 어댑터 등 소형 카드용으로 검토하되 옆 GPU의 레인 감소를 함께 계산한다.
 
-## 노드별 현재 카드와 PCIe 경로
+**추정 표시의 이유:** 펌웨어는 RTX 6000을 `PCIE4`, A10을 `PCIE6`으로 보고하지만 두 카드의 실제 연결은 x16이다. 매뉴얼에서 이 번호는 x8이므로 그대로 실물 슬롯 번호로 쓰지 않았다. 위 PCIE5/7 배치는 보드의 슬롯 쌍과 실측 폭으로 추정한 것이며, 사진·실크스크린 확인 전 확정하지 않는다. M2_1의 펌웨어 주소도 NVMe가 아닌 I210 경로를 가리킨다.
 
-### `sv4000-1` — ASUS ESC4000A-E12
+**메모리:** DDR4, 현재 2666 MT/s. **A·B·D·E·F·H에 각 32 GB**, **C·G는 비어 있다**. 총 192 GB. 장착 DIMM의 정격은 2666/3200 MT/s가 섞여 있으므로 증설 시 모듈 규격을 대조한다.
 
-| 장치 | BDF | CPU 루트 포트 | NUMA | 실측 링크 |
-| --- | --- | --- | ---: | --- |
-| RTX A6000 48 GB #0 | `0000:01:00.0` | `00:01.1` | 0 | Gen4 x16 지원, 조회 시 유휴 Gen1 x16 |
-| A100 PCIe 40 GB | `0000:02:00.0` | `00:03.1` | 0 | **Gen4 x16** |
-| RTX A6000 48 GB #1 | `0000:c1:00.0` | `c0:01.1` | 0 | **Gen4 x16** |
-| ConnectX-5 Ex 100G NIC 2포트 | `0000:41:00.0/.1` | `40:01.1` | 0 | **Gen4 x16**, 한 포트 100G 링크 Up |
+**디스크:** SATA 약 447 GiB + NVMe 약 1.8 TiB. 현재 2 TB NVMe는 x1이라 x4 M.2보다 전송 상한이 낮다.
 
-ASUS는 이 모델에 Gen5 x16 이중 폭 GPU 4장을 명시한다. 3장이 있으므로 **GPU 베이 1개가 보드/제품 설계상 남는다**. 실제 빈 베이의 후면 라벨과 12V 보조전원 커넥터는 열어 확인해야 한다. PSU는 SMBIOS에서 **2600 W×2, 모두 Present/OK**로 보이며, 제품의 1+1 중복 구성에서는 전체 설계를 **한 모듈 2600 W 이내**로 계산해야 한다. GPU 현 설정 전력 한도 합은 300+250+300 = **850 W**이며 CPU·팬·디스크·NIC 전력은 별도다. 보조전원 케이블 종류와 카드별 OEM 지원은 확인되지 않았다. [ASUS 제품 사양](https://servers.asus.com/products/detail/overview/ESC4000A-E12).
+## rm352-2
 
-### `sv4000-2` — ASUS ESC4000A-E12
+**ASRock Rack SPC621D8 · Xeon Silver 4310 1개, 12코어/24스레드 · NUMA 0**
 
-| 장치 | BDF | CPU 루트 포트 | NUMA | 실측 링크 |
-| --- | --- | --- | ---: | --- |
-| L40 48 GB #0 | `0000:01:00.0` | `00:01.1` | 0 | Gen4 x16 지원, 조회 시 유휴 Gen1 x16 |
-| L40 48 GB #1 | `0000:c1:00.0` | `c0:01.1` | 0 | **Gen4 x16** |
-| A100 PCIe 40 GB | `0000:c2:00.0` | `c0:03.1` | 0 | **Gen4 x8**, 카드·루트 포트의 최대 폭은 x16 |
-| ConnectX-5 100G NIC 2포트 | `0000:41:00.0/.1` | `40:01.1` | 0 | **Gen3 x16**, 한 포트 100G 링크 Up |
+`rm352-1`과 같은 Gen4 보드지만 **100G NIC가 x16 경로를 사용한다**. 실제 섀시·전원·슬롯 간격은 미확인이다.
 
-이 노드도 설계상 GPU 베이 **1개 후보**가 있다. 그러나 A100은 같은 카드가 `sv4000-1`에서 x16으로 동작하는 데 비해 여기서는 **x8로 협상**했다. Gen4 한 방향의 이론 데이터량이 x16 약 31.5 GB/s에서 x8 약 15.75 GB/s로 줄어든다. A100 및 상위 루트 포트가 모두 x8을 보고하므로 단순 유휴 속도 하향과 다르다. **x8 배선/분기 설정, 슬롯 선택, 라이저·접점·카드 상태**를 실제 후면 슬롯·BIOS와 대조해야 원인을 확정할 수 있다. 빈 x16 베이로 옮기면 고쳐진다는 보장은 없다. A100은 현재 MIG 1g.5gb×7로 노출되어 Kubernetes의 일반 `nvidia.com/gpu`는 2개(L40 두 장)다.
-
-PSU는 **2600 W×2 Present/OK**, 현 GPU 전력 한도는 300+300+250 = **850 W**다. NIC는 Gen3 x16으로, 단일 100G Up 포트에 대해 PCIe 이론 상한만으로 병목을 단정할 수 없다. 두 100G 포트를 동시에 최대 속도로 쓸 경우 Gen3 x16의 약 15.75 GB/s 한 방향이 선로 합계 25 GB/s보다 작아 **PCIe가 집계 상한**이 된다. [ASUS 제품 사양](https://servers.asus.com/products/detail/overview/ESC4000A-E12).
-
-### `rm352-1` — ASRock Rack SPC621D8 보드, 실제 섀시 SKU 미확인
-
-| 장치 | BDF / 루트 포트 | NUMA | 실측 링크 |
-| --- | --- | ---: | --- |
-| Quadro RTX 6000 24 GB | `51:00.0` / `50:02.0` | 0 | Gen3 x16 지원, 조회 시 유휴 Gen1 x16 |
-| A10 24 GB | `8a:00.0` / `89:02.0` | 0 | **Gen4 x16** |
-| ConnectX-5 Ex 100G 2포트 | `18:00.0/.1` / `17:02.0` | 0 | **Gen4 x8**, 한 포트 100G Up |
-| Intel X540-AT2 10G 2포트 | `19:00.0/.1` / `17:04.0` | 0 | Gen2 x8, 현재 포트 Down |
-| Samsung 970 EVO Plus 2 TB | `05:00.0` / PCH M.2 | 0 | **Gen3 x1** (SSD 자체 최대 x4) |
-
-보드 매뉴얼은 **Gen4 x16 슬롯 4개 + Gen4 x8 슬롯 3개**를 명시한다. 현재 GPU가 x16급 경로 2개를, 두 NIC가 x8급 경로 2개를 사용하므로 **보드 x16 자리 최대 2개 후보**다. 하지만 카드의 실제 위치·이중 폭 간격·RM352 섀시의 GPU 덕트·케이블은 미확인이다. PSU 정격도 SMBIOS/BMC 조회로 확정하지 못했다. `RM352`라는 현장 명칭만으로 특정 Chenbro 섀시와 1600 W PSU를 가정하지 않는다. [SPC621D8 설명서](https://download.asrock.com/Manual/SPC621D8.pdf).
-
-2 TB NVMe는 보드의 **Gen3 x1 M.2** 경로에 설치되어 있다. 설명서상 이 보드는 x4 M.2와 x1 M.2를 각각 하나씩 제공하므로 장애 증거는 아니지만, 이 SSD는 이론상 x1 약 0.985 GB/s 한 방향으로 제한된다. 현재 컨테이너 데이터 경로에 마운트되어 있어 I/O 요구량에 따라 병목 후보이다. **실측 I/O 지연·처리량은 미조사**다. 100G NIC의 Gen4 x8 이론 상한 약 15.75 GB/s는 한 포트 100G 선로 약 12.5 GB/s보다 크지만, 두 포트 합 25 GB/s에는 못 미친다.
-
-### `rm352-2` — ASRock Rack SPC621D8 보드, 실제 섀시 SKU 미확인
-
-| 장치 | BDF / 루트 포트 | NUMA | 실측 링크 |
-| --- | --- | ---: | --- |
-| Quadro RTX 6000 24 GB | `51:00.0` / `50:02.0` | 0 | Gen3 x16 지원, 조회 시 유휴 Gen2 x16 |
-| A10 24 GB | `c3:00.0` / `c2:02.0` | 0 | **Gen4 x16** |
-| ConnectX-5 100G 2포트 | `8a:00.0/.1` / `89:02.0` | 0 | **Gen3 x16**, 한 포트 100G Up |
-| Intel X540-AT2 10G 2포트 | `18:00.0/.1` / `17:04.0` | 0 | Gen2 x8, 한 포트 1G Up |
-| Samsung 970 EVO Plus 500 GB×2 | `01:00.0` 및 `05:00.0` | 0 | 각각 **Gen3 x4**, **Gen3 x1** |
-
-여기서는 100G NIC가 `rm352-1`과 달리 **x16급 CPU 경로 한 개를 차지한다**. GPU 2개와 NIC 1개가 x16 경로를 점유하므로 4개 중 **최대 1개**가 남는 계산이다. NIC를 x8 슬롯으로 무작정 이동하면 구형 ConnectX-5의 Gen3 x8에서 100G 한 포트조차 이론 상한 약 7.88 GB/s로 제한되므로, GPU 자리 확보만 보고 이동하면 안 된다. 정확한 라이저·실물 슬롯 라벨과 PSU는 미확인이다. 이 노드는 Kubernetes에서 Ready이지만 **SchedulingDisabled(cordon)** 상태다. x1 NVMe는 500 GB 장치이고 보드의 두 번째 M.2 경로 사양과 일치한다. [SPC621D8 설명서](https://download.asrock.com/Manual/SPC621D8.pdf).
-
-### `l40s` — ASUS ESC8000A-E12
-
-| GPU | BDF | 펌웨어 PCIE 명칭² | NUMA | 실측 링크 |
-| --- | --- | --- | ---: | --- |
-| L40S 48 GB #0 | `01:00.0` | PCIE3 | 0 | Gen4 x16 |
-| L40S 48 GB #1 | `21:00.0` | PCIE4 | 0 | Gen4 x16 |
-| L40S 48 GB #2 | `41:00.0` | PCIE2 | 0 | Gen4 x16 |
-| L40S 48 GB #3 | `61:00.0` | PCIE1 | 0 | Gen4 x16, 조회 시 유휴 Gen1 x16 |
-| L40S 48 GB #4 | `81:00.0` | PCIE7 | 1 | Gen4 x16 |
-| L40S 48 GB #5 | `a1:00.0` | PCIE8 | 1 | Gen4 x16 |
-| L40S 48 GB #6 | `c1:00.0` | PCIE6 | 1 | Gen4 x16 |
-| L40S 48 GB #7 | `e1:00.0` | PCIE5 | 1 | Gen4 x16, 조회 시 유휴 Gen1 x16 |
-
-² SMBIOS `dmidecode -t slot` 명칭이며 후면 실크스크린은 현장에서 대조해야 한다. GPU는 **소켓별 4장으로 균형 있게 분배**되어 있고 모두 x16으로 연결된다. ConnectX-5 100G NIC(`22:00.0/.1`)는 **NUMA 0, Gen3 x16**이고 한 포트 100G Up이다. 따라서 NUMA 1의 GPU #4–#7에서 이 NIC로 가는 경로는 `nvidia-smi topo -m`에서 **SYS**, 즉 소켓 간 경로를 지난다. 실제 워크로드의 네트워크 병목 여부는 트래픽·GPU/NIC 어피니티 측정이 필요하다.
-
-GPU 베이는 ASUS 사양의 **8개 이중 폭 자리 모두 사용**한다. 별도 NIC/스토리지 슬롯을 9번째 GPU 자리로 세지 않는다. PSU는 SMBIOS에서 **3000 W×4 Present/OK**다. 실제 중복 모드와 랙 전력 여유는 BMC/전원 설비와 대조해야 한다. [ASUS ESC8000A-E12 사양](https://servers.asus.com/products/detail/overview/ESC8000A-E12).
-
-### 그 밖에 현재 보이는 PCIe 종단 장치
-
-위 표의 GPU·고속 NIC 외에도 다음 장치가 이미 연결되어 있다. 포트가 여러 개인 NIC는 **카드 한 장의 PCIe 링크를 공유**하므로 포트 수만큼 x8/x16 슬롯을 중복 계산하지 않는다. 온보드 장치와 NVMe 백플레인도 여기 기록하지만, 이 BDF를 빈 확장 슬롯으로 해석하지 않는다.
-
-| 노드 | 장치·BDF | 실측 링크와 비고 |
+| 보드 자리 | 현재 꽂힌 장치 / 상태 | 연결과 추가 장착 판단 |
 | --- | --- | --- |
-| `sv4000-1` | Intel I350 1G×2 `03:00.0/.1`; Samsung NVMe `42:00.0`; ASPEED 관리 그래픽 브리지 `c2:00.0` | 각각 **Gen2 x4**, **Gen4 x4**, **Gen2 x1** |
-| `sv4000-2` | Intel I350 1G×2 `02:00.0/.1`; Samsung NVMe `42:00.0`; ASPEED 브리지 `c3:00.0` | 각각 **Gen2 x4**, **Gen4 x4**, **Gen2 x1** |
-| `rm352-1` | Intel I210 1G 2개 `02:00.0`·`03:00.0`; Samsung NVMe `05:00.0`; ASPEED 브리지 `06:00.0` | I210 각각 **Gen1 x1**, NVMe **Gen3 x1**, ASPEED **Gen2 x1** |
-| `rm352-2` | Intel I210 1G 2개 `02:00.0`·`03:00.0`; Samsung NVMe `01:00.0`·`05:00.0`; ASPEED 브리지 `06:00.0` | I210 각각 **Gen1 x1**, NVMe 순서대로 **Gen3 x4**·**Gen3 x1**, ASPEED **Gen2 x1** |
-| `l40s` | Intel X710 10G×2 `82:00.0/.1`; Samsung NVMe `c3:00.0`·`c4:00.0`·`c5:00.0`; Marvell SATA `e2:00.0`; ASPEED 브리지 `62:00.0` | 각각 **Gen3 x4**, NVMe 각 **Gen4 x4**, **Gen2 x2**, **Gen2 x1**. X710 한 포트는 조회 시 1G Up |
+| PCIE1 — 펌웨어 대응 | A10 24 GB #1 | **Gen4 x16** |
+| **PCIE2** — 펌웨어 빈 자리 보고 | **빈 x8 후보** | Gen4 x8 자리. PCIE3의 X540과 공유하는 그룹 |
+| PCIE3 — 펌웨어 대응 | Intel X540-AT2, 10G 2포트 | **Gen2 x8** |
+| PCIE4 — **추정** | PCIe 장치 없는 자리 후보 | Gen4 x8 후보. 사용 시 PCIE5 GPU의 x16 유지 불가 |
+| PCIE5 — **추정** | Quadro RTX 6000 24 GB #0 | Gen3 x16 지원 / 현재 유휴 **Gen2 x16** |
+| PCIE6 — **추정** | PCIe 장치 없는 자리 후보 | Gen4 x8 후보. 사용 시 PCIE7의 100G NIC가 **Gen3 x8**로 줄 수 있음 |
+| PCIE7 — **추정** | ConnectX-5, 100G 2포트 | **Gen3 x16** |
+| M2_1 — x4 경로 | Samsung 970 EVO Plus **500 GB** | **Gen3 x4** |
+| M2_2 — x1 경로 | Samsung 970 EVO Plus **500 GB** | **Gen3 x1** |
+| 온보드 LAN / SATA | Intel I210 1G×2 / SATA SSD 약 447 GiB | PCIe 추가 카드 슬롯과 별도 |
 
-## 저장장치와 Kubernetes 상태
+**여기에 추가할 수 있는 것:** 빈 후보는 **x8 소형 카드 자리**다. 기존 GPU와 100G NIC의 x16 연결을 유지하면서 추가할 **독립 x16 자리는 확인되지 않았다**. 특히 100G NIC를 Gen3 x8로 줄이면 이론상 한 방향 약 7.88 GB/s로, 100G 선로의 12.5 GB/s보다 작다.
 
-아래는 OS에 보인 **물리 SSD**만 세었다. Ceph RBD·loop·가상 미디어는 제외한다.
+**슬롯 번호 주의:** PCIE4–7은 `rm352-1`과 같은 펌웨어/실측 폭 불일치가 있어 추정이다. 빈 커넥터가 보여도 “x16 GPU를 성능 저하 없이 추가할 수 있다”로 읽지 않는다.
 
-| 노드 | 물리 SSD (Linux 표시 용량) | Kubernetes 상태 / 가속기 노출 |
+**메모리:** DDR4, 현재 2666 MT/s. **A·B·D·E·F·H에 각 32 GB**, **C·G는 비어 있다**. 총 192 GB, 정격 2666/3200 MT/s DIMM 혼재.
+
+**디스크:** SATA 약 447 GiB + NVMe 약 466 GiB×2. **M.2 두 경로 모두 사용 중**이다.
+
+## l40s
+
+**ASUS ESC8000A-E12 · EPYC 9254 2개, 총 48코어/96스레드 · NUMA 0·1**
+
+큰 GPU 자리는 **Gen5 x16 이중 폭 베이 8개**, **8개 모두 L40S가 꽂혀 있다**. 아래 GPU 슬롯 번호는 펌웨어 주소와 GPU가 일대일로 대응하지만 후면 실물 라벨은 미대조다.
+
+| 자리 / 펌웨어 보고 | 현재 꽂힌 장치 | 소속 | 장치 지원 / 현재 협상 |
+| --- | --- | --- | --- |
+| PCIE1 | L40S 48 GB #3 | NUMA 0 | Gen4 x16 / 유휴 Gen1 x16 |
+| PCIE2 | L40S 48 GB #2 | NUMA 0 | Gen4 x16 / Gen4 x16 |
+| PCIE3 | L40S 48 GB #0 | NUMA 0 | Gen4 x16 / Gen4 x16 |
+| PCIE4 | L40S 48 GB #1 | NUMA 0 | Gen4 x16 / Gen4 x16 |
+| PCIE5 | L40S 48 GB #7 | NUMA 1 | Gen4 x16 / 유휴 Gen1 x16 |
+| PCIE6 | L40S 48 GB #6 | NUMA 1 | Gen4 x16 / Gen4 x16 |
+| PCIE7 | L40S 48 GB #4 | NUMA 1 | Gen4 x16 / Gen4 x16 |
+| PCIE8 | L40S 48 GB #5 | NUMA 1 | Gen4 x16 / Gen4 x16 |
+| PCIE_NIC1 | ConnectX-5, 100G 2포트 | NUMA 0 | Gen3 x16 / Gen3 x16 |
+| **PCIE_NIC2** | **빈 소형 카드 자리 후보** | 미확인 | 펌웨어 **Gen5 x8**, `Available`; 실제 SKU·라이저 확인 필요 |
+| PCIE_NIC3 보고 / NVMe 경로 | **NVMe 연결로 보고됨** | NUMA 1 | 대응 주소의 SSD는 **Gen4 x4**; 빈 NIC 슬롯으로 세지 않음 |
+| NVMe 경로 3개 | Samsung SSD **1.92 TB + 3.84 TB + 3.84 TB** | 모두 NUMA 1 | 각각 **Gen4 x4** |
+| **M.2** | **빈 SSD 자리 후보** | 미확인 | 펌웨어 x4, `Available`; 세대·길이·실제 장착 여부 확인 필요 |
+| 온보드 LAN | Intel X710, 10G 2포트 | NUMA 1 | Gen3 x4 / Gen3 x4 |
+| SATA 컨트롤러 | Marvell 88SE9230, SATA 6G 4포트 | 미확인 | Gen2 x2 / Gen2 x2; GPU 베이로 세지 않음 |
+
+**여기에 추가할 수 있는 것:** **추가 큰 GPU/NPU 베이는 없다.** 별도 `PCIE_NIC2`는 크기와 SKU가 맞는 소형 NIC/스토리지 카드 후보, M.2는 SSD 후보다. 두 자리를 “9번째 GPU 자리”로 세지 않는다. NVMe와 PCIE_NIC3 보고는 중복 집계하지 않는다.
+
+**NUMA 배치:** GPU는 CPU당 4장이다. 100G NIC는 NUMA 0이므로 NUMA 1의 GPU가 이 NIC를 쓸 때 소켓 간 경로를 거친다. PCIe 슬롯 Gen5 여부와 별개인 데이터 이동 조건이다.
+
+**메모리:** CPU1·CPU2 **각각 A1·B1·C1·G1·H1·I1에 64 GB**, **각각 D1·E1·F1·J1·K1·L1은 비어 있다**. 총 768 GB, 24개 중 12개 장착. DIMM 정격은 5600 MT/s이고 실제 설정은 **4800 MT/s**다.
+
+**전원·디스크:** PSU 3000 W×4, Present/OK. 실제 중복 모드·랙 전력 여유는 별도 확인. 물리 NVMe 약 1.7 TiB + 3.5 TiB + 3.5 TiB.
+
+## 어떤 카드를 어느 노드에 검토할 수 있나
+
+| 추가 장치 | 우선 자리 | 가능한 범위 / 조건 |
 | --- | --- | --- |
-| `sv4000-1` | SATA 약 447 GiB + NVMe 약 3.5 TiB | Ready, GPU 3 |
-| `sv4000-2` | SATA 약 466 GiB + NVMe 약 3.5 TiB | Ready, GPU 2 + A100 MIG 1g.5gb×7 |
-| `rm352-1` | SATA 약 447 GiB + NVMe 약 1.8 TiB | Ready, GPU 2 |
-| `rm352-2` | SATA 약 447 GiB + NVMe 약 466 GiB×2 | Ready, **cordoned**, GPU 2 |
-| `l40s` | NVMe 약 3.5 + 1.7 + 3.5 TiB | Ready, GPU 8 |
+| Gen5 x16 GPU/NPU | sv4000-1·2의 빈 큰 GPU 베이, **각 1개** | Gen5 x16 설계 후보. 카드 두께·길이·전원 케이블·냉각·OEM QVL 대조 필요 |
+| Gen4 x16 GPU/NPU 또는 x16 NIC | rm352-1 **PCIE1 후보 1개** | 독립 x16 설계. 섀시 공간·PSU가 미확인이라 대형/고전력 카드 장착은 아직 확정 불가 |
+| x8 소형 NIC·NVMe 어댑터 | RM352의 빈 x8 후보, l40s **PCIE_NIC2 후보** | 슬롯 공유, 인접 카드 간섭, 라이저·SKU 확인. RM352에서는 옆 장치의 x16→x8 감소를 함께 계산 |
+| M.2 SSD | rm352-1 **M2_1 후보**, l40s **M.2 후보** | 전자는 Gen3 x4 설계·NVMe 미열거, 후자는 펌웨어 빈 자리 보고. 실물 장착 여부·길이·지원 세대 확인 |
+| 추가 대형 GPU를 l40s에 장착 | **빈 GPU 베이 없음** | 기존 GPU 교체 또는 다른 서버 배치가 필요 |
 
-## 우선순위가 높은 병목·불확실성
+이전에 요청한 **NPU 4장 + AMD GPU 4장 + RTX PRO 6000 4장 = 12장**을 기존 카드 유지 조건으로 이 5대에 모두 추가할 수는 없다. 위의 **독립 x16 대형 카드 후보는 총 3개**이며 이마저 현장 장착 보증은 아니다. **Gen5 GPU 베이 후보는 SV4000의 2개뿐**이다.
 
-| 우선순위 | 관측 | 영향과 다음 확인 |
-| --- | --- | --- |
-| **1** | `sv4000-2` A100만 **Gen4 x8**, 카드·루트 포트 최대 x16 | GPU ↔ 호스트 전송 상한이 x16의 절반. BIOS 분기·배선·라이저·실물 슬롯 확인 후 부하 중 링크 재확인. `sv4000-1` A100 x16과 비교. |
-| **1** | 12장 추가 요구 대비 x16 후보 **최대 5**, 그중 Gen5 설계 후보 **2** | 기존 카드 유지라면 현 5대만으로 요구 충족 불가. 카드 SKU와 필요한 Gen/폭을 확정하고 별도 서버/재배치안을 산정. |
-| **2** | `rm352-2` 100G NIC가 x16급 슬롯 사용 | 추가 카드 자리 1개 감소. Gen3 NIC를 x8로 옮기면 100G 한 포트도 제한될 수 있어 기존 서비스 속도와 맞바꿀 수 없음. |
-| **2** | `rm352-1` 2 TB 및 `rm352-2` 500 GB NVMe 하나가 Gen3 x1 M.2 | 보드 설계에 맞는 연결이지만 데이터 I/O 상한 낮음. NVMe 실제 사용량·지연 확인 후 x4 M.2/다른 저장 위치 검토. |
-| **2** | `l40s` NIC NUMA 0, GPU 절반 NUMA 1 | 네트워크를 많이 쓰는 GPU #4–#7은 소켓 간 경로 사용. GPU/NIC/CPU/메모리 배치와 실제 전송량 검증. |
-| **3** | SV4000 DIMM 4/12, L40S 소켓별 6/12, RM352 6/8 | 채널 미장착으로 호스트 메모리 대역폭 여지 남음. 메모리 집약 워크로드에서만 실측 후 증설 판단. |
-| **미판정** | 일부 GPU 링크 조회 순간 Gen1/Gen2 | 유휴 절전 속도일 수 있다. **폭이 x16이면 이 수치만으로 장애로 분류하지 않음.** |
+[RNGD](https://developer.furiosa.ai/docs/v2024.2.1/en/overview/rngd.html)는 Gen5 x16을 지원한다. [RTX PRO 6000 Blackwell Server Edition](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000-family/)은 Gen5 x16·이중 폭·패시브 냉각이며 400–600 W 전력 조건을 대조해야 한다. AMD GPU는 모델과 PCIe/OAM 형태가 미확정이므로 자리 배정을 확정하지 않는다.
 
-## 추가 카드별 판단과 현장 확인
+## 실측 상세
 
-| 추가 카드 | 공식 요구/가정 | 현재 5대에서의 판단 |
-| --- | --- | --- |
-| Furiosa RNGD NPU×4 | **Gen5 x16, 이중 폭, 3/4 길이, 패시브, 150 W, 12VHPWR** | SV4000의 2개 빈 GPU 베이가 우선 검토 대상. RM352의 후보는 Gen4여서 인터페이스 최대 대역폭이 절반이고 OEM 지원·보조전원·냉각 확인 필요. 네 장의 동일 성능·동일 토폴로지 배치는 현재 증거로 불가능. |
-| RTX PRO 6000 Blackwell Server Edition×4 | **Gen5 x16, 이중 폭 FHFL, 패시브, 설정에 따라 400–600 W** | SV4000 2자리는 물리 설계 후보이나 케이블·600 W 연속 공급·OEM QVL 확인 전 장착 확정 불가. RM352는 Gen4이고 PSU/덕트가 미확인이라 고전력 카드 후보로 승인할 수 없음. |
-| AMD GPU×4 | **모델·폼팩터·전력 미확정** | PCIe 카드인지 OAM 모듈인지에 따라 판단 자체가 달라진다. 모델/P/N, 크기, 냉각 방식, 보조전원, PCIe 세대·폭을 받은 뒤 위 슬롯 표로 재계산. |
+<details>
+<summary>PCI 주소·CPU 루트 포트·카드 지원 세대·현재 링크 보기</summary>
 
-구매·배치 확정 전 **각 서버를 실제로 열어** (1) 후면 슬롯·라이저·GPU 간 간격과 장착 길이/높이, (2) PSU **실제 라벨/중복 모드**, 카드별 보조전원 케이블·커넥터·전력 예산, (3) 패시브 카드의 전면→후면 공기 흐름과 OEM QVL, (4) RM352 정확한 섀시 모델, (5) 슬롯 라벨 ↔ BDF ↔ CPU 루트·NUMA를 사진과 함께 확인해야 한다. 슬롯 변경은 서비스 중단·Kubernetes GPU 노출 변경을 수반하므로 별도 작업 계획과 유지보수 창에서 수행한다. 이 단계에서는 카드 이동, BIOS 변경, 성능 부하 시험을 수행하지 않았다.
+PCI 주소는 모두 도메인 `0000`이다. 주소와 GPU #번호는 재부팅·카드 이동 후 바뀔 수 있다. 두 포트 NIC의 `.0/.1`은 카드 하나로 묶었다. GPU의 오디오/USB 기능은 별도 카드로 세지 않았다. 여기의 “지원”은 장치가 보고한 최대값이며 빈 슬롯의 배선을 뜻하지 않는다.
 
-재측정 명령 예시: `lscpu`, `sudo dmidecode -t memory -t slot -t 39`, `lspci -Dnn`, `lspci -Dtv`, `cat /sys/bus/pci/devices/<BDF>/{numa_node,current_link_width,current_link_speed,max_link_width,max_link_speed}`, `nvidia-smi --query-gpu=index,name,pci.bus_id,pcie.link.gen.current,pcie.link.width.current --format=csv`, `nvidia-smi topo -m`, `kubectl get nodes -o wide`. **PCIe 속도는 실제 GPU 부하 중 다시 확인**하고, 기존 장치와 신규 장치의 드라이버·Kubernetes device plugin 공존도 설치 계획에서 별도 검증한다.
+### sv4000-1
+
+| 장치 | BDF | 상위 루트 | NUMA | 장치 지원 | 현재 링크 |
+| --- | --- | --- | --- | --- | --- |
+| NVIDIA RTX A6000 #0 | `01:00.0` | `00:01.1` | 0 | Gen4 x16 | Gen1 x16 |
+| NVIDIA A100-PCIE-40GB #1 | `02:00.0` | `00:03.1` | 0 | Gen4 x16 | Gen4 x16 |
+| Intel I350 1G 2포트 | `03:00.0` | `00:05.1` | 0 | Gen2 x4 | Gen2 x4 |
+| ConnectX-5 Ex 100G 2포트 | `41:00.0` | `40:01.1` | 0 | Gen4 x16 | Gen4 x16 |
+| SAMSUNG MZQL23T8HCLS-00A07 | `42:00.0` | `40:03.2` | 0 | Gen4 x4 | Gen4 x4 |
+| NVIDIA RTX A6000 #2 | `c1:00.0` | `c0:01.1` | 0 | Gen4 x16 | Gen1 x16 |
+| ASPEED 관리 그래픽 브리지 | `c2:00.0` | `c0:05.2` | 0 | Gen2 x1 | Gen2 x1 |
+
+### sv4000-2
+
+| 장치 | BDF | 상위 루트 | NUMA | 장치 지원 | 현재 링크 |
+| --- | --- | --- | --- | --- | --- |
+| NVIDIA L40 #0 | `01:00.0` | `00:01.1` | 0 | Gen4 x16 | Gen1 x16 |
+| Intel I350 1G 2포트 | `02:00.0` | `00:05.1` | 0 | Gen2 x4 | Gen2 x4 |
+| ConnectX-5 100G 2포트 | `41:00.0` | `40:01.1` | 0 | Gen3 x16 | Gen3 x16 |
+| SAMSUNG MZQL23T8HCLS-00A07 | `42:00.0` | `40:03.2` | 0 | Gen4 x4 | Gen4 x4 |
+| NVIDIA L40 #1 | `c1:00.0` | `c0:01.1` | 0 | Gen4 x16 | Gen4 x16 |
+| NVIDIA A100-PCIE-40GB #2 | `c2:00.0` | `c0:03.1` | 0 | Gen4 x16 | Gen4 x8 |
+| ASPEED 관리 그래픽 브리지 | `c3:00.0` | `c0:05.2` | 0 | Gen2 x1 | Gen2 x1 |
+
+### rm352-1
+
+| 장치 | BDF | 상위 루트 | NUMA | 장치 지원 | 현재 링크 |
+| --- | --- | --- | --- | --- | --- |
+| Intel I210 1G | `02:00.0` | `00:1c.4` | 0 | Gen1 x1 | Gen1 x1 |
+| Intel I210 1G | `03:00.0` | `00:1c.5` | 0 | Gen1 x1 | Gen1 x1 |
+| Samsung SSD 970 EVO Plus 2TB | `05:00.0` | `00:1d.2` | 0 | Gen3 x4 | Gen3 x1 |
+| ASPEED 관리 그래픽 브리지 | `06:00.0` | `00:1d.3` | 0 | Gen2 x1 | Gen2 x1 |
+| ConnectX-5 Ex 100G 2포트 | `18:00.0` | `17:02.0` | 0 | Gen4 x16 | Gen4 x8 |
+| Intel X540 10G 2포트 | `19:00.0` | `17:04.0` | 0 | Gen2 x8 | Gen2 x8 |
+| Quadro RTX 6000 #0 | `51:00.0` | `50:02.0` | 0 | Gen3 x16 | Gen1 x16 |
+| NVIDIA A10 #1 | `8a:00.0` | `89:02.0` | 0 | Gen4 x16 | Gen1 x16 |
+
+### rm352-2
+
+| 장치 | BDF | 상위 루트 | NUMA | 장치 지원 | 현재 링크 |
+| --- | --- | --- | --- | --- | --- |
+| Samsung SSD 970 EVO Plus 500GB | `01:00.0` | `00:1c.0` | 0 | Gen3 x4 | Gen3 x4 |
+| Intel I210 1G | `02:00.0` | `00:1c.4` | 0 | Gen1 x1 | Gen1 x1 |
+| Intel I210 1G | `03:00.0` | `00:1c.5` | 0 | Gen1 x1 | Gen1 x1 |
+| Samsung SSD 970 EVO Plus 500GB | `05:00.0` | `00:1d.2` | 0 | Gen3 x4 | Gen3 x1 |
+| ASPEED 관리 그래픽 브리지 | `06:00.0` | `00:1d.3` | 0 | Gen2 x1 | Gen2 x1 |
+| Intel X540 10G 2포트 | `18:00.0` | `17:04.0` | 0 | Gen2 x8 | Gen2 x8 |
+| Quadro RTX 6000 #0 | `51:00.0` | `50:02.0` | 0 | Gen3 x16 | Gen2 x16 |
+| ConnectX-5 100G 2포트 | `8a:00.0` | `89:02.0` | 0 | Gen3 x16 | Gen3 x16 |
+| NVIDIA A10 #1 | `c3:00.0` | `c2:02.0` | 0 | Gen4 x16 | Gen4 x16 |
+
+### l40s
+
+| 장치 | BDF | 상위 루트 | NUMA | 장치 지원 | 현재 링크 |
+| --- | --- | --- | --- | --- | --- |
+| NVIDIA L40S #0 | `01:00.0` | `00:01.1` | 0 | Gen4 x16 | Gen4 x16 |
+| NVIDIA L40S #1 | `21:00.0` | `20:01.1` | 0 | Gen4 x16 | Gen4 x16 |
+| ConnectX-5 100G 2포트 | `22:00.0` | `20:03.1` | 0 | Gen3 x16 | Gen3 x16 |
+| NVIDIA L40S #2 | `41:00.0` | `40:01.1` | 0 | Gen4 x16 | Gen4 x16 |
+| NVIDIA L40S #3 | `61:00.0` | `60:01.1` | 0 | Gen4 x16 | Gen1 x16 |
+| ASPEED 관리 그래픽 브리지 | `62:00.0` | `60:05.2` | 0 | Gen2 x1 | Gen2 x1 |
+| NVIDIA L40S #4 | `81:00.0` | `80:01.1` | 1 | Gen4 x16 | Gen4 x16 |
+| Intel X710 10G 2포트 | `82:00.0` | `80:05.1` | 1 | Gen3 x4 | Gen3 x4 |
+| NVIDIA L40S #5 | `a1:00.0` | `a0:01.1` | 1 | Gen4 x16 | Gen4 x16 |
+| NVIDIA L40S #6 | `c1:00.0` | `c0:01.1` | 1 | Gen4 x16 | Gen4 x16 |
+| SAMSUNG MZQL21T9HCJR-00A07 | `c3:00.0` | `c0:03.2` | 1 | Gen4 x4 | Gen4 x4 |
+| SAMSUNG MZQL23T8HCLS-00A07 | `c4:00.0` | `c0:03.3` | 1 | Gen4 x4 | Gen4 x4 |
+| SAMSUNG MZQL23T8HCLS-00A07 | `c5:00.0` | `c0:03.4` | 1 | Gen4 x4 | Gen4 x4 |
+| NVIDIA L40S #7 | `e1:00.0` | `e0:01.1` | 1 | Gen4 x16 | Gen1 x16 |
+
+</details>
+
+<details>
+<summary>RM352 레인 공유 구조와 슬롯 번호 검증 근거</summary>
+
+[SPC621D8 매뉴얼](https://download.asrock.com/Manual/SPC621D8.pdf)의 인쇄 쪽수 2·34 기준으로 **PCIE1은 독립 x16**, 나머지는 아래와 같이 짝을 이룬다. 짝의 x8 슬롯을 쓰면 x16 슬롯도 x8로 바뀐다.
+
+```text
+PCIE1             → 독립 x16
+PCIE2 + PCIE3     → x8 + x8 또는 PCIE3 단독 x16
+PCIE4 + PCIE5     → x8 + x8 또는 PCIE5 단독 x16
+PCIE6 + PCIE7     → x8 + x8 또는 PCIE7 단독 x16
+```
+
+이번 실측에서 `rm352-1`의 두 NIC는 루트 `17:02.0`·`17:04.0`에 각각 x8로 연결되고, 두 GPU는 `50:02.0`·`89:02.0`에서 각각 x16이다. 펌웨어는 PCIE1을 Available로 보고한다. 이를 보드 구조와 대조해 PCIE1을 독립 x16 후보로 남겼다.
+
+`rm352-2`의 x16 경로 3개는 RTX 6000·A10·100G NIC가 사용하고, X540은 `17:04.0`에서 x8이다. 독립 PCIE1은 A10이 사용한다. 남은 커넥터를 새 독립 x16 경로로 더하지 않았다.
+
+펌웨어의 GPU PCIE4/6 명칭, `PCIE47` 표기와 M2_1 주소에는 불일치가 있다. 실제 사진이 없으므로 PCIE4–7 배치와 빈 커넥터의 접근성은 추정이다. PCI 루트가 비어 있거나 OS에서 숨겨져 있다고 해서 케이블이 연결된 실제 확장 자리가 있다고 단정하지 않는다.
+
+기존 문서의 “최대 5자리”는 x16 형상 커넥터/베이 중심의 낙관적 계산이었다. 이번 표는 **기존 카드의 연결 폭 유지**와 레인 공유를 반영해 **3개 후보**로 좁혔다.
+
+</details>
+
+<details>
+<summary>성능·운영 상태·전원에 관한 보충 기록</summary>
+
+- **PCIe 전송 상한:** Gen4 x16 약 31.5 GB/s, Gen4 x8 또는 Gen3 x16 약 15.75 GB/s, Gen3 x8 약 7.88 GB/s, Gen3 x1 약 0.985 GB/s. 한 방향·인코딩 반영 후·프로토콜 오버헤드 제외 값이며 실제 처리량 측정값이 아니다.
+- **100G NIC:** 두 포트가 카드 한 장의 PCIe 링크를 공유한다. 100G 두 포트의 한 방향 선로 합계는 25 GB/s이므로 Gen3 x16/Gen4 x8의 집계 상한을 넘는다. 한 포트만 사용할 때의 실제 병목은 별도 측정해야 한다.
+- **메모리:** SV4000은 12채널 중 4개, L40S는 소켓마다 12채널 중 6개, RM352는 8채널 중 6개 장착. 메모리 공급 대역폭의 여지는 있지만 STREAM/워크로드 성능은 측정하지 않았다. OEM 메모리 QVL·RDIMM 종류·채널 균형을 대조해야 한다.
+- **2026-09-23의 Kubernetes 기록:** sv4000-1 GPU 3, sv4000-2 GPU 2 + A100 MIG 1g.5gb×7, rm352-1/2 GPU 각 2, l40s GPU 8. 당시 모두 Ready이고 rm352-2는 cordon 상태였다. **이번에는 Kubernetes API·MIG 인스턴스 수·네트워크 포트 Up/Down을 재확인하지 않았다.**
+- **2026-09-23의 전력 한도 기록:** SV4000 두 노드의 GPU 설정 한도 합은 각각 850 W였다. CPU·팬·디스크·NIC는 별도다. 이번 PSU Present/OK는 펌웨어 보고이며 실물 라벨·중복 모드·랙 전력 확인을 대체하지 않는다.
+- **현장 확인:** 빈 베이/슬롯 라벨, 라이저 P/N, 카드 간격·길이, 보조전원 커넥터, PSU 정격·중복 모드, GPU/NPU의 냉각 방식과 OEM QVL을 대조한다. 카드 이동·BIOS 변경·부하 시험은 별도 유지보수 작업으로 수행한다.
+- 공개 기록에는 내부 주소·BMC 접속 정보·UUID·시리얼을 싣지 않는다. GB/TB는 제품 용량, GiB/TiB는 Linux 표시 용량으로 구분한다.
+
+</details>
+
+## 재확인 명령
+
+다음 명령은 대상 노드에서 정보를 읽는다. `dmidecode`는 관리자 권한이 필요하다. 출력 전체에는 시리얼 등이 포함될 수 있어 공개 문서에는 필요한 필드만 옮긴다.
+
+```bash
+lscpu
+sudo dmidecode -t slot
+sudo dmidecode -t memory
+sudo dmidecode -t 39
+lspci -Dnn
+lspci -Dtv
+nvidia-smi --query-gpu=index,name,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max --format=csv
+nvidia-smi topo -m
+lsblk -d -o NAME,SIZE,MODEL,TRAN
+
+# 장착 장치의 현재/최대 링크와 NUMA. BDF를 실제 주소로 바꾼다.
+bdf=0000:c2:00.0
+for field in current_link_speed current_link_width max_link_speed max_link_width numa_node; do
+  printf '%s: ' "$field"
+  cat "/sys/bus/pci/devices/$bdf/$field"
+done
+```
+
+이번 재확인은 `nvidia-smi`와 PCI sysfs의 링크 폭·세대를 대조하고, NVMe 컨트롤러의 sysfs 주소와 SSD 용량을 연결했다. 장치가 없는 자리의 실제 링크 속도는 측정할 수 없으므로 **설계 또는 펌웨어 후보**로 기록했다.
 
 ## 제조사 기준 문서
 
-- [ASUS ESC4000A-E12 제품/슬롯·전원](https://servers.asus.com/products/detail/overview/ESC4000A-E12), [상세 데이터시트](https://dlcdnets.asus.com/pub/ASUS/server/ESC4000A-E12/Datasheet/DataSheet_ESC4000A-E12_20221020.pdf)
-- [ASUS ESC8000A-E12 제품/슬롯·전원](https://servers.asus.com/products/detail/overview/ESC8000A-E12)
-- [ASRock Rack SPC621D8 보드 설명서: PCIe·M.2·DIMM](https://download.asrock.com/Manual/SPC621D8.pdf)
-- [Furiosa RNGD 하드웨어 사양](https://developer.furiosa.ai/docs/v2024.2.1/en/overview/rngd.html)
-- [NVIDIA RTX PRO 6000 Blackwell Server Edition 사양](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000-family/)
+- [ASUS ESC4000A-E12 슬롯·전원 데이터시트](https://dlcdnets.asus.com/pub/ASUS/server/ESC4000A-E12/Datasheet/DataSheet_ESC4000A-E12_20221020.pdf), [제품 페이지](https://servers.asus.com/products/detail/overview/ESC4000A-E12)
+- [ASUS ESC8000A-E12 제품·슬롯·전원](https://servers.asus.com/products/detail/overview/ESC8000A-E12)
+- [ASRock Rack SPC621D8 매뉴얼: 슬롯 배선·M.2·DIMM](https://download.asrock.com/Manual/SPC621D8.pdf)
+- [Furiosa RNGD 사양](https://developer.furiosa.ai/docs/v2024.2.1/en/overview/rngd.html)
+- [NVIDIA RTX PRO 6000 Blackwell 제품군 사양](https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000-family/)
