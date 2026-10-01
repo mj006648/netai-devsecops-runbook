@@ -23,7 +23,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
-| 2026-09-23 | Hardware / Inventory | [TwinX GPU 노드 5대 증설 실측](hardware/inventory/twinx-gpu-node-expansion-2026-09-23.md) | CPU·DIMM·NUMA, 기존 GPU/NIC/NVMe의 PCIe 세대·레인·점유, 12장 추가 요구 대비 슬롯 상한과 병목 |
+| 2026-10-01 | Hardware / Inventory | [TwinX 노드별 장착 장치·빈 슬롯](hardware/inventory/twinx-gpu-node-expansion-2026-09-23.md) | 5대 재실측, 슬롯별 GPU/NIC/NVMe·Gen/레인, 빈 PCIe·DIMM 자리, 추가 장착 후보와 RM352 레인 공유 |
 | 2026-09-22 | AI / Learning | [AI 인프라 독립 교재](ai/learning/ai-infrastructure/README.md) | 13개 장: 모델 계산·GPU 메모리·학습·분산 실행·KV cache·서빙·복구·GPU 클러스터, 로컬 실습·해설 |
 | 2026-09-22 | Learning | [인프라 기초 통합 교재](learning/README.md) | 하드웨어·Linux 커널·네트워크/eBPF·데이터 시스템, 선수지식·계산·추적·안전한 실습·해설 |
 | 2026-09-22 | Hardware / NPU | [A7 RNGD 슬롯 이동 후 진단](hardware/npu/a7-rngd-post-move-diagnostics-2026-09-22.md) | SLOT10→18 이동·4장 NUMA1/Gen5 x16 확인, binning·225W 제한 재확인, power-sense 경고 분석 / 부하 진단은 장치 점유로 보류 |
