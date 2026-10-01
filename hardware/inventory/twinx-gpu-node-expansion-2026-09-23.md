@@ -35,10 +35,12 @@
 | GPU — PCIE3/4 보고 | **Gen5 x16** | **빈 GPU 베이 후보** | — | 미장착 | 추가 GPU/NPU **1장 후보**; 정확한 실물 베이 대조 필요 |
 | GPU — PCIE8/9 보고 | **Gen5 x16** | RTX A6000 48 GB #0 | Gen4 x16 | 유휴 **Gen1 x16** | 장착 |
 | GPU — PCIE10/11 보고 | **Gen5 x16** | A100 PCIe 40 GB #1 | Gen4 x16 | **Gen4 x16** | 장착 |
-| NIC — PCIE5 보고 | 별도 NIC 자리; 설계 규격 미확인 | ConnectX-5 Ex, 100G 2포트 | Gen4 x16 | **Gen4 x16** | 카드 1장; 두 포트가 링크를 공유 |
+| NIC — PCIE5 보고 | **Gen5 x16 지원**; 후면 라이저 설계 | ConnectX-5 Ex, 100G 2포트 | Gen4 x16 | **Gen4 x16** | 카드 1장; 두 포트가 링크를 공유; 실물 슬롯 번호 미대조 |
 | NVMe 경로 | 별도 NVMe 경로; 설계 규격 미확인 | Samsung MZQL23T8HCLS, 약 3.84 TB | Gen4 x4 | **Gen4 x4** | SSD 1개; GPU 베이와 별도 |
 | 온보드 LAN | 온보드; 확장 슬롯 아님 | Intel I350, 1G 2포트 | Gen2 x4 | Gen2 x4 | 추가 카드 자리로 세지 않음 |
 | 소형 확장 — PCIE6/7·PIKE 보고 | 미확인; 실제 라이저·SKU 대조 필요 | 미장착 후보; 펌웨어 `Available` | — | 미확인 | NIC/RAID 후보; 추가 대형 GPU 자리로 합산하지 않음 |
+
+**SV4000 두 노드의 NIC 슬롯 설계와 링크:** [ASUS 매뉴얼 2-15쪽](https://dlcdnets.asus.com/pub/ASUS/server/ESC4000A-E12/Manual/E20400_ESC4000A-E12_UM_WEB.pdf#page=41) 기준 후면 라이저는 **Gen5 x16 고정 슬롯 1개**, **Gen5 x16/x8 전환 슬롯 1개**, **Gen5 x0/x8 슬롯 1개**로 구성된다. 두 노드의 NIC 행은 라이저의 x16 지원 설계를 표시한 것이며, 펌웨어 `PCIE5`와 실물 슬롯 번호의 대조는 아직 하지 않았다. [NVIDIA 카드 규격](https://networking-docs.nvidia.com/connectx5enhw/interfaces)에 따르면 **ConnectX-5 Ex는 Gen4**, **일반 ConnectX-5는 Gen3**를 지원한다. 따라서 `sv4000-1`의 Gen4 x16과 `sv4000-2`의 Gen3 x16은 장착 카드의 최대 규격에 맞는 링크이며, 서버 슬롯의 설계 세대 차이를 뜻하지 않는다.
 
 **여기에 추가할 수 있는 것:** 남은 큰 GPU 베이에 PCIe x16 GPU/NPU **1장**이 우선 후보다. RNGD나 RTX PRO 6000 Server Edition도 인터페이스상 검토 대상이지만 카드 크기·OEM 지원·보조전원·패시브 냉각 확인이 필요하다.
 
@@ -60,7 +62,7 @@
 | GPU — PCIE3/4 보고 | **Gen5 x16** | A100 PCIe 40 GB #2 | Gen4 x16 | **Gen4 x8** | 장착; 연결 폭이 카드 최대의 절반 |
 | GPU — PCIE8/9 보고 | **Gen5 x16** | L40 48 GB #0 | Gen4 x16 | 유휴 **Gen1 x16** | 장착 |
 | GPU — PCIE10/11 보고 | **Gen5 x16** | **빈 GPU 베이 후보** | — | 미장착 | 추가 GPU/NPU **1장 후보**; 정확한 실물 베이 대조 필요 |
-| NIC — PCIE5 보고 | 별도 NIC 자리; 설계 규격 미확인 | ConnectX-5, 100G 2포트 | Gen3 x16 | **Gen3 x16** | 카드 1장 |
+| NIC — PCIE5 보고 | **Gen5 x16 지원**; 후면 라이저 설계 | ConnectX-5, 100G 2포트 | Gen3 x16 | **Gen3 x16** | 카드 1장; 실물 슬롯 번호 미대조 |
 | NVMe 경로 | 별도 NVMe 경로; 설계 규격 미확인 | Samsung MZQL23T8HCLS, 약 3.84 TB | Gen4 x4 | **Gen4 x4** | SSD 1개; GPU 베이와 별도 |
 | 온보드 LAN | 온보드; 확장 슬롯 아님 | Intel I350, 1G 2포트 | Gen2 x4 | Gen2 x4 | 추가 카드 자리로 세지 않음 |
 | 소형 확장 — PCIE6/7·PIKE 보고 | 미확인; 실제 라이저·SKU 대조 필요 | 미장착 후보; 펌웨어 `Available` | — | 미확인 | NIC/RAID 후보; GPU 베이와 별도 |
@@ -122,6 +124,8 @@
 | SATA | SATA 경로; PCIe 확장 슬롯 아님 | SATA SSD 약 447 GiB | 해당 없음 | 해당 없음 | PCIe 추가 카드 슬롯과 별도 |
 
 **여기에 추가할 수 있는 것:** 빈 후보는 **x8 소형 카드 자리**다. 기존 GPU와 100G NIC의 x16 연결을 유지하면서 추가할 **독립 x16 자리는 확인되지 않았다**. 특히 100G NIC를 Gen3 x8로 줄이면 이론상 한 방향 약 7.88 GB/s로, 100G 선로의 12.5 GB/s보다 작다.
+
+**X540 자리 변경을 검토한다면:** [X540은 PCIe Gen2 x8 장치](https://cdrdv2-public.intel.com/326917/ethernet-x540-brief.pdf)여서 카드 자체에는 Gen4 x16 대역폭이 필요하지 않다. 실물 장착 조건이 맞으면 X540을 빈 PCIE2로 옮겨 PCIE3의 x16 형상 자리를 비울 수 있지만, 두 슬롯은 레인을 공유하므로 PCIE3에 새 GPU/NPU를 함께 장착하면 PCIE3은 **최대 Gen4 x8** 연결을 제공한다. 독립 x16 경로가 추가되는 것은 아니다. PCIE4로 옮기면 PCIE5의 RTX 6000, PCIE6로 옮기면 PCIE7의 100G NIC가 x8로 줄 수 있으므로 각각의 전송 대역폭과 카드 간격을 함께 확인한다. 실제 카드 이동은 하지 않았다.
 
 **슬롯 번호 주의:** PCIE4–7은 `rm352-1`과 같은 펌웨어/실측 폭 불일치가 있어 추정이다. 빈 커넥터가 보여도 “x16 GPU를 성능 저하 없이 추가할 수 있다”로 읽지 않는다.
 
