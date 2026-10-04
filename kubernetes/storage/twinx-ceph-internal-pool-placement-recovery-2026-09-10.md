@@ -6,6 +6,8 @@
 >
 > 범위: 확인된 관리·RGW 내부 풀 5개의 가용성 복구. 원본 데이터 삭제, PV/PVC 변경, 복제 수 감소는 하지 않는다.
 
+> 후속 기록: [2026-10-04 모니터 교체](twinx-ceph-monitor-replacement-2026-10-04.md)에서 h의 MON_DISK_CRIT를 해소하고 e/f/m quorum 3개를 5분 이상 검증했다. 아래 Current status는 9월 당시 기록이며, 단기 관측을 장기 장애 위험 전체의 해소로 해석하지 않는다.
+
 ## Current status
 
 | 항목 | 확인 결과 |
