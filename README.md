@@ -23,6 +23,7 @@
 
 | Last update | Area | Issue / note | Contents |
 | --- | --- | --- | --- |
+| 2026-10-06 | Meeting / Hardware | [10월 2일 ScaleX-POD 협업 미팅](meeting/2026-10-02.md) | 담당자·액션아이템·랙 이동안, 외부 48V PSU 구매 후보와 T4→sv4000-1 이전 조건 조사 |
 | 2026-10-04 | Kubernetes / Storage | [TwinX Ceph 모니터 교체](kubernetes/storage/twinx-ceph-monitor-replacement-2026-10-04.md) | e/f/m quorum3·Rook·CSI 참조 검증, MON_DISK_CRIT 해소, 이전 affinity 실패·복구와 원본/PV/PVC 보존 |
 | 2026-10-01 | Hardware / Inventory | [TwinX 노드별 장착 장치·빈 슬롯](hardware/inventory/twinx-gpu-node-expansion-2026-09-23.md) | 5대 재실측, 슬롯별 GPU/NIC/NVMe·Gen/레인, 빈 PCIe·DIMM 자리, 추가 장착 후보와 RM352 레인 공유 |
 | 2026-09-22 | AI / Learning | [AI 인프라 독립 교재](ai/learning/ai-infrastructure/README.md) | 13개 장: 모델 계산·GPU 메모리·학습·분산 실행·KV cache·서빙·복구·GPU 클러스터, 로컬 실습·해설 |
@@ -57,6 +58,7 @@
 
 ## Sections
 
+- **[meeting/](meeting/)** — 시스템팀 협업 미팅, 담당자·액션아이템·장비 이동 계획
 - **[kubernetes/](kubernetes/)** — Kubernetes 기반 운영 런북의 중심 디렉터리
   - **[kubernetes/cluster-lifecycle/](kubernetes/cluster-lifecycle/)** — Kubernetes upgrade, Kubespray 작업, control-plane/etcd topology 변경, node 제거
   - **[kubernetes/networking/](kubernetes/networking/)** — Cilium, Hubble, MTU, Pod 통신, Kubernetes 관련 node routing
