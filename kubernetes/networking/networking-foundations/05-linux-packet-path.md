@@ -4,9 +4,28 @@
 
 근거 확인일: **2026-09-22**.
 
-범위: 이 장은 Linux 노드 한 대 안에서 패킷이 어떻게 움직이는지 설명한다. Kubernetes Pod, Cilium, eBPF는 뒤 장에서 다루며, 여기서는 먼저 Linux kernel의 일반 네트워크 데이터 경로를 잡는다. 실제 커널 버전, NIC 드라이버, offload 설정, namespace, netfilter/nftables ruleset, CNI 구현에 따라 세부 순서와 관측 위치는 달라질 수 있다.
+범위: 이 장은 Linux node 한 대 안에서 packet이 어떻게 움직이는지 설명한다. socket은 process가 통신을 요청하고 byte를 주고받는 운영체제 객체다. skb(`struct sk_buff`)는 kernel network stack이 packet data의 위치와 header·장치·offload 상태를 추적하는 작업표다. qdisc(queuing discipline)는 송신 순서·속도·drop 정책을 적용하는 queue 계층이다. netns(network namespace)는 network device·route·socket 등을 격리한 공간이고, veth(virtual Ethernet) pair는 두 netns를 잇는 가상 Ethernet 장치 쌍이다. 뒤 장의 Pod network와 커널 내 프로그램은 잠시 미루고, 여기서는 먼저 Linux kernel의 일반 network datapath(실제 packet을 처리하고 전달하는 경로)를 잡는다. 실제 kernel version, NIC driver, offload 설정, namespace, netfilter/nftables ruleset, CNI 구현에 따라 세부 순서와 관측 위치는 달라질 수 있다.
 
 핵심 질문은 하나다. **프로그램이 `send()`를 호출하면 byte가 어떤 kernel 객체와 queue를 지나 NIC로 나가고, 들어온 packet은 어떤 CPU 경로를 거쳐 `recv()`로 보이는가?**
+
+```mermaid
+flowchart LR
+    P["process"] -->|"send() syscall"| S["socket send queue"]
+    S --> T["TCP/UDP · IP · route"]
+    T --> K["skb"]
+    K --> Q["qdisc"]
+    Q --> X["driver TX ring"]
+    X --> N["NIC · wire"]
+    N --> R["RX ring · NAPI"]
+    R --> D["native XDP 가능"]
+    D --> I["skb · TC ingress · IP"]
+    I --> U["socket receive queue"]
+    U -->|"recv() syscall"| P
+```
+
+![Linux에서 socket, skb, qdisc, NIC, NAPI, XDP와 TC를 지나는 송수신 경로](assets/linux-packet-path.svg)
+
+*그림 1. 송신과 수신은 대칭 복사가 아니다. 특히 native XDP는 수신 skb가 생기기 전에 실행될 수 있고, TC ingress는 skb가 생긴 뒤의 지점이다.*
 
 ## 1. 먼저 단어를 만든다
 
@@ -95,6 +114,19 @@ skb metadata
 ```
 
 캡처 도구가 보는 것은 이 경로 중 한 지점의 모습이다. 그래서 `tcpdump`에서 보이는 packet 크기나 checksum 상태가 wire 위의 최종 frame과 다를 수 있다. 특히 offload가 켜져 있으면 kernel은 "아직 NIC가 나중에 처리할 큰 packet"을 볼 수 있고, capture는 그 중간 상태를 찍을 수 있다.
+
+### socket, socket buffer, skb를 한 덩어리로 부르지 않는다
+
+세 객체는 수명이 다르다. TCP socket은 연결 상태와 송수신 queue를 여러 packet에 걸쳐 유지한다. socket send buffer에 들어온 긴 byte stream은 여러 skb로 표현될 수 있고, GSO가 켜지면 하나의 큰 skb가 NIC 가까이에서 여러 wire segment로 나뉠 수 있다. 반대로 GRO는 여러 수신 segment를 하나의 큰 skb처럼 위 stack에 넘길 수 있다.
+
+```text
+애플리케이션 write 64 KiB
+  └─ TCP socket의 send buffer에 byte 범위로 기록
+      └─ 하나 이상의 skb가 header와 data 범위를 참조
+          └─ GSO/TSO가 실제 wire 크기에 맞는 segment들로 분할 가능
+```
+
+따라서 `write() 호출 수 = skb 수 = wire frame 수`라는 등식은 성립하지 않는다. application의 요청 수와 XDP/TC packet counter가 다른 이유를 찾을 때 가장 먼저 이 경계를 확인한다.
 
 ## 5. GRO, GSO, checksum offload와 캡처 오해
 

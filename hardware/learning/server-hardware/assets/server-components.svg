@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">서버의 주요 구성요소와 데이터 경로</title>
+  <desc id="desc">CPU와 메모리, PCIe 스위치, GPU, NPU, NVMe, NIC, BMC, 전원과 냉각의 관계를 나타낸 교육용 블록도</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.cpu{fill:#dbeafe;stroke:#2563eb;stroke-width:2}.mem{fill:#dcfce7;stroke:#16a34a;stroke-width:2}.io{fill:#fef3c7;stroke:#d97706;stroke-width:2}.mgmt{fill:#f3e8ff;stroke:#9333ea;stroke-width:2}.power{fill:#fee2e2;stroke:#dc2626;stroke-width:2}.t{font-family:'UnDotum',sans-serif;font-size:22px;font-weight:600;fill:#0f172a}.s{font-family:'UnDotum',sans-serif;font-size:16px;fill:#334155}.label{font-family:'UnDotum',sans-serif;font-size:17px;font-weight:600;fill:#475569}.path{stroke:#475569;stroke-width:4;fill:none;marker-end:url(#arrow)}.dash{stroke:#9333ea;stroke-width:3;stroke-dasharray:10 8;fill:none;marker-end:url(#arrowPurple)}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#9333ea"/></marker>
+  </defs>
+  <rect class="bg" width="1200" height="720" rx="24"/>
+  <text class="t" x="600" y="46" text-anchor="middle">서버 구성요소 / Server components</text>
+
+  <rect class="cpu" x="440" y="90" width="320" height="110" rx="18"/>
+  <text class="t" x="600" y="132" text-anchor="middle">CPU 소켓 / socket</text>
+  <text class="s" x="600" y="164" text-anchor="middle">명령·메모리·PCIe / control</text>
+
+  <rect class="mem" x="70" y="100" width="260" height="90" rx="16"/>
+  <text class="t" x="200" y="137" text-anchor="middle">호스트 메모리 / Host memory</text>
+  <text class="s" x="200" y="166" text-anchor="middle">DDR 채널·DIMM / channels</text>
+  <path class="path" d="M330 145 H430"/>
+
+  <rect class="io" x="440" y="280" width="320" height="90" rx="16"/>
+  <text class="t" x="600" y="317" text-anchor="middle">PCIe 루트·스위치 / root &amp; switch</text>
+  <text class="s" x="600" y="346" text-anchor="middle">패킷 전달·공유 링크 / shared links</text>
+  <path class="path" d="M600 200 V270"/>
+
+  <rect class="io" x="60" y="470" width="230" height="100" rx="16"/>
+  <text class="t" x="175" y="511" text-anchor="middle">GPU / NPU</text>
+  <text class="s" x="175" y="541" text-anchor="middle">연산·장치 메모리 / compute</text>
+  <rect class="io" x="355" y="470" width="230" height="100" rx="16"/>
+  <text class="t" x="470" y="511" text-anchor="middle">NVMe / RAID</text>
+  <text class="s" x="470" y="541" text-anchor="middle">영구 저장·부팅 / storage</text>
+  <rect class="io" x="650" y="470" width="230" height="100" rx="16"/>
+  <text class="t" x="765" y="511" text-anchor="middle">NIC / RNIC</text>
+  <text class="s" x="765" y="541" text-anchor="middle">외부 통신 / external</text>
+  <path class="path" d="M520 370 L215 460"/>
+  <path class="path" d="M575 370 L490 460"/>
+  <path class="path" d="M680 370 L745 460"/>
+  <path class="path" d="M880 520 H1050"/>
+  <text class="label" x="965" y="503" text-anchor="middle">외부망 / network</text>
+
+  <rect class="mgmt" x="930" y="100" width="210" height="100" rx="16"/>
+  <text class="t" x="1035" y="140" text-anchor="middle">BMC</text>
+  <text class="s" x="1035" y="169" text-anchor="middle">대역외 관리 / out-of-band</text>
+  <path class="dash" d="M930 150 H770"/>
+  <path class="dash" d="M1035 200 V455"/>
+
+  <rect class="power" x="280" y="625" width="640" height="65" rx="16"/>
+  <text class="t" x="600" y="653" text-anchor="middle">전원·냉각 / Power &amp; cooling</text>
+  <text class="s" x="600" y="680" text-anchor="middle">모든 부품의 공통 운용 한계 / shared limits</text>
+  <path class="dash" d="M600 625 V585"/>
+
+  <text class="s" x="34" y="712">개념도 / Concept: 실제 배선과 관리 경로는 서버 옵션에 따라 다르다.</text>
+</svg>

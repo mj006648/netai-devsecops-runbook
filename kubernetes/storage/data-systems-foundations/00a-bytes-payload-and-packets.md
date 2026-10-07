@@ -1,11 +1,24 @@
 # 00a. 객체가 바이트와 패킷이 되는 과정
 
-[학습 목차](README.md) · 이전: [계층 지도와 기초 용어](00-map-and-vocabulary.md) · 다음: [Linux 읽기·쓰기](01-linux-read-write.md)
+[학습 목차](README.md) · 이전: [계층 지도와 기초 용어](00-map-and-vocabulary.md) · 다음: [프로그램·프로세스·메모리](00b-linux-processes-and-memory.md)
 
 범위: 회원 한 명을 등록하는 **교육용 HTTP/1.1 평문·TCP·IPv4·Ethernet 경로**다.
 이 장의 중첩 그림은 IP 단편화·VLAN 태그·터널을 생략한다. 실제 서비스는 HTTPS, 다른 HTTP 버전, 프록시, 다른 링크 기술을 쓸 수 있다.
 핵심 질문은 “지금 말하는 바이트와 완료가 **어느 계층의 것인가?**”다.
 OSI 7계층 이름을 먼저 외우기보다, 이 예에서 실제로 이어지는 표현과 단위를 따라가자.
+
+```mermaid
+flowchart LR
+    O[Python object<br/>프로그램의 값] -->|JSON 직렬화| T[문자열]
+    T -->|UTF-8 인코딩| B[byte 열]
+    B --> H[HTTP message body]
+    H -->|경계 없이 운반| TCP[TCP byte stream]
+    TCP --> IP[IP packet]
+    IP --> ETH[Ethernet frame]
+    ETH -->|수신·재조립·파싱| O2[상대 프로그램의 object]
+```
+
+**헤더(header)**는 해당 계층이 해석·전달에 쓰는 제어 필드이고, **본문(body)**은 메시지 형식이 정한 내용 구획이다. **페이로드(payload)**는 그 계층이 싣고 가는 내용이라서 HTTP 헤더도 TCP 입장에서는 페이로드가 될 수 있다. 이 포함 관계를 놓치면 “헤더가 몇 바이트인가”라는 질문에도 어느 계층인지 답할 수 없다.
 
 ## 1. 먼저 다섯 단어를 분리한다
 
@@ -274,4 +287,4 @@ TCP sequence number는 **한 연결의 바이트 순서**를 식별한다.
 6. Base64로 바꾸면 개인정보가 숨겨지는가? → 아니다. 누구나 디코딩할 수 있다.
 7. 재시도 요청의 중복을 TCP sequence number로 판정할 수 있는가? → 아니다. 업무 ID와 저장 규칙이 필요하다.
 
-다음 [Linux 읽기·쓰기](01-linux-read-write.md)에서는 이렇게 얻은 바이트가 로컬 파일 API에 전달된 뒤 어디까지 처리됐는지 추적한다.
+다음 [프로그램·프로세스·메모리](00b-linux-processes-and-memory.md)에서 이 바이트를 다루는 실행 주체와 메모리를 익힌 뒤, [Linux 읽기·쓰기](01-linux-read-write.md)에서 로컬 파일 API에 전달된 바이트가 어디까지 처리됐는지 추적한다.

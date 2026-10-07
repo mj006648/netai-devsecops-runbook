@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">PCIe 스위치의 공유 상위 링크</title>
+  <desc id="desc">GPU 두 개와 NVMe, NIC가 각자 하위 링크로 PCIe 스위치에 연결되고 CPU 방향의 하나의 상위 링크를 공유하는 구조</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.dev{fill:#fef3c7;stroke:#d97706;stroke-width:2}.sw{fill:#dbeafe;stroke:#2563eb;stroke-width:2}.cpu{fill:#dcfce7;stroke:#16a34a;stroke-width:2}.t{font-family:'UnDotum',sans-serif;font-size:23px;font-weight:600;fill:#0f172a}.s{font-family:'UnDotum',sans-serif;font-size:17px;fill:#334155}.small{font-family:'UnDotum',sans-serif;font-size:15px;fill:#475569}.down{stroke:#d97706;stroke-width:8;fill:none}.up{stroke:#2563eb;stroke-width:14;fill:none;marker-end:url(#arrow)}.p2p{stroke:#9333ea;stroke-width:4;stroke-dasharray:10 8;fill:none;marker-end:url(#purple)}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+    <marker id="purple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#9333ea"/></marker>
+  </defs>
+  <rect class="bg" width="1200" height="640" rx="24"/>
+  <text class="t" x="600" y="48" text-anchor="middle">여러 슬롯이 하나의 uplink를 공유 / Multiple slots share one uplink</text>
+
+  <rect class="dev" x="55" y="105" width="210" height="95" rx="16"/>
+  <text class="t" x="160" y="143" text-anchor="middle">GPU 1</text><text class="s" x="160" y="174" text-anchor="middle">downstream x16</text>
+  <rect class="dev" x="55" y="235" width="210" height="95" rx="16"/>
+  <text class="t" x="160" y="273" text-anchor="middle">GPU 2</text><text class="s" x="160" y="304" text-anchor="middle">downstream x16</text>
+  <rect class="dev" x="55" y="365" width="210" height="95" rx="16"/>
+  <text class="t" x="160" y="403" text-anchor="middle">NVMe SSD</text><text class="s" x="160" y="434" text-anchor="middle">downstream x4</text>
+  <rect class="dev" x="55" y="495" width="210" height="95" rx="16"/>
+  <text class="t" x="160" y="533" text-anchor="middle">NIC</text><text class="s" x="160" y="564" text-anchor="middle">downstream x8/x16</text>
+
+  <path class="down" d="M265 152 H430"/><path class="down" d="M265 282 H430"/><path class="down" d="M265 412 H430"/><path class="down" d="M265 542 H430"/>
+  <rect class="sw" x="430" y="220" width="270" height="250" rx="22"/>
+  <text class="t" x="565" y="290" text-anchor="middle">PCIe 스위치 / switch</text>
+  <text class="s" x="565" y="329" text-anchor="middle">포트 사이 패킷 전달 / routing</text>
+  <text class="s" x="565" y="360" text-anchor="middle">대역폭을 만들지는 않음</text>
+  <text class="small" x="565" y="416" text-anchor="middle">동시 CPU 방향 트래픽이</text>
+  <text class="small" x="565" y="442" text-anchor="middle">이 uplink에 모임 / converges here</text>
+
+  <path class="up" d="M700 345 H930"/>
+  <text class="t" x="815" y="308" text-anchor="middle">공유 uplink / shared</text>
+  <text class="s" x="815" y="382" text-anchor="middle">Gen5 x16: ~63 GB/s / direction</text>
+  <rect class="cpu" x="930" y="260" width="220" height="170" rx="20"/>
+  <text class="t" x="1040" y="326" text-anchor="middle">CPU / RAM</text>
+  <text class="s" x="1040" y="361" text-anchor="middle">root complex</text>
+  <text class="s" x="1040" y="391" text-anchor="middle">호스트 메모리 방향 / host</text>
+
+  <path class="p2p" d="M430 255 C350 255 350 180 275 180"/>
+  <text class="small" x="355" y="215" text-anchor="middle">가능한 스위치 내부 P2P / local</text>
+  <text class="small" x="600" y="615" text-anchor="middle">실제 방향·ACS·IOMMU·드라이버·플랫폼 지원을 확인한다 / Verify the actual path.</text>
+</svg>

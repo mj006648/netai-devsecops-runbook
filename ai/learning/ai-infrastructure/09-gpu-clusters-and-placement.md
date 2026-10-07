@@ -6,9 +6,27 @@
 Kubernetes나 Slurm을 실제로 배포하지 않는다.
 대신 node, Pod, process, rank, GPU, NIC, NUMA, PCIe, RDMA, NCCL 같은 단어가 서로 어떻게 연결되는지 배운다.
 
+**Node(노드)**는 cluster가 작업을 배치하는 서버 한 대이고, **Pod(파드)**는 Kubernetes가 함께 실행·격리하는 container 묶음이다. **Process(프로세스)**는 실행 중인 프로그램 한 개다. **NIC(Network Interface Card, 네트워크 인터페이스 카드)**는 서버를 네트워크에 연결하고, **NUMA**는 CPU와 메모리 거리에 따라 접근 비용이 달라지는 구조다. **PCIe**는 CPU·GPU·NIC 같은 장치를 잇는 버스이며, **RDMA**는 원격 CPU의 복사를 줄여 다른 서버 메모리와 직접 데이터를 옮기는 방식이다. **NCCL**은 GPU 사이 collective를 구현하는 통신 라이브러리다.
+
 AI 클러스터 문제는 단순히 GPU 개수 세기가 아니다.
 같은 8 GPU라도 한 노드 안 NVLink로 묶인 8 GPU와, 네트워크를 건너는 8 GPU는 통신 비용이 다르다.
 또한 GPU memory가 충분해도 CPU memory, local disk, network, image pull, checkpoint I/O 때문에 pending이나 straggler가 생길 수 있다.
+
+## 스케줄러가 고르는 것과 프로그램이 만드는 것
+
+```mermaid
+flowchart TB
+    Q[Job: GPU 4개 요청] --> S[Scheduler]
+    S --> N[적합한 node 선택]
+    N --> P[Pod/Task 시작]
+    P --> R[launcher가 process 4개 생성]
+    R --> G[각 process를 GPU에 연결]
+    G --> C[process group과 collective 초기화]
+```
+
+스케줄러는 보통 “GPU 자원이 있는 어느 node에서 workload를 시작할지”를 결정한다. `rank 0..3`은 스케줄러가 GPU에 붙인 영구 번호가 아니라 launcher와 분산 runtime이 process group을 만들며 정하는 실행 번호다. node의 GPU index, Kubernetes가 노출한 device, process의 local rank, global rank를 별도 열로 기록해야 장애 로그를 실제 하드웨어에 연결할 수 있다.
+
+이 저장소의 `TwinX`는 표준 GPU 기능이나 제품군 이름이 아니라 **특정 연구실 GPU node를 가리키는 로컬 별칭**이다. `A7` 같은 이름도 다른 운영 문서에서 장비·랙·호스트 별칭으로 쓰였다면 같은 원칙을 적용한다. 별칭을 처음 쓸 때 위치, GPU 모델과 수, NIC, NUMA/PCIe 연결, 확인 날짜를 함께 적지 않으면 초심자는 일반 기술 용어로 오해한다.
 
 ## 핵심 용어
 

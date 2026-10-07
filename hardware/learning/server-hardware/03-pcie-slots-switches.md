@@ -2,11 +2,13 @@
 
 [학습 목차](README.md) · [이전: CPU·메모리·NUMA](02-cpu-memory-numa.md) · [다음: 스토리지·RAID·부팅](04-storage-raid-boot.md)
 
-PCIe(Peripheral Component Interconnect Express)는 GPU·NPU·NIC·NVMe 같은 장치와 CPU가 데이터를 주고받는 연결이다. 카드를 어디에 꽂았는지만으로 속도나 장치 간 직접 통신을 판단할 수 없다. **물리 자리**, **전기적으로 훈련된 링크**, **실제로 협상된 세대·폭**, **CPU까지의 경로**, **동시에 쓰는 다른 장치**를 함께 본다. A7 예시는 [2026-09-21 실측 작업일지](../../npu/a7-expansion-plan-2026-09-21.md)의 구성과 그때의 미확정 사항을 사용한다.
+PCIe(Peripheral Component Interconnect Express, 주변장치 고속 연결 규격)는 GPU·NPU·NIC·NVMe 같은 장치와 CPU가 데이터를 주고받는 연결이다. 카드를 어디에 꽂았는지만으로 속도나 장치 간 직접 통신을 판단할 수 없다. **물리 자리**, **전기적으로 훈련된 링크**, **실제로 협상된 세대·폭**, **CPU까지의 경로**, **동시에 쓰는 다른 장치**를 함께 본다. 이 장의 `A7`은 기술이나 칩 이름이 아니라 랩 내부 서버의 고유 식별명이다. A7 예시는 [2026-09-21 실측 작업일지](../../npu/a7-expansion-plan-2026-09-21.md)의 구성과 그때의 미확정 사항을 사용한다.
 
 PCI-SIG의 공식 사양 목록을 2026-09-22에 확인하면 PCI Express Base Specification의 current approved revision은 **7.1, 2026-09-17**로 표시된다. 이 장의 A7 계산은 관측된 Gen5 링크를 대상으로 하며, Gen6/Gen7의 FLIT/PAM4 방식까지 A7에 적용됐다고 주장하지 않는다. [PCI-SIG PCI Express Base](https://pcisig.com/specification-overview/pci-express-base).
 
 ## 1. 경로를 따라 용어 익히기
+
+구조도를 보기 전에 길의 이름부터 정리하자. **루트 컴플렉스(root complex)**는 CPU가 PCIe 장치 세계와 만나는 시작점이고, **루트 포트(root port)**는 거기서 장치 쪽으로 나가는 출구다. **링크(link)**는 두 PCIe 구성요소 사이의 전기적 연결이며, 그 링크를 구성하는 기본 왕복 신호 경로가 **레인(lane)**이다. 스위치에서 CPU 쪽 연결을 **상위 링크(uplink)**, 카드 쪽 연결을 **하위 링크(downlink 또는 downstream link)**라고 부른다. **BDF(Bus:Device.Function)**는 Linux가 열거한 PCIe 기능의 논리 주소이며 물리 슬롯 번호가 아니다.
 
 ```text
 CPU / PCIe 루트 컴플렉스(root complex)
@@ -25,6 +27,18 @@ CPU / PCIe 루트 컴플렉스(root complex)
 **버스(bus)**는 장치를 열거하는 논리 구획이다. OS의 PCI 주소 **BDF**(Bus:Device.Function)는 장치를 식별하는 버스·장치·기능 번호이며, 앞에 도메인(segment)을 붙이면 `0000:81:00.0` 같은 형태가 된다. 여기서 `81`은 16진수 버스 번호이지 물리 SLOT81이 아니다. 카드 이동, BIOS 설정, 열거 순서 변경 뒤 BDF는 달라질 수 있다. 실물 카드의 슬롯 라벨·시리얼과 OS 주소를 대조한다.
 
 **슬롯**은 카드를 꽂는 물리 위치다. **라이저(riser)**는 슬롯의 방향·위치를 바꾸는 보드, **백플레인(backplane)**은 여러 드라이브나 장치 연결을 모으는 보드다. 이 부품과 케이블의 종류가 실제 연결·공간·전원·냉각 조건을 정한다. **bifurcation**은 CPU 쪽 레인 묶음을 예를 들어 x16 하나 대신 x8+x8 또는 x4 네 개처럼 분할하는 구성이다. 스위치와 달리 새 레인을 만들지 않으며, 보드·BIOS·라이저가 지원해야 한다.
+
+```mermaid
+flowchart LR
+    CPU[CPU의 PCIe root complex] --> RP[root port]
+    RP -->|공유될 수 있는 uplink| SW[PCIe switch]
+    SW -->|downstream link| GPU[GPU/NPU]
+    SW -->|downstream link| NIC[NIC]
+    SW -->|downstream link| SSD[NVMe SSD]
+    CPU --- RAM[호스트 RAM]
+```
+
+이 그림에서 가장 중요한 구분은 **슬롯 하나의 하위 링크**와 **여러 슬롯이 공유하는 상위 링크**다. 카드 세 장이 각각 x16으로 연결돼도 CPU 방향 상위 링크가 x16 하나라면, 동시에 CPU로 보내는 총량은 그 상위 링크를 공유한다.
 
 ### 스위치, 리타이머, 분할은 같은 일이 아니다
 
@@ -70,6 +84,10 @@ Gen6와 Gen7은 PAM4 신호 방식과 FLIT(고정 크기 전송 단위), FEC(전
 링크 세대는 두 끝의 공통 능력으로 제한된다. Gen5 슬롯에 Gen4 NIC를 꽂아도 NIC가 Gen5로 업그레이드되지 않는다. 반대로 Gen5 카드가 낮은 세대 포트에 연결되면 링크는 낮은 세대로 동작할 수 있다. 상위 링크와 하위 링크의 세대도 별도로 관측해야 한다.
 
 ## 4. A7의 네 스위치 그룹과 공유 링크
+
+![여러 PCIe 장치가 하나의 CPU 방향 uplink를 공유하는 구조](assets/pcie-shared-uplink.svg)
+
+*그림 1. 각 장치의 downstream 링크가 빠르더라도 동시에 CPU 방향으로 보내는 트래픽은 공유 uplink에서 합쳐진다. 반대 방향 전송과 지원되는 스위치 내부 P2P는 따로 계산한다.*
 
 A7 작업일지는 네 개의 **논리적 스위치 그룹 A/B/C/D**를 분류했다. 이 이름은 설명용이며 물리 스위치 보드 네 장이라는 뜻이 아니다. 관측한 상위 포트는 모두 **32GT/s x16 = Gen5 x16**이다. 각 그룹에서 여러 장치가 같은 CPU 방향 링크를 공유한다.
 

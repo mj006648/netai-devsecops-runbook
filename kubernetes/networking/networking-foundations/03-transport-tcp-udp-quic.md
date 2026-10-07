@@ -1,8 +1,22 @@
 # 03. Transport: TCP, UDP, QUIC
 
-범위: 이 장은 IP 위에서 process와 process가 통신하는 방법을 다룬다.
-port, socket, 5-tuple, TCP sequence/ACK, handshake, retransmission, FIN/RST/TIME_WAIT, flow control, congestion control, UDP, QUIC을 설명한다.
+범위: 이 장은 IP 위에서 process(실행 중인 프로그램)와 process가 통신하는 방법을 다룬다.
+port(한 host 안의 통신 상대를 가리키는 16 bit 번호), socket(프로그램이 통신 endpoint를 다루는 운영체제 객체), 5-tuple(프로토콜·출발/목적 IP·출발/목적 port로 flow를 구별하는 다섯 값)을 먼저 설명한다. 이어서 TCP(Transmission Control Protocol, 순서 있고 신뢰성 있는 byte stream) sequence number(byte stream 위치 번호), ACK(Acknowledgment, 다음에 받기를 기대하는 byte 번호로 하는 확인), handshake(양쪽이 연결 상태를 맞추는 사전 메시지 교환), retransmission(손실 추정 데이터를 다시 보냄), RTT(Round-Trip Time, 왕복 시간), flow control(수신자의 처리 여유 보호), congestion control(공유 네트워크의 혼잡 억제)을 다룬다. UDP(User Datagram Protocol)는 전달 보장 없이 datagram 경계를 보존하는 전송 규칙이고, QUIC은 UDP 위에서 보호된 연결과 여러 reliable stream을 구현하는 전송 프로토콜이다.
 패킷 캡처나 호스트 설정은 하지 않는다.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: SYN seq=1000
+    S->>C: SYN+ACK seq=7000 ack=1001
+    C->>S: ACK seq=1001 ack=7001
+    C->>S: 500 bytes seq=1001
+    S->>C: ACK ack=1501
+    Note over C,S: ACK 번호는 다음에 기대하는 byte 번호
+```
+
+TCP sequence number는 “몇 번째 packet인가”가 아니라 **byte stream의 어느 위치인가**를 센다. 위 예에서 SYN도 sequence 공간 1을 소비하고, 500 byte를 받으면 다음 기대 번호가 `1001 + 500 = 1501`이 된다.
 
 ## 1. IP는 host 쪽으로, transport는 process 쪽으로 가까워진다
 

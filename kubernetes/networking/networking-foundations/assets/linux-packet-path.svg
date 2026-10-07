@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Linux 송수신 패킷 경로와 관측 지점</title>
+  <desc id="desc">프로세스의 소켓에서 TCP IP 스택, skb, qdisc, 드라이버 링, NIC로 나가는 송신 경로와 NAPI, XDP, TC를 거쳐 소켓으로 들어오는 수신 경로</desc>
+  <defs><style>.bg{fill:#f8fafc}.u{fill:#dbeafe;stroke:#334155;stroke-width:2}.k{fill:#dcfce7;stroke:#334155;stroke-width:2}.d{fill:#fef3c7;stroke:#334155;stroke-width:2}.h{fill:#fee2e2;stroke:#334155;stroke-width:2}.x{fill:#ede9fe;stroke:#334155;stroke-width:2}.t{font-family:'DejaVu Sans',sans-serif;font-size:20px;font-weight:700;fill:#0f172a}.s{font-family:'DejaVu Sans',sans-serif;font-size:15px;font-weight:400;fill:#334155}.a{stroke:#475569;stroke-width:3;fill:none;marker-end:url(#m)}</style><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker></defs>
+  <rect class="bg" width="1280" height="720" rx="20"/><text class="t" x="45" y="48">TX: send() return and wire transmission are different events</text>
+  <rect class="u" x="45" y="85" width="170" height="80" rx="10"/><text class="t" x="76" y="119">process</text><text class="s" x="78" y="145">send(socket)</text>
+  <rect class="k" x="270" y="85" width="190" height="80" rx="10"/><text class="t" x="303" y="119">socket queue</text><text class="s" x="305" y="145">bytes + state</text>
+  <rect class="k" x="515" y="85" width="190" height="80" rx="10"/><text class="t" x="548" y="119">TCP/IP + skb</text><text class="s" x="545" y="145">headers + route</text>
+  <rect class="d" x="760" y="85" width="180" height="80" rx="10"/><text class="t" x="816" y="119">qdisc</text><text class="s" x="792" y="145">order / rate / drop</text>
+  <rect class="h" x="995" y="85" width="235" height="80" rx="10"/><text class="t" x="1031" y="119">TX ring → NIC</text><text class="s" x="1027" y="145">descriptor · DMA</text>
+  <path class="a" d="M215 125H265"/><path class="a" d="M460 125H510"/><path class="a" d="M705 125H755"/><path class="a" d="M940 125H990"/>
+  <text class="t" x="45" y="265">RX: an early drop is invisible at later observation points</text>
+  <rect class="h" x="45" y="305" width="210" height="82" rx="10"/><text class="t" x="78" y="340">NIC · RX ring</text><text class="s" x="72" y="367">DMA · IRQ moderation</text>
+  <rect class="d" x="305" y="305" width="180" height="82" rx="10"/><text class="t" x="356" y="340">NAPI</text><text class="s" x="334" y="367">batch polling</text>
+  <rect class="x" x="535" y="305" width="180" height="82" rx="10"/><text class="t" x="574" y="340">native XDP</text><text class="s" x="555" y="367">before skb possible</text>
+  <rect class="k" x="765" y="305" width="180" height="82" rx="10"/><text class="t" x="821" y="340">skb</text><text class="s" x="790" y="367">metadata + buffer</text>
+  <rect class="x" x="995" y="305" width="235" height="82" rx="10"/><text class="t" x="1056" y="340">TC ingress</text><text class="s" x="1029" y="367">skb-based hook</text>
+  <path class="a" d="M255 346H300"/><path class="a" d="M485 346H530"/><path class="a" d="M715 346H760"/><path class="a" d="M945 346H990"/>
+  <rect class="k" x="765" y="495" width="180" height="82" rx="10"/><text class="t" x="802" y="530">IP/TCP/UDP</text><text class="s" x="792" y="556">route + socket lookup</text>
+  <rect class="u" x="500" y="495" width="215" height="82" rx="10"/><text class="t" x="533" y="530">receive queue</text><text class="s" x="537" y="556">bytes for process</text>
+  <rect class="u" x="245" y="495" width="205" height="82" rx="10"/><text class="t" x="289" y="530">recv()</text><text class="s" x="278" y="556">return to user space</text>
+  <path class="a" d="M1110 387C1110 460 950 536 950 536"/><path class="a" d="M765 536H720"/><path class="a" d="M500 536H455"/>
+  <text class="s" x="45" y="650">tcpdump, XDP counters, TC counters, and socket queues observe different points.</text>
+  <text class="s" x="45" y="678">Absence at one point does not prove absence on the whole path.</text>
+</svg>

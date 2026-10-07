@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="420" viewBox="0 0 1120 420" role="img" aria-labelledby="title desc" font-family="Noto-Serif-CJK-KR, sans-serif">
+  <title id="title">Linux 쓰기 경로와 성공 경계</title>
+  <desc id="desc">프로세스 버퍼에서 write 시스템 호출, 페이지 캐시, 파일시스템, 블록 계층, 장치 캐시와 영구 매체까지의 흐름을 보여 준다.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#355c7d"/></marker>
+    <style>.box{fill:#eef5fb;stroke:#355c7d;stroke-width:2}.kernel{fill:#fff4df;stroke:#b66d00;stroke-width:2}.device{fill:#edf8ef;stroke:#397647;stroke-width:2}.t{font-size:16px;fill:#17212b}.small{font-size:13px;fill:#3e4b57}.arrow{stroke:#355c7d;stroke-width:2;fill:none;marker-end:url(#arrow)}.dash{stroke:#7b8792;stroke-width:2;stroke-dasharray:6 5}</style>
+  </defs>
+  <rect x="20" y="28" width="210" height="105" rx="10" class="box"/><text x="125" y="62" text-anchor="middle" class="t">프로세스</text><text x="125" y="88" text-anchor="middle" class="small">실행기/라이브러리 버퍼</text><text x="125" y="111" text-anchor="middle" class="small">아직 사용자 공간일 수 있음</text>
+  <rect x="275" y="28" width="180" height="105" rx="10" class="kernel"/><text x="365" y="62" text-anchor="middle" class="t">write(fd, buf, n)</text><text x="365" y="88" text-anchor="middle" class="small">시스템 호출 경계</text><text x="365" y="111" text-anchor="middle" class="small">반환값은 받은 바이트 수</text>
+  <rect x="500" y="28" width="210" height="105" rx="10" class="kernel"/><text x="605" y="62" text-anchor="middle" class="t">페이지 캐시</text><text x="605" y="88" text-anchor="middle" class="small">새 내용은 dirty 상태</text><text x="605" y="111" text-anchor="middle" class="small">RAM의 파일 페이지</text>
+  <rect x="755" y="28" width="160" height="105" rx="10" class="kernel"/><text x="835" y="62" text-anchor="middle" class="t">파일시스템</text><text x="835" y="88" text-anchor="middle" class="small">block 매핑·metadata</text><text x="835" y="111" text-anchor="middle" class="small">journal/COW 가능</text>
+  <rect x="960" y="28" width="140" height="105" rx="10" class="kernel"/><text x="1030" y="62" text-anchor="middle" class="t">블록 계층</text><text x="1030" y="88" text-anchor="middle" class="small">I/O 요청 큐</text>
+  <path d="M230 80 H267" class="arrow"/><text x="248" y="67" text-anchor="middle" class="small">flush</text><path d="M455 80 H492" class="arrow"/><path d="M710 80 H747" class="arrow"/><text x="728" y="67" text-anchor="middle" class="small">writeback</text><path d="M915 80 H952" class="arrow"/>
+  <rect x="390" y="220" width="245" height="105" rx="10" class="device"/><text x="512" y="254" text-anchor="middle" class="t">장치의 volatile cache</text><text x="512" y="280" text-anchor="middle" class="small">전원 손실 시 보존 여부 확인 필요</text><text x="512" y="303" text-anchor="middle" class="small">flush/FUA·PLP 계약의 대상</text>
+  <rect x="735" y="220" width="245" height="105" rx="10" class="device"/><text x="857" y="254" text-anchor="middle" class="t">비휘발성 매체</text><text x="857" y="280" text-anchor="middle" class="small">NAND flash 또는 HDD platter</text><text x="857" y="303" text-anchor="middle" class="small">장치가 완료를 말하는 안정 지점</text>
+  <path d="M1030 133 V175 H512 V212" class="arrow"/><path d="M635 272 H727" class="arrow"/>
+  <line x1="20" y1="175" x2="1100" y2="175" class="dash"/><text x="30" y="198" class="small">위: 사용자/커널의 논리 상태 · 아래: 저장장치 내부 상태</text>
+  <text x="20" y="370" class="t">핵심: flush, write 반환, writeback, fsync 완료는 서로 다른 경계다.</text>
+  <text x="20" y="397" class="small">정확한 내구성은 파일시스템, mount 옵션, 장치 cache, controller와 전원 손실 보호까지 포함해 확인한다.</text>
+</svg>

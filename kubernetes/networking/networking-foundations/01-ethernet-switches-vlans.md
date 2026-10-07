@@ -1,8 +1,25 @@
 # 01. Ethernet, Switch, VLAN
 
-범위: 이 장은 같은 LAN 안에서 frame이 어떻게 움직이는지 설명한다.
-핵심은 MAC 주소, Ethernet frame, switch의 FDB 학습, broadcast domain, VLAN tag, loop 방지다.
+범위: 이 장은 Ethernet(이더넷, 유선 LAN에서 널리 쓰는 링크 계층 규칙)으로 연결된 같은 LAN(Local Area Network, 가까운 범위의 논리 네트워크) 안에서 frame(목적지·출발지 MAC과 payload·검사값을 담아 한 링크가 전달하는 묶음)이 어떻게 움직이는지 설명한다.
+핵심은 MAC(Media Access Control, 현재 링크의 인터페이스 식별) 주소, Ethernet frame, switch의 FDB(Forwarding Database, MAC 주소가 어느 포트에 있는지 기억하는 표) 학습, broadcast domain(한 broadcast frame이 퍼지는 범위), VLAN(Virtual LAN, 하나의 물리망을 여러 논리 LAN으로 분리하는 기능) tag, loop 방지다.
 호스트 설정이나 네트워크 진단 명령 실습은 하지 않는다.
+
+```mermaid
+sequenceDiagram
+    participant A as Host A / MAC A
+    participant S as Switch / FDB initially empty
+    participant B as Host B / MAC B
+    participant C as Host C
+    A->>S: frame src=A, dst=B
+    Note over S: learn A → A-port
+    S-->>B: unknown unicast flood
+    S-->>C: unknown unicast flood
+    B->>S: reply src=B, dst=A
+    Note over S: learn B → B-port
+    S->>A: known unicast to A-port
+```
+
+스위치가 배우는 값은 수신 frame의 **source MAC**이고, 전달할 때 찾는 값은 **destination MAC**이다. VLAN을 쓰면 FDB의 실질적인 key는 MAC 하나가 아니라 VLAN과 MAC의 조합으로 생각해야 한다.
 
 ## 1. MAC 주소는 링크 계층의 주소다
 

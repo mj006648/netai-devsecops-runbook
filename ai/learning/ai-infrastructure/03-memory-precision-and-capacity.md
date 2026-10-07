@@ -6,10 +6,30 @@
 훈련인지 추론인지, batch와 sequence 길이가 얼마인지, dtype이 무엇인지, optimizer 상태가 있는지, KV cache를 얼마나 잡는지에 따라 답이 달라진다.
 이 장은 메모리를 구성요소로 나누어 계산한다.
 
+**Weight(가중치)**는 모델이 학습해 저장한 파라미터 값이다. **Batch(배치)**는 한 번의 계산에 함께 넣는 샘플 묶음이고, **sequence length(문맥 길이)**는 샘플마다 처리하는 token 자리 수다. **dtype(data type, 자료형)**은 숫자 하나를 어떤 형식과 byte 수로 저장하는지 정한다. **KV cache(키·값 캐시)**는 생성 추론에서 과거 token의 attention 중간값을 요청별로 보관하는 공간이다.
+
 계산은 모델이다.
-실제 peak memory는 workspace, allocator, fragmentation, graph capture, checkpointing, offload, tensor parallelism 때문에 달라질 수 있다.
+실제 **peak memory(실행 중 가장 높았던 메모리 사용량)**는 연산이 잠시 빌리는 **workspace(임시 작업 공간)**, 메모리 조각을 배정·회수하는 **allocator(할당기)**, 빈 공간이 흩어지는 **fragmentation(단편화)** 때문에 달라진다. 실행 모양을 미리 고정하는 graph capture, 중간값을 다시 계산해 저장을 줄이는 checkpointing, 상태를 CPU·저장장치로 옮기는 offload, tensor를 GPU 사이에 나누는 tensor parallelism도 peak를 바꾼다. 이 용어들은 뒤에서 각각 어떤 항목을 늘리고 줄이는지 다시 계산한다.
 그래도 손계산은 첫 번째 오류를 잡아준다.
 단위와 가정을 적으면 “왜 안 들어가는지”를 토론할 수 있다.
+
+## 먼저 메모리의 위치를 구별한다
+
+GPU 메모리라고 부르는 장치 메모리와 CPU가 쓰는 시스템 RAM은 물리적으로 다른 곳에 있다. 모델 파일은 처음에는 저장장치에 있고, 보통 CPU RAM을 거쳐 장치 메모리로 복사된다. GPU 안에서도 register와 shared memory는 kernel이 짧게 쓰는 작고 빠른 공간이며, 큰 weight와 activation이 머무는 device memory와 역할이 다르다.
+
+![저장장치에서 CPU RAM과 GPU 메모리 계층으로 데이터가 이동하는 구조](assets/gpu-memory-hierarchy.svg)
+
+*그림 1. 용량과 속도는 구현에 따라 달라지지만, 서로 다른 주소 공간과 복사 경계를 먼저 구별해야 한다.*
+
+```mermaid
+flowchart LR
+    S[저장장치의 checkpoint] --> H[CPU RAM의 tensor]
+    H -->|PCIe/NVLink copy| D[GPU device memory]
+    D --> K[kernel의 register/shared memory]
+    K --> D
+```
+
+DIMM의 **rank**와 분산 학습의 **rank**는 전혀 다른 말이다. DIMM rank는 메모리 모듈에서 함께 선택되어 데이터를 내는 DRAM 칩의 묶음이고, DRAM bank는 칩 내부에서 독립적으로 활성화할 수 있는 저장 영역이다. 분산 rank는 process를 구분하는 번호다. 이 장의 `rank`가 분산 process를 뜻할 때는 반드시 `process rank`라고 적는다.
 
 ## 메모리 구성요소
 
@@ -29,9 +49,9 @@ Activations는 forward 중 layer 사이에 생기는 중간 tensor다.
 Training에서는 backward 계산을 위해 많은 activation을 저장한다.
 Inference에서도 layer output, attention 상태, KV cache 같은 중간값이 필요하다.
 
-Temporary workspace는 library나 kernel이 연산을 빠르게 하기 위해 잠시 쓰는 buffer다.
+Temporary workspace는 library나 kernel이 연산을 빠르게 하기 위해 잠시 쓰는 buffer다. 예를 들어 같은 행렬곱도 선택된 algorithm이 입력·출력 tensor 외에 재배열 공간을 요구할 수 있다. 연산이 끝나면 재사용될 수 있지만, 실행 순간에는 peak memory에 포함된다.
 
-Allocator overhead와 fragmentation 때문에 tensor payload 합과 실제 예약량이 다를 수 있다.
+Allocator overhead는 작은 요청마다 붙는 관리·정렬 비용이고, fragmentation은 총 빈 공간은 충분해도 필요한 크기의 block이 한 덩어리로 없을 수 있는 상태다. 그래서 tensor payload 합과 실제 예약량이 다를 수 있다.
 
 ## 단위와 dtype
 

@@ -1,9 +1,25 @@
 # 00. 신호에서 프레임과 패킷까지
 
-범위: 이 장은 네트워크를 처음 보는 사람이 “정보가 어떻게 전기·빛·무선 신호가 되고, 다시 bit, frame, packet으로 해석되는가”를 잡기 위한 바닥 장이다.
-Kubernetes, Cilium, DNS, TLS를 보기 전에 필요한 가장 낮은 단위를 다룬다.
+범위: 이 장은 네트워크를 처음 보는 사람이 “정보가 어떻게 전기·빛·무선 신호가 되고, 다시 bit(0 또는 1인 정보 단위), frame(한 링크의 전달 묶음), packet(여러 network를 건너는 IP 전달 묶음)으로 해석되는가”를 잡기 위한 바닥 장이다.
+뒤 장의 container network, 이름 조회, 통신 보호를 보기 전에 필요한 가장 낮은 단위를 다룬다.
 실제 PHY 칩, 광모듈, 무선 변조, Ethernet 표준의 모든 세부 구현은 훨씬 복잡하다.
-여기서는 운영자가 패킷 경로와 MTU, latency, encapsulation을 이해하는 데 필요한 모델을 세운다.
+여기서는 운영자가 packet 경로와 MTU(Maximum Transmission Unit, 한 번에 실을 수 있는 네트워크 계층 단위의 크기 상한), latency(지연 시간), encapsulation(상위 계층 byte를 아래 계층 payload에 넣고 header를 덧붙이는 포장)을 이해하는 데 필요한 모델을 세운다. payload(페이로드)는 현재 계층이 운반할 내용이고, header(헤더)는 그 내용을 처리하는 데 필요한 주소·길이·순서 같은 앞부분 정보다.
+
+```mermaid
+flowchart LR
+    A["정보와 byte"] --> B["encoding"]
+    B --> C["bit와 symbol"]
+    C --> D["전기·빛·무선 신호"]
+    D --> E["수신기의 clock recovery"]
+    E --> F["frame 복원·FCS 검사"]
+    F --> G["IP packet 해석"]
+```
+
+이 장에서 가장 중요한 경계는 세 개다. **bit는 정보 단위**, **symbol은 한 번에 구분하는 신호 상태**, **frame은 링크가 전달하는 byte 묶음**이다. 이 셋을 같은 것으로 취급하면 전송률 계산과 packet capture 해석이 함께 틀어진다.
+
+![HTTP 데이터가 계층별로 캡슐화되어 신호가 되고 다시 풀리는 과정](assets/encapsulation-journey.svg)
+
+*그림 1. 송신 측은 header를 바깥쪽에 더하고, 수신 측은 역순으로 검사한다. 물리 신호 자체가 IP packet인 것은 아니다.*
 
 ## 1. 정보는 의미이고, 신호는 물리 현상이다
 

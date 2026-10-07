@@ -1,5 +1,16 @@
 # AI 교재의 계산 예제 검사
 
+이 도구는 Markdown(문서 서식)의 표준 Python 코드 블록을 임시 파일로 실행해 종료 코드와 `assert`(조건이 참인지 확인하는 명령)를 검사한다. GPU 장치 함수를 뜻하는 CUDA kernel, GPU 메모리, 여러 GPU의 집단 통신을 맡는 NCCL, 프레임워크 성능을 측정하는 도구가 아니다. 문서의 **계산 모형이 스스로 모순되지 않는지** 확인하는 범위로 사용한다.
+
+```mermaid
+flowchart LR
+    M[Markdown Python block] --> T[임시 파일]
+    T --> P[로컬 Python 실행]
+    P --> R[exit code/assert 결과]
+    R -->|통과| C[계산 예제 일관성 확인]
+    R -->|실패| F[해당 문서와 stderr 표시]
+```
+
 [교재 목차](../README.md) · [여섯 로컬 실습](../11-local-labs-and-research.md)
 
 저장소 루트에서 실행한다. Python 표준 라이브러리와 Bash만 사용한다.

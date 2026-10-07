@@ -4,6 +4,18 @@
 
 이 문서는 배포 절차가 아니라 박사과정 준비용 학습 노트다. 실제 클러스터 명령, 주소, 계정, 용량 측정값을 제공하지 않는다. 숫자 예제는 모두 설명용 가정이며 특정 NetAI 환경의 실측값이 아니다.
 
+```mermaid
+flowchart LR
+    C[HDFS client] -->|1. 파일→block 위치 조회| N[NameNode<br/>namespace·metadata]
+    N -->|2. DataNode 목록| C
+    C -->|3. payload packet| D1[DataNode 1]
+    D1 --> D2[DataNode 2]
+    D2 --> D3[DataNode 3]
+    D3 -->|ACK 역방향| D2 --> D1 --> C
+```
+
+**메타데이터(metadata)**는 파일 이름·길이·블록 위치처럼 데이터를 설명하는 정보이고, **페이로드(payload)**는 실제 파일 바이트다. **복제본(replica)**은 같은 HDFS 블록 바이트를 다른 장애 영역에 둔 사본이다. **ACK(acknowledgement, 확인 응답)**은 정해진 처리 단계가 끝났다는 신호이며 파일 전체의 게시·백업·모든 전원 장애 내구성을 한꺼번에 뜻하지 않는다.
+
 ## 1. HDFS를 읽을 때 먼저 버릴 직관
 
 HDFS는 “여러 서버의 디스크를 하나의 큰 POSIX 디스크처럼 붙인 것”이 아니다. 공식 구조 설명은 HDFS가 고장 많은 범용 하드웨어에서 큰 파일을 높은 처리량으로 읽도록 설계됐다고 설명한다. [Apache HDFS

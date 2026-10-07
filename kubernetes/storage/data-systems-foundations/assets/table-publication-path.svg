@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title desc" font-family="Noto-Serif-CJK-KR, sans-serif">
+  <title id="title">데이터 파일 작성과 Iceberg 테이블 게시 경로</title>
+  <desc id="desc">원본 레코드가 Parquet 파일, manifest, manifest list, table metadata가 되고 catalog의 현재 포인터를 원자적으로 바꾸어 새 snapshot을 게시하는 흐름이다.</desc>
+  <defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#315b7d"/></marker><style>.b{fill:#eef5fb;stroke:#315b7d;stroke-width:2}.m{fill:#fff3df;stroke:#a96800;stroke-width:2}.c{fill:#edf8ef;stroke:#397647;stroke-width:2}.t{font-size:16px;fill:#17212b}.s{font-size:13px;fill:#3e4b57}.a{stroke:#315b7d;stroke-width:2;fill:none;marker-end:url(#a)}.dash{stroke:#a96800;stroke-width:2;stroke-dasharray:6 5;fill:none;marker-end:url(#a)}</style></defs>
+  <rect x="25" y="35" width="180" height="95" rx="10" class="b"/><text x="115" y="68" text-anchor="middle" class="t">레코드·Arrow batch</text><text x="115" y="95" text-anchor="middle" class="s">메모리의 행/열 값</text>
+  <rect x="250" y="35" width="205" height="95" rx="10" class="b"/><text x="352" y="68" text-anchor="middle" class="t">Parquet data file</text><text x="352" y="95" text-anchor="middle" class="s">row group·column chunk·footer</text>
+  <rect x="500" y="35" width="180" height="95" rx="10" class="m"/><text x="590" y="68" text-anchor="middle" class="t">manifest file</text><text x="590" y="95" text-anchor="middle" class="s">data/delete file 목록·통계</text>
+  <rect x="725" y="35" width="180" height="95" rx="10" class="m"/><text x="815" y="68" text-anchor="middle" class="t">manifest list</text><text x="815" y="95" text-anchor="middle" class="s">snapshot의 manifest 목록</text>
+  <rect x="950" y="35" width="145" height="95" rx="10" class="m"/><text x="1022" y="68" text-anchor="middle" class="t">metadata JSON</text><text x="1022" y="95" text-anchor="middle" class="s">snapshot·schema</text>
+  <path d="M205 82 H242" class="a"/><path d="M455 82 H492" class="a"/><path d="M680 82 H717" class="a"/><path d="M905 82 H942" class="a"/>
+  <rect x="250" y="220" width="260" height="105" rx="10" class="c"/><text x="380" y="254" text-anchor="middle" class="t">catalog의 현재 metadata pointer</text><text x="380" y="282" text-anchor="middle" class="s">table 이름 → 현재 metadata 위치</text><text x="380" y="305" text-anchor="middle" class="s">비교 후 교체하는 commit 경계</text>
+  <rect x="690" y="220" width="260" height="105" rx="10" class="c"/><text x="820" y="254" text-anchor="middle" class="t">독자가 고정한 snapshot</text><text x="820" y="282" text-anchor="middle" class="s">계획 중 같은 snapshot을 따라감</text><text x="820" y="305" text-anchor="middle" class="s">manifest에서 data file 선택</text>
+  <path d="M1022 130 V175 H510 V212" class="dash"/><text x="740" y="166" text-anchor="middle" class="s">파일 작성만으로 table에 보이는 것은 아님</text><path d="M510 272 H682" class="a"/>
+  <path d="M820 325 V375 H352 V138" class="dash"/><text x="600" y="395" text-anchor="middle" class="s">read: snapshot → manifest → 필요한 Parquet file → 필요한 column/page</text>
+  <text x="25" y="445" class="t">핵심: object PUT 성공과 table commit 성공은 서로 다른 사건이다.</text>
+  <text x="25" y="470" class="s">충돌 시 새 파일이 저장소에 남아도 catalog pointer가 바뀌지 않았다면 공식 snapshot의 일부가 아닐 수 있다.</text>
+</svg>

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="800" viewBox="0 0 1260 800" role="img" aria-labelledby="title desc">
+  <title id="title">DDR: 한 클록 주기에 두 번 데이터를 전송하는 원리</title>
+  <desc id="desc">같은 두 클록 주기에서 SDR은 상승 에지만 활용하여 두 번 전송하고, DDR은 상승과 하강 에지를 활용하여 네 번 전송한다. 교육용 원리 그림이며 실제 DQS와 데이터의 전기적 위상이나 대기 시간을 그린 것이 아니다.</desc>
+  <defs>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#12755b"/></marker>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#2463b3"/></marker>
+    <style>
+      text {font-family:"Noto Sans CJK KR","Noto Sans KR","Malgun Gothic","Baekmuk Dotum",sans-serif;fill:#183047}
+      .title {font-size:34px;font-weight:700}
+      .label {font-size:25px;font-weight:700}
+      .body {font-size:22px}
+      .small {font-size:20px;fill:#465c70}
+      .wave {fill:none;stroke:#183047;stroke-width:4;stroke-linejoin:round}
+    </style>
+  </defs>
+  <rect width="1260" height="800" rx="20" fill="#f7fafc"/>
+  <text class="title" x="54" y="60">DDR의 두 번 전송: 주기 수와 전송 횟수는 다르다</text>
+  <text class="body" x="54" y="103">클록이 올라갈 때(상승 에지)와 내려갈 때(하강 에지)를 따라 읽어 보자.</text>
+
+  <rect x="42" y="132" width="1176" height="239" rx="16" fill="#fff" stroke="#cbd8e4"/>
+  <text class="label" x="65" y="178">SDR</text>
+  <text class="body" x="65" y="212">한 주기당</text>
+  <text class="label" x="65" y="246">1회 전송</text>
+  <path class="wave" d="M250 223 H340 V183 H530 V223 H720 V183 H910 V223 H1100"/>
+  <path d="M340 157 V146 H720 V157 M720 157 V146 H1100 V157" fill="none" stroke="#6b8094" stroke-width="2"/>
+  <text class="small" x="450" y="141">첫째 주기</text>
+  <text class="small" x="824" y="141">둘째 주기</text>
+  <circle cx="340" cy="202" r="8" fill="#12755b"/>
+  <circle cx="720" cy="202" r="8" fill="#12755b"/>
+  <path d="M340 240 V279" stroke="#12755b" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M720 240 V279" stroke="#12755b" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <rect x="301" y="292" width="78" height="43" rx="8" fill="#e1f4eb"/>
+  <rect x="681" y="292" width="78" height="43" rx="8" fill="#e1f4eb"/>
+  <text class="label" x="320" y="322">D0</text>
+  <text class="label" x="700" y="322">D1</text>
+  <text class="body" x="940" y="316">합계 2회 전송</text>
+
+  <rect x="42" y="390" width="1176" height="249" rx="16" fill="#fff" stroke="#cbd8e4"/>
+  <text class="label" x="65" y="435">DDR</text>
+  <text class="body" x="65" y="469">한 주기당</text>
+  <text class="label" x="65" y="503">2회 전송</text>
+  <path class="wave" d="M250 480 H340 V440 H530 V480 H720 V440 H910 V480 H1100"/>
+  <path d="M340 414 V403 H720 V414 M720 414 V403 H1100 V414" fill="none" stroke="#6b8094" stroke-width="2"/>
+  <circle cx="340" cy="460" r="8" fill="#12755b"/>
+  <circle cx="530" cy="460" r="8" fill="#2463b3"/>
+  <circle cx="720" cy="460" r="8" fill="#12755b"/>
+  <circle cx="910" cy="460" r="8" fill="#2463b3"/>
+  <path d="M340 497 V536" stroke="#12755b" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M720 497 V536" stroke="#12755b" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M530 497 V536" stroke="#2463b3" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <path d="M910 497 V536" stroke="#2463b3" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <rect x="301" y="549" width="78" height="43" rx="8" fill="#e1f4eb"/>
+  <rect x="491" y="549" width="78" height="43" rx="8" fill="#e7f0fd"/>
+  <rect x="681" y="549" width="78" height="43" rx="8" fill="#e1f4eb"/>
+  <rect x="871" y="549" width="78" height="43" rx="8" fill="#e7f0fd"/>
+  <text class="label" x="320" y="579">D0</text>
+  <text class="label" x="510" y="579">D1</text>
+  <text class="label" x="700" y="579">D2</text>
+  <text class="label" x="890" y="579">D3</text>
+  <text class="body" x="982" y="573">합계 4회</text>
+  <text class="small" x="301" y="620">초록: 상승 에지 활용</text>
+  <text class="small" x="661" y="620">파랑: 하강 에지 활용</text>
+
+  <text class="label" x="54" y="686">교육용 계산: 3200MHz × 주기당 2회 = 6400MT/s</text>
+  <text class="small" x="54" y="730">D0 같은 표기는 데이터의 이름이다. 전송 기회가 늘어도 용량이나 선의 개수가 두 배가 되지는 않는다.</text>
+  <text class="small" x="54" y="764">실제 제품은 데이터 스트로브(DQS)·명령·대기 조건을 사용한다. 이 그림은 전기 파형의 측정 결과가 아니다.</text>
+</svg>

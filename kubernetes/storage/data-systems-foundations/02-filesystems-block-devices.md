@@ -6,6 +6,21 @@
 
 이 장은 “파일 이름이 어떻게 장치의 논리 블록 주소까지 이어지는가?”를 밑바닥부터 추적한다. ext4, XFS, btrfs, tmpfs, Ceph BlueStore, object store는 내부 구조가 다르다. 여기서는 개념을 잡기 위해 작은 toy filesystem을 만들고, 실제 Linux 문서로 용어의 경계를 확인한다. 숫자는 교육용 예시이며 운영 장치의 성능이나 실제 배치를 주장하지 않는다.
 
+```mermaid
+flowchart LR
+    P[pathname<br/>/data/a.txt] --> D[dentry<br/>이름 lookup cache]
+    D --> I[inode<br/>권한·크기·block mapping]
+    I --> E[extent<br/>논리 구간→물리 구간]
+    E --> L[LBA<br/>장치 논리 주소]
+    L --> F[SSD FTL<br/>NAND 위치 변환]
+```
+
+**inode(아이노드)**는 파일의 권한·크기·데이터 위치 같은 메타데이터를 가진 파일시스템 객체이고, **dentry(디렉터리 엔트리 캐시 객체)**는 경로의 이름을 inode에 연결하는 조회 결과다. **블록(block)**은 계층이 정한 데이터 덩어리이므로 파일시스템 블록, 장치 sector, SSD erase block을 같은 단위로 취급하지 않는다.
+
+![경로 이름에서 SSD NAND까지 이어지는 주소 변환](assets/filesystem-to-ssd.svg)
+
+*그림 02-1. 이름 조회, 파일시스템 매핑, 장치 논리 주소, SSD 내부 매핑은 서로 다른 번역 단계다. 논리적으로 연속된 extent가 NAND에서도 연속된다는 뜻은 아니다.*
+
 ## 1. 파일시스템은 왜 필요한가?
 
 블록 장치는 보통 “LBA N부터 몇 블록을 읽거나 써라” 같은 인터페이스를 제공한다. 사용자는 그렇게 살고 싶지 않다. 사용자는 `/data/a.txt`라는 이름, “내가 읽을 수 있는가?”, “파일 길이는 얼마인가?”, “앞에서 10바이트를 읽어라” 같은 요청을 한다.

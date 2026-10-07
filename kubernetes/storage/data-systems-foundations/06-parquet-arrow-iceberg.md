@@ -2,6 +2,20 @@
 
 작성·문헌 확인일: **2026-09-22**. 이 장은 CSV·row store·columnar file·in-memory columnar layout·table format catalog를 한 번에 섞지 않도록 낮은 층의 역할을 분리한다. 공식 문서와 규격은 시간이 지나며 바뀌므로, 실제 실험에서는 Apache Parquet·Arrow·Iceberg·Nessie의 릴리스 번호와 엔진 커넥터 버전을 함께 고정한다. 여기서의 파일 이름, metadata, SQL 모양은 모두 **개념 설명용 가상 표현**이며, 운영 환경에서 실행할 명령이나 완전한 schema가 아니다. Lakehouse 논문별 긴 연구 해설은 [기존 리뷰](../lakehouse/02-paper-reviews.md)와 [단계별 walkthrough](../lakehouse/04-end-to-end-walkthrough.md)를 참고하고, 이 장은 하위 파일 구조와 읽기 경로에 집중한다.
 
+```mermaid
+flowchart LR
+    A[Arrow batch<br/>메모리 열 배열] --> P[Parquet file<br/>지속 저장 열 형식]
+    P --> M[Iceberg manifest<br/>data file 목록·통계]
+    M --> S[Iceberg snapshot<br/>한 시점의 table 상태]
+    S --> C[catalog pointer<br/>현재 metadata 위치]
+```
+
+**열 지향(columnar)**은 같은 열의 값을 가깝게 놓는 배치 방식이고, **스키마(schema)**는 열 이름·타입·필수 여부 같은 해석 규칙이다. **row group(행 그룹)**은 Parquet에서 여러 행을 묶는 큰 수평 단위다. **manifest(매니페스트)**는 데이터·삭제 파일의 목록과 통계를 담는 Iceberg 메타데이터 파일이고, **snapshot(스냅샷)**은 특정 시점의 공식 테이블 상태를 가리킨다. **catalog(카탈로그)**는 테이블 이름에서 현재 metadata 위치를 찾고 commit을 조정하는 경계다.
+
+![Parquet 파일 작성에서 Iceberg 테이블 게시까지](assets/table-publication-path.svg)
+
+*그림 06-1. 데이터 파일을 저장한 사건과 카탈로그의 현재 포인터를 바꿔 새 스냅샷을 게시한 사건은 다르다. 충돌로 commit되지 않은 파일은 저장소에 남아도 공식 테이블 상태에 포함되지 않을 수 있다.*
+
 ## 1. CSV, row layout, column layout은 서로 다른 읽기 비용을 만든다
 
 CSV는 텍스트 행을 delimiter로 나열한 교환 형식에 가깝다. CSV 파일은 사람이 보기 쉽고 append가 단순하지만, type, null, nested 구조, 압축 단위, column statistics를 표준적으로 풍부하게 담지 않는다. Row-store layout은 한 row의 여러 column 값을 가까이 둔다. OLTP에서 한 고객 row 전체를 자주 읽고 update할 때 row-store는 locality가 좋다. Columnar layout은 같은 column 값을 연속적으로 배치해 scan, compression, vectorized execution에 유리하게 만든다. 분석 쿼리가 200개 column 중 5개만 읽는다면 columnar file은 projection으로 나머지를 건너뛸 수 있다. 반대로 한 row를 자주 point update하는 workload에서는 immutable columnar file을 다시 쓰거나 delete 표현을 추가해야 할 수 있다. 따라서 “columnar가 row보다 빠르다”가 아니라 “쿼리가 어떤 column과 row 범위를 읽는가”로 판단한다.

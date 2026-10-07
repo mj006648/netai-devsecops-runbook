@@ -1,10 +1,16 @@
-# 서버 하드웨어를 연결해서 이해하기 — A7 GPU·NPU 노드로 배우는 교재
+# 서버 하드웨어를 연결해서 이해하기 — 처음부터 설계 검토까지
 
 작성·공식 자료 확인 기준: **2026-09-21**. 00장은 전기·비트·논리회로를 처음 배우는 독자부터 시작한다. 이후 CPU, RAM, PCIe, GPU/NPU, NIC, 스토리지의 관계를 운영·설계 관점으로 확장한다. 회로 설계나 반도체 제조 지식은 전제하지 않는다. 기초·계산·추적 설명 보강: **2026-09-22**.
 
 이 교재의 목표는 부품 이름을 외우는 데 있지 않다. 서버의 블록도와 실제 조회 결과를 보고 **데이터가 어디에 저장되고, 어느 경로를 지나며, 무엇을 공유하고, 어느 조건에서 느려지는지** 설명할 수 있게 하는 것이다. 새 GPU나 NIC를 구매할 때도 물리 공간, 연결 대역폭, 소프트웨어 지원, 전원·냉각을 함께 판단할 수 있어야 한다.
 
-[다섯 교재 통합 학습 순서](../../../learning/README.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
+> **먼저 알아둘 이름 — A7은 표준 용어가 아니다.** 이 문서에서 `A7`은 학습 사례로 사용한 **랩 내부 서버 한 대의 고유 식별명**이다. GPU 세대, NPU 모델, PCIe 규격, 서버 제품군을 뜻하지 않는다. 원리는 일반 서버 기준으로 먼저 설명하고, `A7 실측`이라고 표시한 부분에서만 2026-09-21 당시 그 서버의 관측값을 적용한다.
+
+![CPU, 메모리, PCIe 장치, 저장장치, 네트워크와 관리 경로를 한 장에 나타낸 서버 구성도](assets/server-components.svg)
+
+*그림 1. 서버는 부품 목록이 아니라 여러 데이터 경로의 결합이다. 실선은 주 데이터 경로, 점선은 관리·관측 경로를 뜻한다.*
+
+[다섯 교재 통합 학습 순서](../../../learning/README.md) · [하드웨어 실물 사진 길잡이](../../../learning/HARDWARE-GALLERY.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
 처음에는 정확한 이름을 외우기보다 **왜 필요한가 → 실제로 무엇이 움직이는가 → 숫자로 계산할 수 있는가 → 어느 조건에서 설명이 달라지는가** 순서로 읽는다. 고급 제품 사양과 A7 사례는 기본 원리를 배운 뒤 확인한다.
 
@@ -35,7 +41,7 @@
 | [07. NVLink·UALink·CXL과 최신 연결 기술](07-accelerator-interconnects.md) | scale-up/out·NVSwitch·NVLink Fusion·UALink·UEC·CXL | 기술의 역할과 발표·표준·제품 지원 상태를 구분 |
 | [08. 전원·냉각·BMC·정비](08-power-cooling-serviceability.md) | PSU·PDU·이중화·팬·액체냉각·펌웨어·관리망 | 장착 가능성과 안정적인 운용 가능성을 따로 검증 |
 | [09. 읽기 전용 실습](09-readonly-labs.md) | 조회 명령·출력 해석·정보 수집 순서 | 운영 설정을 바꾸지 않고 노드 구성표 작성 |
-| [10. A7 배치 설계·종합 문제](10-a7-design-exercises.md) | 실제 슬롯 지도·조건부 증설·계산·판단 문제 | GPU/NPU/NIC/RAM 증설안을 근거와 함께 검토 |
+| [10. 서버 배치 설계·종합 문제](10-a7-design-exercises.md) | 일반 절차를 A7 슬롯 지도에 적용하는 조건부 증설 문제 | GPU/NPU/NIC/RAM 증설안을 근거와 함께 검토 |
 | [11. 용어 사전·오해 정리](11-glossary.md) | 약어·혼동하기 쉬운 용어·빠른 찾아보기 | 모르는 단어에서 관련 장으로 이동 |
 
 처음 읽는다면 **00 → 01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10** 순서가 좋다. 용어 사전은 중간에 참고한다. 이미 기본 지식이 있다면 10장의 A7 사례에서 막히는 개념을 해당 장으로 돌아가 읽어도 된다.

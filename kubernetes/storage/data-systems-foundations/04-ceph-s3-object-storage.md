@@ -5,6 +5,20 @@
 이 문서는 배포 runbook이 아니라 박사과정 준비용 학습 노트다. 실제 Ceph 또는 AWS 계정에 접속하는 명령, 주소, credential, bucket 이름을 쓰지 않는다. 숫자와 경로는 모두 설명용 가정이며 특정 클러스터 실측값이 아니다. Kubernetes PV/PVC/CSI는 이 장에서 “storage
 engine”이 아니라 연결 API로만 다룬다.
 
+```mermaid
+flowchart TD
+    U[사용자 요청] --> B[RBD<br/>block volume]
+    U --> F[CephFS<br/>POSIX-like file]
+    U --> S[RGW<br/>S3 object API]
+    B --> R[RADOS object]
+    F --> R
+    S --> R
+    R --> P[PG<br/>placement·recovery shard]
+    P --> O[OSD<br/>실제 저장·복구 daemon]
+```
+
+**객체(object)**는 키로 통째로 읽고 쓰는 데이터 단위, **RADOS**는 Ceph 내부의 분산 객체 저장 계층이다. **PG(Placement Group, 배치 그룹)**는 객체를 배치·복구하기 위한 논리 묶음이고, **OSD(Object Storage Daemon)**는 저장 장치를 맡아 실제 저장과 복구에 참여하는 프로세스다. S3 객체와 RADOS 객체가 이름이 같아도 1:1 대응한다고 가정하지 않는다.
+
 ## 1. 먼저 Ceph의 계층을 분리한다
 
 Ceph는 block, file, object interface를 한 시스템에서 제공하지만 모든 것이 같은 API라는 뜻은 아니다. 공식 architecture 문서는 Ceph Storage Cluster가 RADOS를 기반으로 하고, RBD·RGW·CephFS 같은 client interface가 그 위에 얹힌다고

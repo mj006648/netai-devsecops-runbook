@@ -8,14 +8,31 @@
 
 표의 “full name”은 널리 쓰이는 약어의 풀네임만 적었다. `bit`, `byte`, `Parquet`, `Arrow`, `Iceberg`, `Bloom`처럼 이름 자체이거나 사람 이름에서 온 용어는 억지로 풀어 쓰지 않는다.
 
+```mermaid
+flowchart TD
+    U[본문에서 낯선 단어 발견] --> D[이 표의 쉬운 정의]
+    D --> O[계층·owner 확인]
+    O --> N[혼동 금지 대상 비교]
+    N --> B[연결된 본문 예제 읽기]
+    B --> S[자기 말로 경로 설명]
+```
+
+용어집은 암기 목록이 아니다. 예를 들어 `page`를 찾았다면 OS 메모리 페이지, DB 페이지, Parquet 페이지 중 어느 소유자의 단위인지 먼저 확인한다. 그 다음 본문으로 돌아가 그 단위를 누가 만들고 언제 바꾸는지 추적한다.
+
 ## 바이트·파일·Linux I/O
 
 | 용어 | full name | 쉬운 정의 | 계층·owner | 혼동 금지 | 더 읽기 |
 | --- | --- | --- | --- | --- | --- |
 | bit | 이름 자체 | 0 또는 1 하나를 나타내는 가장 작은 이진 자리다. | 표현 단위 | byte와 같지 않다. | [00](00-map-and-vocabulary.md), [00a](00a-bytes-payload-and-packets.md) |
 | byte | 이름 자체 | 보통 8bit를 묶은 단위이며 파일·네트워크 API가 주로 다루는 크기 단위다. | 표현·I/O 단위 | 문자 한 개와 항상 같지 않다. | [00a](00a-bytes-payload-and-packets.md), [01](01-linux-read-write.md) |
+| record | 이름 자체 | 업무에서 같은 종류의 한 건으로 다루는 필드 묶음이다. | 애플리케이션·데이터 모델 | 네트워크 packet이나 파일 block과 같은 물리 단위가 아니다. | [00](00-map-and-vocabulary.md), [00a](00a-bytes-payload-and-packets.md) |
+| schema | 이름 자체 | 필드·열의 이름, 타입, 필수 여부와 해석 규칙을 정한 약속이다. | 데이터 모델·포맷 | 실제 byte 배치인 layout과 다르다. | [00](00-map-and-vocabulary.md), [06](06-parquet-arrow-iceberg.md) |
+| header | 이름 자체 | 해당 프로토콜·포맷이 내용을 해석하고 전달하도록 붙인 제어 정보 구획이다. | 네트워크·파일 포맷 | 한 계층의 header가 아래 계층에서는 payload일 수 있다. | [00a](00a-bytes-payload-and-packets.md) |
+| payload | 이름 자체 | 현재 보고 있는 계층이 운반하거나 저장하려는 내용이다. | 모든 데이터 전달 계층 | metadata·header와 영원히 배타적인 byte 종류가 아니다. | [00](00-map-and-vocabulary.md), [00a](00a-bytes-payload-and-packets.md) |
 | offset | 이름 자체 | 시작점에서 몇 byte 떨어졌는지 나타내는 위치값이다. | 파일·메모리·프로토콜 공통 | 행 번호나 block 번호와 같지 않다. | [00](00-map-and-vocabulary.md), [01](01-linux-read-write.md) |
+| process | 이름 자체 | 실행 중이며 PID, 가상 주소 공간, fd table 같은 자원을 가진 격리 단위다. | 운영체제 | 디스크에 놓인 프로그램 파일과 다르다. | [00b](00b-linux-processes-and-memory.md) |
 | fd | file descriptor | 프로세스가 열린 파일·파이프·소켓 등을 가리킬 때 쓰는 작은 정수 핸들이다. | Linux process fd table | 파일 이름, inode, 디스크 주소가 아니다. | [01](01-linux-read-write.md) |
+| syscall | system call | 사용자 프로그램이 커널의 보호된 기능을 요청하는 공식 호출 경계다. | 사용자 공간↔커널 | 일반 함수 호출의 성공과 영구 저장 보장을 자동으로 뜻하지 않는다. | [00b](00b-linux-processes-and-memory.md), [01](01-linux-read-write.md) |
 | OFD | open file description | 커널 안의 열린 파일 상태로 offset과 file status flag를 담는다. | Linux 열린 파일 테이블 | fd 번호 자체와 다르며 `dup()` 뒤 공유될 수 있다. | [01](01-linux-read-write.md) |
 | inode | index node | 파일 종류·권한·크기·데이터 위치 같은 파일 본체 metadata를 담는 객체다. | 파일시스템 | 파일 이름은 보통 directory entry에 있다. | [02](02-filesystems-block-devices.md) |
 | dentry | directory entry cache/object | 경로 이름 lookup 결과를 표현하고 cache하는 VFS 객체다. | Linux VFS | 파일 내용 cache인 page cache와 다르다. | [02](02-filesystems-block-devices.md) |
@@ -53,6 +70,8 @@
 | queue | 이름 자체 | 처리할 요청을 대기시키고 순서를 관리하는 구조다. | block layer·네트워크·런타임 | cache나 buffer와 목적이 다르다. | [00](00-map-and-vocabulary.md), [02](02-filesystems-block-devices.md) |
 | throughput | 이름 자체 | 단위 시간에 처리한 작업량이나 byte 양이다. | 성능 측정 | 한 요청의 latency와 다르다. | [07](07-measurement-and-paper-reading.md) |
 | p99 | 99th percentile | 관측값 99%가 이 값 이하가 되도록 자른 백분위 지연 지표다. | 성능 측정 | 평균 latency와 다르며 tail 문제를 드러낸다. | [07](07-measurement-and-paper-reading.md) |
+| latency | 이름 자체 | 작업 하나가 시작해 끝날 때까지 걸린 시간이다. | 성능 측정 | 단위 시간당 작업량인 throughput과 다르다. | [07](07-measurement-and-paper-reading.md) |
+| benchmark | 이름 자체 | 정해진 workload·환경·절차로 구현이나 설정을 비교하는 실험이다. | 성능 평가 | 모든 실제 workload에 적용되는 보편 순위가 아니다. | [07](07-measurement-and-paper-reading.md) |
 
 ## HDFS
 
@@ -65,6 +84,7 @@
 | ACK | Acknowledgement | 요청의 특정 단계가 처리됐다고 되돌아오는 응답이다. | 네트워크·분산 저장 | 전체 파일 commit, table commit, 정전 내구성과 자동으로 같지 않다. | [00a](00a-bytes-payload-and-packets.md), [03](03-hdfs-distributed-files.md) |
 | hflush | HDFS API name | HDFS output stream의 현재 buffered 데이터를 DataNode pipeline으로 밀어내 visible하게 만드는 동기화 계열 호출이다. | HDFS client/write pipeline | 모든 DataNode 디스크 내구성을 `hsync`처럼 보장한다고 보면 안 된다. | [03](03-hdfs-distributed-files.md) |
 | hsync | HDFS API name | HDFS에서 더 강한 sync 의미로 데이터가 storage device에 동기화되도록 요구하는 계열 호출이다. | HDFS client/write pipeline | 로컬 POSIX `fsync()`와 구현·범위가 완전히 같다고 단정하지 않는다. | [03](03-hdfs-distributed-files.md) |
+| quorum | 이름 자체 | 여러 참여자 중 진행에 필요하다고 규칙이 정한 최소 응답 집합이다. | 합의·복제 시스템 | 복제본 수나 “과반”과 항상 같은 값은 아니다. | [03](03-hdfs-distributed-files.md), [04](04-ceph-s3-object-storage.md) |
 
 ## Ceph·S3·Kubernetes 저장소
 

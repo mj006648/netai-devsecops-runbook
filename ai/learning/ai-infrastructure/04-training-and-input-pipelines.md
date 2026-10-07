@@ -4,6 +4,24 @@
 
 근거 확인일: **2026-09-22**. 프레임워크 버전마다 옵션 이름과 기본값은 달라질 수 있다. 이 장은 PyTorch 공식 문서가 설명하는 `DataLoader`, pinned memory, autograd, `eval()`, `no_grad()`, DDP의 기본 개념을 기준으로, 특정 GPU나 패키지 설치 없이 학습 데이터가 장치까지 가는 길을 추적한다.
 
+**입력 파이프라인(input pipeline)**은 저장된 샘플을 읽어 변환하고 batch로 묶어 장치에 공급하는 경로다. **DataLoader(데이터 적재기)**는 이 읽기·병렬 작업·batch 구성을 맡는 프레임워크 구성요소다. **Pinned memory(고정 메모리)**는 운영체제가 다른 곳으로 옮기지 않도록 고정한 CPU 메모리 페이지로, GPU와 비동기 복사를 준비할 때 쓰인다. **Autograd(자동미분)**는 forward에서 기록한 연산 관계를 따라 backward의 gradient를 계산한다.
+
+## 학습 한 step에서 상태가 바뀌는 순서
+
+```mermaid
+flowchart LR
+    D[dataset sample] --> T[tokenize/transform]
+    T --> B[batch 구성과 padding]
+    B --> C[CPU RAM에서 GPU로 복사]
+    C --> F[forward]
+    F --> L[loss]
+    L --> R[backward]
+    R --> O[optimizer.step]
+    O --> Z[gradient 초기화]
+```
+
+**Optimizer**는 “학습을 알아서 하는 프로그램”이 아니라 gradient와 내부 상태를 사용해 parameter를 바꾸는 갱신 규칙이다. 가장 단순한 SGD는 `새 weight = 기존 weight - learning_rate × gradient`다. 기존 weight가 `2.0`, gradient가 `-0.4`, learning rate가 `0.1`이면 새 값은 `2.04`다. Adam 계열은 gradient의 이동 평균과 제곱 이동 평균을 추가로 보관하므로 같은 parameter 수라도 메모리를 더 쓴다. `zero_grad()`는 이 optimizer state를 지우는 동작이 아니라 다음 backward를 위해 gradient buffer를 비우거나 `None`으로 만드는 동작이다.
+
 ## 1. 이 장에서 쓰는 기본 단어
 
 **샘플(sample)**은 데이터셋에서 하나 꺼낸 학습 예다. 문장 하나, 이미지 하나, 질의와 답변 한 쌍이 모두 샘플이 될 수 있다.
@@ -98,6 +116,21 @@ for batch in loader:
 
 `non_blocking=True`는 비동기 복사를 요청하는 힌트다. 실제로 겹쳐지는지는 pinned memory, device, stream, 뒤따르는 연산 의존성에 달려 있다.
 
+### DataLoader worker와 queue를 실제 숫자로 보기
+
+**Worker(작업 프로세스)**는 dataset에서 sample을 읽고 전처리하는 실행 단위다. Worker 수 4는 batch 4개가 동시에 GPU에서 실행된다는 뜻이 아니다. CPU 쪽에서 다음 batch 후보를 준비하는 process가 4개라는 뜻이며, 완성된 batch는 queue에서 학습 loop가 가져간다.
+
+가정해 보자. GPU가 batch 하나를 80ms에 처리하고, worker 하나가 batch를 준비하는 데 평균 250ms가 걸린다.
+
+```text
+worker 1개의 이론적 공급률 = 1000 / 250 = 4 batch/s
+GPU 요구률              = 1000 / 80  = 12.5 batch/s
+```
+
+Worker 하나만 있으면 GPU는 자주 입력을 기다린다. Worker 4개가 완전히 병렬로 일하고 저장장치 병목이 없다면 단순 공급 상한은 `4 × 4 = 16 batch/s`라서 GPU 요구률을 넘는다. 실제로는 process 시작, 직렬화, 공유 저장장치, CPU core 경쟁, 순서 보장 비용이 있으므로 이 계산은 worker 수를 정하는 출발점이다.
+
+**Prefetch(미리 읽기)**는 GPU가 현재 batch를 계산하는 동안 다음 batch를 queue에 준비하는 방식이다. Queue가 항상 비면 입력 공급이 느린 신호이고, queue가 계속 가득 차는데 host RAM이 커지면 지나치게 많이 미리 읽는 신호일 수 있다. Worker 수를 늘리는 것과 storage bandwidth를 늘리는 것은 같은 해결책이 아니다.
+
 ## 5. forward, loss, backward, optimizer
 
 **Forward**는 입력 tensor와 가중치를 사용해 출력을 계산하는 단계다. Transformer라면 embedding, attention, MLP, normalization을 통과한다.
@@ -123,6 +156,24 @@ new_w = w - learning_rate × gradient
 
 실제 AdamW는 이보다 복잡하지만 핵심은 같다. gradient가 계산되기 전에는 optimizer가 무엇을 바꿀지 모른다.
 
+### 역전파가 값을 전달하는 순서
+
+두 연산 `a = w × x`, `loss = (a-y)^2 / 2`를 생각하자. `x=3`, `y=12`, `w=2`이면 forward에서 `a=6`, `loss=18`이다. Backward는 연산을 거꾸로 따라간다.
+
+```text
+d(loss)/d(a) = a - y = -6
+d(a)/d(w)    = x     = 3
+d(loss)/d(w) = -6 × 3 = -18
+```
+
+Gradient `-18`은 weight를 조금 키우면 이 지점의 loss가 줄어드는 방향임을 나타낸다. Learning rate가 `0.05`인 SGD라면 `new_w = 2 - 0.05 × (-18) = 2.9`다. Backward는 weight를 직접 고치지 않고 gradient buffer를 채우며, 실제 갱신은 optimizer step이 한다.
+
+### Mixed precision은 저장 dtype과 계산 dtype을 나눈다
+
+**Mixed precision(혼합 정밀도)**은 모든 값을 무조건 FP16으로 바꾸는 방법이 아니다. Weight 사본, activation, gradient, optimizer state, 특정 reduction을 서로 다른 dtype으로 둘 수 있다. 낮은 정밀도는 memory traffic과 지원되는 연산 속도에 이득을 줄 수 있지만 표현 범위가 좁아 overflow나 underflow가 날 수 있다.
+
+**Loss scaling(손실 배율 조정)**은 작은 gradient가 낮은 정밀도에서 0으로 사라지는 것을 줄이려고 loss에 큰 수를 곱해 backward한 뒤, optimizer가 쓰기 전에 gradient를 같은 수로 나누는 방법이다. 예를 들어 원래 gradient가 `0.00001`이고 scale이 1024라면 backward 중 값은 `0.01024`가 되고, update 전 다시 1024로 나눈다. Scale이 너무 크면 overflow가 날 수 있어 구현은 유한값 여부를 확인하고 step을 건너뛰거나 scale을 조정할 수 있다.
+
 ## 6. Gradient accumulation은 optimizer step을 늦춘다
 
 장치 메모리에 batch 64를 한 번에 못 올린다고 하자. microbatch 8개를 8번 처리하고 gradient를 누적하면, optimizer는 batch 64를 본 것처럼 한 번만 움직일 수 있다.
@@ -135,15 +186,22 @@ data_parallel_world_size = 1
 effective sample batch = 8 × 8 × 1 = 64 samples
 ```
 
-분산 학습이면 data parallel rank 수가 곱해진다.
+분산 학습에서는 **data parallel size(DP 크기)**, 즉 서로 다른 sample shard를 처리하는 모델 복제본 수가 곱해진다. 각 DP rank가 중복되지 않은 sample을 받는다는 전제에서 다음 식을 쓴다.
 
 ```text
-microbatch_size = 4 samples per rank
+microbatch_per_dp_rank = 4 samples
 accumulation_steps = 8
-world_size = 4
+data_parallel_size = 4
 
-effective sample batch = 4 × 8 × 4 = 128 samples
+effective sample batch
+  = microbatch_per_dp_rank × accumulation_steps × data_parallel_size
+  = 4 × 8 × 4
+  = 128 samples
 ```
+
+전체 `world_size`를 곧바로 곱하면 안 된다. 예를 들어 `DP=4, TP=2, PP=2`이면 global world size는 16이지만 서로 다른 data shard를 처리하는 복제본은 4개이므로 배치 식에는 4를 쓴다. TP는 한 layer 계산을 나누고 PP는 layer 단계를 나누므로 같은 sample 처리에 협력한다.
+
+또한 distributed sampler가 길이를 맞추려고 sample을 반복하면 “128개” 안에 중복이 있을 수 있다. 마지막 accumulation window가 8회보다 적게 끝났는데 그대로 optimizer step을 하면 유효 batch와 gradient 분모도 달라진다. 마지막 window를 drop할지, 실제 누적 횟수로 다시 나눌지, sample을 padding할지 명시한다.
 
 하지만 언어모델에서는 샘플 수보다 **유효 토큰 수**가 더 중요할 때가 많다. 길이가 제각각이면 “샘플 128개”가 매번 같은 학습량을 뜻하지 않는다.
 
@@ -177,6 +235,16 @@ microbatch 평균을 다시 평균:
 ```
 
 둘 다 코드로 가능하지만 의미가 다르다. 긴 샘플의 token 하나와 짧은 샘플의 token 하나를 같은 무게로 보려면 전체 token 기준 평균이 맞고, 샘플 하나를 같은 무게로 보려면 sample 기준 평균을 명시해야 한다.
+
+Accumulation 중에는 보통 각 microbatch backward가 같은 gradient buffer에 더해진다. 따라서 8회 누적하려면 loss를 8로 나누거나, 마지막에 gradient를 8로 나누는 등 목표한 평균과 일치하는 scaling이 필요하다. 분산 DDP의 평균, padding 제외 token 수, 마지막에 덜 찬 accumulation window까지 들어오면 분모가 달라질 수 있다.
+
+```text
+microbatch gradient: 2, 4, 6, 8
+합을 그대로 사용: 20
+4개 평균 사용:     20 / 4 = 5
+```
+
+둘 중 어느 것이 맞는지는 loss 정의와 learning rate 계약에 달렸다. “누적 횟수를 늘렸더니 학습률도 사실상 커졌다”는 문제를 막으려면 optimizer step 직전 gradient가 합인지 평균인지 기록한다. Gradient clipping을 쓴다면 일반적으로 누적과 필요한 unscale이 끝난 뒤 어떤 전체 gradient를 자르는지도 확인한다.
 
 ## 7. train, eval, no_grad는 같은 스위치가 아니다
 

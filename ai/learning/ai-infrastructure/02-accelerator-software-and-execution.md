@@ -6,10 +6,33 @@ GPU를 쓴다는 말은 Python 코드가 GPU 안에서 직접 한 줄씩 실행�
 대부분의 AI 프로그램은 framework, operator library, compiler, runtime, driver, GPU kernel을 거쳐 장치에 일을 보낸다.
 이 장은 그 길을 용어별로 끊어 본다.
 
+**Framework(프레임워크)**는 tensor와 학습 API를 제공하는 프로그램 틀이고, **operator(연산자)**는 행렬곱처럼 사용자가 요청한 논리 연산이다. **Compiler(컴파일러)**는 연산 표현을 실행 코드로 바꾸고, **runtime(실행 환경)**은 메모리 복사와 kernel 제출을 조정하며, **driver(장치 구동기)**는 운영체제와 GPU 사이에서 실제 장치 명령을 관리한다. **Stream(스트림)**은 GPU 작업의 순서를 보존하는 명령 줄이고, **event(이벤트)**는 stream 안의 특정 지점이 끝났는지 기록하거나 시간을 재는 표식이다.
+
 Linux kernel과 GPU kernel이라는 단어가 함께 나오면 처음에는 헷갈린다.
 Linux kernel은 운영체제의 핵심 프로그램이다.
 GPU kernel은 GPU에서 많은 thread가 실행하는 작은 device program이다.
 같은 단어지만 계층이 다르다.
+
+## 코드 한 줄이 장치에서 끝날 때까지
+
+```mermaid
+sequenceDiagram
+    participant P as Python 프로그램
+    participant F as Framework
+    participant R as GPU runtime/driver
+    participant G as GPU stream
+    P->>F: tensor 연산 호출
+    F->>R: kernel launch와 메모리 작업 요청
+    R-->>P: 비동기 제출 완료
+    R->>G: 명령을 stream 순서에 넣음
+    G->>G: GPU kernel 실행
+    P->>R: synchronize 또는 결과 복사
+    R-->>P: 실제 완료 확인
+```
+
+**Operator**는 행렬곱처럼 사용자가 요청한 논리 연산이고, **GPU kernel**은 그 연산을 장치에서 수행하도록 컴파일된 작은 프로그램이다. **Runtime**은 메모리 할당·복사·kernel launch 같은 사용자 공간 API를 제공하고, **driver**는 장치와 운영체제 사이의 명령·주소·상태를 관리한다. 한 operator가 여러 kernel을 부를 수도 있고 여러 operator가 fusion되어 한 kernel이 될 수도 있다.
+
+예를 들어 CPU 시계로 launch 직전과 직후만 재서 `0.05 ms`가 나와도 GPU 계산이 끝났다는 뜻은 아니다. 제출은 비동기일 수 있다. 완료 시점까지 재려면 같은 stream의 event나 명시적 동기화가 필요하며, 동기화 자체가 실행 겹침을 바꿀 수 있다는 조건도 기록한다.
 
 ## 실행 계층 지도
 
@@ -20,7 +43,7 @@ PyTorch, TensorFlow, JAX가 예다.
 
 Operator는 matmul, convolution, layer normalization, softmax 같은 연산 단위다.
 Library는 operator를 빠르게 실행하는 구현 모음이다.
-cuBLAS, cuDNN, NCCL 같은 라이브러리가 대표적이다.
+**cuBLAS**는 CUDA GPU에서 행렬곱과 벡터 연산 같은 BLAS 계열 선형대수를 제공한다. **cuDNN**은 convolution, normalization, attention 관련 연산 등 딥러닝 primitive의 GPU 구현을 제공한다. **NCCL(NVIDIA Collective Communications Library)**은 여러 GPU 사이 all-reduce·all-gather 같은 집합 통신을 수행한다. 세 라이브러리는 모두 GPU와 관련되지만 계산 영역과 역할이 다르다.
 Compiler는 그래프나 kernel 코드를 더 빠른 실행 형태로 바꾼다.
 Runtime은 memory allocation, stream, event, kernel launch 같은 실행 관리 API를 제공한다.
 Driver는 OS와 장치 사이에서 GPU 명령 제출, 메모리 관리, 장치 상태 관리를 담당한다.
@@ -43,10 +66,58 @@ GPU kernel은 장치에서 실제로 실행되는 parallel function이다.
 7. GPU scheduler가 thread block을 SM에 배치하고 kernel이 device memory를 읽고 쓴다.
 8. CPU 코드는 launch가 끝나기 전에 다음 줄로 진행할 수 있다.
 
+### GPU 안에서는 thread가 어떻게 묶여 실행되는가
+
+GPU kernel을 launch할 때 프로그램은 많은 **thread(스레드, 같은 함수를 서로 다른 데이터에 실행하는 작업 단위)**를 만든다. Thread들은 **block(블록)**으로 묶이고, 여러 block이 전체 **grid(그리드)**를 이룬다. Block은 GPU의 **SM(Streaming Multiprocessor, 스레드 묶음을 실행하는 계산 장치)**에 배치된다.
+
+CUDA 계열 설명에서 **warp(워프)**는 SM이 같은 명령 흐름으로 함께 실행하는 작은 thread 묶음이다. Warp 안 thread들이 조건문에서 서로 다른 길을 택하면 경로를 나누어 실행할 수 있어 효율이 낮아질 수 있다. 정확한 warp 크기와 scheduling 세부는 플랫폼 계약을 확인해야 하며, 다른 가속기에도 CUDA 용어를 그대로 적용하지 않는다.
+
+```text
+operator: matrix multiplication
+  └─ kernel launch 1개 이상
+       └─ grid
+            ├─ block 0 ─ threads ─ warp 묶음
+            ├─ block 1 ─ threads ─ warp 묶음
+            └─ ...
+
+GPU scheduler: 준비된 block을 여유 있는 SM에 배치
+```
+
+Block 수가 SM 수보다 적으면 일부 SM이 놀 수 있다. 반대로 block이 많아도 register와 shared memory 사용량이 너무 크면 SM에 동시에 머물 수 있는 block 수가 줄 수 있다. 이를 **occupancy(점유도)** 관점에서 보지만, occupancy가 높다고 kernel이 반드시 빠른 것은 아니다. Memory bandwidth, instruction dependency, cache hit, 연산 종류도 시간을 결정한다.
+
 마지막 문장이 중요하다.
 CUDA programming guide는 많은 CUDA 작업이 host 관점에서 비동기적으로 동작할 수 있다고 설명한다.
 즉 Python 줄의 시간이 곧 GPU 계산 완료 시간이 아닐 수 있다.
 정확한 측정에는 synchronization 또는 event가 필요하다.
+
+### 비동기 실행의 시간선을 읽는 법
+
+CPU와 GPU는 각자 진행한다. 다음 예에서 `copy H2D`는 host-to-device, 즉 CPU RAM에서 GPU memory로 복사한다는 뜻이다.
+
+```text
+시간 ──────────────────────────────────────────>
+CPU: [copy 제출][kernel A 제출][kernel B 제출][다른 CPU 작업][동기화 대기]
+GPU:       [copy H2D 실행][kernel A 실행][kernel B 실행]
+stream 0:  copy H2D  →  kernel A  →  kernel B
+```
+
+같은 stream에서는 앞 작업이 끝나야 뒤 작업이 그 의존성을 만족한다. CPU가 세 명령을 빨리 제출해도 GPU 완료 시각은 뒤에 있다. `synchronize()`는 CPU가 GPU 완료를 기다리는 경계이므로, 너무 자주 넣으면 원래 겹칠 수 있던 CPU 준비와 GPU 계산을 직렬화할 수 있다.
+
+서로 다른 stream 두 개를 쓴다고 가정하자.
+
+```text
+stream copy:  [batch 1 H2D]        [batch 2 H2D]
+stream work:                  [batch 1 compute]       [batch 2 compute]
+```
+
+복사 엔진과 계산 엔진, pinned host memory, 의존성 조건이 허용하면 batch 2 복사와 batch 1 계산을 겹칠 수 있다. 하지만 compute가 batch 2 데이터를 읽기 전에 복사가 끝났다는 보장이 필요하다. Copy stream에 event를 기록하고 work stream이 그 event를 기다리게 하는 이유다.
+
+```text
+copy_stream: copy(batch2) → record(data_ready)
+work_stream: wait(data_ready) → kernel(batch2)
+```
+
+Event는 CPU 벽시계와 같은 것이 아니다. GPU 작업 순서 안의 완료 지점을 표현한다. Kernel 시간만 잴 때는 같은 실행 경로에 start/end event를 두고 end 완료를 기다린다. 사용자가 느낀 전체 지연을 잴 때는 tokenization, queue, 복사와 동기화까지 포함한 CPU 벽시계를 별도로 잰다.
 
 ## GPU kernel과 Linux kernel
 
@@ -61,7 +132,7 @@ GPU kernel 안에서 일반적인 Linux syscall을 호출하는 식으로 생각
 
 두 kernel은 만나는 지점이 있다.
 프로그램이 GPU memory를 할당하거나 kernel launch를 제출할 때 driver 경로가 OS와 장치를 연결한다.
-DMA, page pinning, interrupt, memory mapping 같은 개념은 [Linux I/O 장](../../../linux/learning/linux-kernel/05-vfs-devices-and-io.md)과 [하드웨어 PCIe 장](../../../hardware/learning/server-hardware/03-pcie-slots-switches.md)의 언어로도 설명된다.
+**DMA(Direct Memory Access, 직접 메모리 접근)**는 CPU가 byte마다 복사하지 않고 장치가 메모리와 데이터를 옮기는 방식이다. **Page pinning(페이지 고정)**은 전송 중 CPU 메모리 페이지가 다른 물리 위치로 옮겨지지 않게 고정한다. **Interrupt(인터럽트)**는 장치 완료나 오류를 CPU에 알리는 신호이고, **memory mapping(메모리 매핑)**은 장치·파일 영역을 process 주소 공간에서 접근할 수 있게 연결하는 방식이다. 더 자세한 OS·버스 동작은 [Linux I/O 장](../../../linux/learning/linux-kernel/05-vfs-devices-and-io.md)과 [하드웨어 PCIe 장](../../../hardware/learning/server-hardware/03-pcie-slots-switches.md)에서 이어진다.
 
 ## Stream은 GPU 작업의 순서표다
 
@@ -108,17 +179,26 @@ elapsed = event_elapsed_time(start_event, end_event)
 무엇을 재는지 먼저 정해야 한다.
 첫 token latency, kernel time, end-to-end request time은 서로 다른 값이다.
 
+정확한 benchmark에서는 먼저 **warmup(예열)**을 수행한다. Warmup은 runtime 초기화, JIT(실행 중 컴파일), library 자동 튜닝, graph 준비, 차가운 cache를 채우는 초기 비용을 정상 반복 구간과 분리한다. 그 다음 같은 shape와 dtype을 N회 반복하고 매 회 완료를 event나 필요한 동기화로 확인한다. **Median(중앙값)**은 측정값을 순서대로 놓았을 때 가운데 값이고, **p95(95백분위수)**는 약 95%의 측정값이 그 이하인 경계다. 평균 하나만 제시하지 않고 median·p95 또는 전체 분포를 함께 기록하며, 첫 실행의 cold-start 시간은 버리지 말고 별도 항목으로 보고한다.
+
+```text
+같은 shape/dtype으로 warmup 10회
+같은 shape/dtype으로 측정 100회:
+  start event → kernel launch → end event → 완료 대기 → elapsed 저장
+보고: cold-start, warmup 조건, median, p95, 최소/최대 또는 분포
+```
+
 ## CPU, NUMA, 입력 파이프라인
 
 GPU가 느려 보일 때 항상 GPU kernel이 원인은 아니다.
 CPU가 데이터를 decode하거나 tokenize하느라 늦을 수 있다.
 DataLoader worker가 디스크나 network storage를 기다릴 수 있다.
 Pinned memory가 부족하거나 host-to-device copy가 serialize될 수 있다.
-NUMA가 맞지 않아 CPU socket과 PCIe root complex 사이를 돌아갈 수 있다.
+**NUMA(Non-Uniform Memory Access, 비균일 메모리 접근)**에서는 CPU socket마다 가까운 RAM이 달라 원격 socket 메모리 접근이 더 느릴 수 있다. **PCIe root complex(PCIe 루트 복합체)**는 CPU·메모리 계층과 PCIe 장치 트리를 잇는 시작점이다. GPU와 데이터를 준비하는 CPU/RAM이 서로 먼 NUMA 영역이면 경로가 길어질 수 있다.
 
 하드웨어 교재의 NUMA 장은 CPU socket과 메모리 locality를 설명한다.
 AI 파이프라인에서는 “GPU에 붙은 CPU/메모리에서 데이터를 준비하는가”가 중요해질 수 있다.
-특히 여러 GPU와 NIC가 있는 서버에서는 PCIe topology와 NUMA 배치를 함께 본다.
+특히 여러 GPU와 **NIC(Network Interface Card, 네트워크 인터페이스 카드)**가 있는 서버에서는 장치 연결 구조인 PCIe topology와 NUMA 배치를 함께 본다.
 
 입력 pipeline은 다음처럼 단계별로 쪼개서 본다.
 

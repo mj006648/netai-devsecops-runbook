@@ -4,7 +4,24 @@
 
 근거 확인일: **2026-09-22**.
 
-범위: 이 장은 네트워크 장애를 안전하게 분해하는 방법과 로컬 Python 표준 라이브러리 실습을 제공한다. 실습은 sudo, network namespace 생성, 원격 접속, packet capture, BPF attach, Kubernetes cluster 변경을 하지 않는다. 운영 명령은 실행 절차가 아니라 출력 해석을 배우기 위한 synthetic 예시다.
+범위: 이 장은 네트워크 장애를 안전하게 분해하는 방법과 로컬 Python 표준 라이브러리 실습을 제공한다. 실습은 관리자 권한 사용, network namespace 생성, 원격 접속, 실제 packet capture, kernel program 부착, Kubernetes cluster 변경을 하지 않는다. 운영 명령은 실행 절차가 아니라 출력 해석을 배우기 위한 synthetic(실제 장애에서 수집한 값이 아니라 학습 목적으로 만든) 예시다.
+
+```mermaid
+flowchart TD
+    A["증상: 접속 안 됨"] --> B{"이름이 의도한 주소로 해석?"}
+    B -- no --> B1["DNS cache·record·resolver 증거"]
+    B -- yes --> C{"route와 next hop 존재?"}
+    C -- no --> C1["prefix·policy route·neighbor 증거"]
+    C -- yes --> D{"transport 연결 성립?"}
+    D -- no --> D1["SYN/ACK·UDP/QUIC·drop·timeout 증거"]
+    D -- yes --> E{"TLS 인증 성공?"}
+    E -- no --> E1["이름·chain·시각·SNI 증거"]
+    E -- yes --> F{"HTTP/app 결과 정상?"}
+    F -- no --> F1["status·proxy·backend·readiness 증거"]
+    F -- yes --> G["정상 경로와 성능을 별도로 확인"]
+```
+
+트러블슈팅의 산출물은 “원인이 네트워크 같다”가 아니라 **관측 지점, 관측값, 그 값이 지지하거나 반박하는 가설, 아직 모르는 것**의 네 칸이다.
 
 ## 1. 트러블슈팅의 첫 원칙: 계층을 건너뛰지 않는다
 

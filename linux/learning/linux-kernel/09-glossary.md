@@ -6,6 +6,21 @@
 
 이 용어집은 깊은 정의를 외우기 전에 “처음 보는 단어가 어느 계층의 말인지” 빠르게 찾기 위한 장이다. 각 항목은 풀네임, 한국어 한 문장, 주로 책임지는 계층, 헷갈리기 쉬운 대비, 연결 장을 함께 적는다. 실제 커널 구현의 세부 구조는 버전마다 바뀔 수 있으므로 공식 문서와 현재 시스템을 확인한다.
 
+### 용어집을 읽는 법
+
+영어 철자를 외우기보다 “누가 관리하고, 무엇과 구별하는가”를 먼저 본다. 예를 들어 `page`를 만났다면 메모리 관리 단위인지, 저장장치의 NAND page인지 문맥부터 확인한다. `A7` 같은 장비명·노드명·내부 식별자가 다른 문서에 나온다면 일반 기술 용어로 추측하지 말고, 문서가 그 이름의 대상과 역할을 따로 정의했는지 확인해야 한다.
+
+```mermaid
+flowchart TD
+    WORD[처음 보는 용어] --> L{어느 계층의 말인가?}
+    L --> HW[하드웨어<br/>CPU·MMU·장치]
+    L --> K[커널<br/>task·page·inode]
+    L --> U[사용자 공간<br/>shell·library·service]
+    WORD --> O{무엇과 헷갈리는가?}
+    O --> C[대조 항목을 함께 읽기]
+    C --> CH[연결 장의 동작 예제로 돌아가기]
+```
+
 | 용어 | 풀네임 | 한국어 한 문장 | owner/layer | contrast | 연결 장 |
 | --- | --- | --- | --- | --- | --- |
 | OS | Operating System | 프로그램이 CPU·메모리·파일·장치를 나누어 쓰게 관리하는 기본 소프트웨어다. | 운영체제 전체 | 앱 자체가 아니라 앱을 실행시키는 기반 | 00 |
@@ -61,6 +76,10 @@
 | LSM | Linux Security Module | SELinux/AppArmor 같은 추가 접근 제어를 연결하는 커널 보안 프레임워크다. | 보안 커널 계층 | 전통 Unix mode bit만이 아님 | 06 |
 | Signal | Signal | 프로세스나 thread에 사건을 알리는 비동기 통지 메커니즘이다. | process 제어 | 파일 descriptor I/O와 다름 | 06, 07 |
 | OOM | Out Of Memory | 필요한 메모리를 확보하지 못해 커널이나 cgroup 정책이 개입하는 상황이다. | 메모리 관리 | CPU 과부하와 다름 | 07 |
+| Buffer | Buffer | 생산자와 소비자의 속도나 처리 단위를 맞추려고 데이터를 잠시 모아 두는 공간이다. | 여러 I/O 계층 | 재사용이 주목적인 cache와 강조점이 다름 | 05 |
+| Cache | Cache | 다시 쓸 가능성이 있는 데이터를 빠른 계층에 복사해 접근 시간을 줄이는 공간이다. | CPU·메모리·파일·장치 | buffer와 역할이 겹칠 수 있지만 재사용이 핵심 | 04, 05 |
+| Dirty Page | Dirty Page | RAM에서 바뀌었지만 아직 backing storage에 반영되지 않은 파일 페이지다. | page cache·파일시스템 | 저장장치에 기록 완료된 clean page와 다름 | 05 |
+| Writeback | Writeback | 더티 페이지 내용을 파일시스템과 장치 쪽으로 보내 저장장치에 반영하는 과정이다. | 메모리·파일시스템·I/O | `write()` 반환이나 정전 내구성과 같은 뜻이 아님 | 05 |
 | PSI | Pressure Stall Information | CPU·메모리·I/O 압박 때문에 작업이 멈춘 시간을 보여 주는 Linux 지표다. | 관측/accounting | 단순 사용률과 다름 | 07 |
 | Load Average | Load Average | 실행 가능하거나 특정 대기 상태인 작업 수의 시간 평균이다. | 관측/scheduler | CPU 사용률 퍼센트가 아님 | 07 |
 | Wall Time | Wall-clock Elapsed Time | 사람이 보는 실제 경과 시간이다. | 측정 | CPU time과 다름 | 07, 08 |
@@ -70,6 +89,13 @@
 ## 읽는 순서
 
 처음 읽는 독자는 `OS → Kernel → Process → Syscall → Virtual Address → Page Fault → VFS → File Descriptor → Namespace/Cgroup → PSI` 순서로 훑는다. 그다음 각 장의 실습과 관측 문제로 돌아가면 단어가 문장 속에서 움직이기 시작한다.
+
+## 답과 함께 확인하기
+
+1. **fd와 inode는 같은가?** 아니다. fd는 한 프로세스의 열린 대상 번호이고, inode는 파일 본체의 메타데이터 객체다. 서로 다른 프로세스의 fd `3`은 다른 객체를 가리킬 수 있다.
+2. **TLB miss는 page fault인가?** 아니다. TLB miss는 주소 변환 캐시에 답이 없어 페이지 테이블을 더 찾아야 한다는 뜻이다. 유효한 매핑을 찾으면 page fault 없이 계속 실행한다.
+3. **namespace와 cgroup 중 CPU 사용량을 제한하는 것은?** cgroup이다. namespace는 주로 보이는 이름과 관점을 분리한다.
+4. **`write()`가 성공하면 dirty page가 저장장치에 영구 기록된 것인가?** 일반적으로 그렇게 단정할 수 없다. buffered I/O에서는 page cache에 복사된 뒤 writeback이 나중에 일어날 수 있으며, 필요한 동기화와 장치·파일시스템 계약을 확인해야 한다.
 
 ## 근거와 더 읽을 자료
 

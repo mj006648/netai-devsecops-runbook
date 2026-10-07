@@ -4,7 +4,24 @@
 
 근거 확인일: **2026-09-22**.
 
-범위: Kubernetes networking을 Linux packet path와 연결한다. CNI, IPAM, Pod namespace, veth, overlay/direct routing, Service translation, NetworkPolicy, Cilium eBPF datapath를 설명한다. 실제 cluster 명령, CNI 설정 변경, BPF attach, packet capture는 하지 않는다.
+범위: Kubernetes networking을 Linux packet path와 연결한다. CNI(Container Network Interface)는 container runtime이 plugin을 호출해 Pod network interface와 주소·route를 준비하도록 정한 규격이다. IPAM(IP Address Management)은 겹치지 않는 Pod IP를 할당하고 회수하는 기능이다. datapath(데이터 경로)는 실제 packet에 forwarding·주소 변환·정책을 적용하는 경로이고, control plane(제어 평면)은 Pod·Service·정책 같은 원하는 상태를 모아 datapath가 쓸 규칙과 map으로 바꾸는 부분이다. Cilium(실리움)은 CNI를 구현하며 eBPF를 이용해 routing, Service load balancing, NetworkPolicy, 관측 등을 수행할 수 있는 Kubernetes networking 제품이다. overlay는 Pod packet을 node 사이 packet 안에 다시 넣어 운반하는 방식이고, direct routing은 underlay가 Pod 주소 경로를 직접 알게 하는 방식이다. NetworkPolicy는 어떤 Pod의 ingress·egress 통신을 허용할지 선언하는 Kubernetes API다. 이 장은 Pod namespace, veth, 두 node 간 routing, Service translation, policy, Cilium eBPF datapath를 설명한다. 실제 cluster 명령, CNI 설정 변경, BPF attach, packet capture는 하지 않는다.
+
+```mermaid
+flowchart LR
+    K["kubelet: Pod sandbox 준비"] --> R["container runtime"]
+    R -->|"CNI ADD"| P["CNI plugin"]
+    P --> A["IPAM: Pod IP 할당"]
+    P --> V["netns·veth·route 설정"]
+    P --> D["bridge/routing/eBPF datapath 설정"]
+    A --> O["Pod eth0 사용 가능"]
+    V --> O
+    D --> O
+    O --> S["Service 변환·정책·노드 간 전달"]
+```
+
+![Kubernetes에서 CNI가 만든 Pod 네트워크를 통해 Service 주소가 다른 노드의 backend Pod로 전달되는 경로](assets/kubernetes-pod-service-path.svg)
+
+*그림 1. CNI 호출은 Pod의 네트워크 기반을 준비하고, Service 선택과 노드 간 전달은 설치된 datapath가 수행한다. 그림의 direct routing과 overlay는 대표적인 두 선택지다.*
 
 ## 1. Kubernetes 네트워크 모델을 먼저 말로 고정한다
 
@@ -34,6 +51,21 @@ CNI가 보통 하는 일은 다음과 같다.
 6. Pod 삭제 시 위 자원을 정리한다.
 
 CNI는 "Kubernetes 전체 네트워크가 항상 정상"을 보장하는 마법 API가 아니다. CNI plugin이 성공했다고 해도 cross-node route, MTU, DNS, NetworkPolicy, external firewall, cloud route table이 따로 문제를 만들 수 있다.
+
+### 누가 언제 CNI를 호출하는가
+
+Pod manifest가 곧바로 CNI plugin을 직접 실행하지는 않는다. 교육용으로 단순화한 생성 생애주기는 다음과 같다.
+
+| 순서 | 주체 | 만들어지거나 확인되는 것 | 이 단계의 성공이 아직 보장하지 않는 것 |
+| --- | --- | --- | --- |
+| 1 | scheduler·kubelet | Pod가 실행될 node 결정, sandbox 준비 | Pod IP와 cross-node 연결 |
+| 2 | container runtime | Pod가 쓸 network namespace 준비 | 그 namespace 안의 interface와 route |
+| 3 | runtime의 CNI 호출 | plugin에 command, container ID, netns 경로, interface 이름, network config 전달 | Service·DNS·정책 전체 정상 |
+| 4 | CNI plugin·IPAM | IP 할당, veth/interface·route·필요한 datapath state 구성 | remote node의 route와 underlay 통과 |
+| 5 | kubelet/runtime | 성공 결과를 받고 Pod 실행 계속 | application이 port를 listen함 |
+| 6 | Pod 삭제 시 CNI DEL | 주소와 interface·plugin state 정리 시도 | 외부 시스템의 모든 stale state 즉시 소멸 |
+
+CNI specification의 `ADD`, `DEL`, `CHECK`, `GC`, `VERSION`은 plugin 실행에 전달되는 command다. `GC`(garbage collection)는 runtime이 알려 준 유효 attachment 목록과 비교해 stale 자원을 가능한 만큼 정리하는 명령이다. `ADD`가 성공했다는 것은 plugin이 요청된 network 구성을 만들었다는 의미이지, DNS 이름 조회부터 HTTP 응답까지 end-to-end 시험했다는 뜻이 아니다. plugin chain을 쓰는 환경에서는 앞 plugin의 결과가 뒤 plugin 입력으로 이어질 수도 있으므로, “CNI 하나”라는 말 안에 여러 실행 파일과 책임이 들어갈 수 있다.
 
 ## 3. Pod namespace와 veth 기본 경로
 
@@ -172,6 +204,36 @@ NetworkPolicy에서 reply traffic은 구현의 statefulness와 policy 방향 해
 
 ## 9. Hubble이 보여주는 범위
 
+### 먼저 Cilium의 객체를 나눈다
+
+`Cilium`을 하나의 실행 파일이나 하나의 eBPF program으로 생각하면 장애 범위를 잡기 어렵다. 대표 구성 요소의 역할은 다음과 같다. 실제 설치 방식과 버전에 따라 세부 구성은 달라질 수 있다.
+
+| 객체 | 정체 | 주로 하는 일 |
+| --- | --- | --- |
+| Cilium CNI plugin | Pod 생성·삭제 때 runtime이 호출하는 node의 실행 파일 | Pod interface/IP 설정을 agent와 협력해 준비 |
+| `cilium-agent` | 각 node에서 실행되는 장기 실행 agent | Kubernetes 상태를 받아 endpoint·policy·Service 관련 datapath를 구성하고 BPF program/map 관리 |
+| Cilium operator | cluster 범위의 control-plane 구성 요소 | 선택한 IPAM mode와 cluster-wide 작업을 조정 |
+| Cilium endpoint | Cilium이 관리하는 Pod network endpoint 표현 | identity·policy·datapath 상태를 Pod와 연결 |
+| security identity | label 집합에서 파생되는 정책용 식별자 | 바뀔 수 있는 IP만으로 policy 주체를 판단하지 않도록 함 |
+| BPF program·map | kernel hook의 실행 코드와 상태 표 | forwarding, Service/backend 선택, policy, NAT/conntrack 등 실제 packet 처리에 사용 가능 |
+| Hubble | Cilium flow 관측 계층 | datapath event를 수집·가공해 source/destination·verdict·일부 L4/L7 정보를 제공 |
+
+제어 흐름과 packet 흐름도 분리한다.
+
+```text
+제어 흐름:
+Kubernetes Pod/Service/EndpointSlice/NetworkPolicy
+  → cilium-agent가 watch
+  → endpoint, identity, policy, service/backend map 갱신
+
+packet 흐름:
+Pod socket → veth/socket hook/TC 등 구성된 hook
+  → BPF program이 map을 조회
+  → 허용·drop·backend 선택·redirect·NAT 같은 동작
+```
+
+Kubernetes API object가 바뀌었는데 agent가 아직 반영하지 못하면 control plane의 선언과 datapath state가 잠시 다를 수 있다. 반대로 BPF map에 항목이 있다는 사실만으로 application readiness나 remote route까지 정상이라고 결론낼 수 없다. 그래서 문제를 볼 때 `원하는 Kubernetes 상태 → agent가 계산한 상태 → kernel에 설치된 program/map → 실제 packet event` 순서로 증거를 잇는다.
+
 Hubble은 Cilium 환경에서 flow visibility를 제공한다. 하지만 Hubble은 Cilium datapath와 agent가 관찰한 event를 보여준다. 물리 switch, cloud firewall, remote endpoint application log, non-Cilium host process까지 모든 것을 직접 보여주는 것은 아니다.
 
 Hubble event가 도움이 되는 질문:
@@ -202,4 +264,6 @@ Hubble만으로 확정하기 어려운 질문:
 ## 11. 확인한 1차 자료
 
 - [CNI specification](https://www.cni.dev/docs/spec/)
+- Cilium 구성 요소와 역할: [Component Overview](https://docs.cilium.io/en/stable/overview/component-overview/), [Cilium과 Hubble 소개](https://docs.cilium.io/en/stable/overview/intro/)
+- Hubble의 node/cluster 관측 범위: [Network Observability with Hubble](https://docs.cilium.io/en/stable/observability/hubble/), [Hubble internals](https://docs.cilium.io/en/stable/internals/hubble/)
 - Cilium: [routing concepts](https://docs.cilium.io/en/stable/network/concepts/routing/), [IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/), [masquerading](https://docs.cilium.io/en/stable/network/concepts/masquerading/), [kube-proxy replacement](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/)

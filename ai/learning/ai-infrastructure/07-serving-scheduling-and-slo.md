@@ -6,10 +6,27 @@
 초점은 모델 품질이 아니라 운영 경로다.
 인증, 토큰화, 큐, 스케줄러, GPU 실행, 스트리밍, 취소, timeout이 서로 어디에 붙는지 본다.
 
+**Serving(서빙)**은 학습된 모델을 요청에 응답하는 서비스로 운영하는 일이고, **scheduler(스케줄러)**는 기다리는 요청 가운데 무엇을 언제 GPU batch에 넣을지 정한다. **SLO(Service Level Objective, 서비스 수준 목표)**는 운영자가 달성하려는 지연·가용성 목표이고, **SLA(Service Level Agreement, 서비스 수준 계약)**는 고객과 합의한 보상·책임을 포함할 수 있는 계약이다. **Percentile(백분위수)** p99는 관측값을 작은 순서로 놓았을 때 약 99%가 그 값 이하라는 뜻이다.
+
 이 장의 구체적인 예시는 autoregressive LLM의 텍스트 생성 서빙이다. 이미지 분류나 embedding 생성처럼 한 번의 forward로 끝나는 AI 추론도 있다.
 여기서 다루는 생성 요청은 prompt 처리(prefill)와 이후 토큰 반복 생성(decode)으로 나뉜다.
 decode는 매 토큰마다 GPU 시간을 조금씩 다시 요구한다.
 그래서 같은 GPU에 여러 요청을 섞는 스케줄러가 성능과 지연을 크게 좌우한다.
+
+## 요청 시간은 여러 구간의 합이다
+
+```mermaid
+flowchart LR
+    A[도착] --> B[인증·검증]
+    B --> C[tokenization]
+    C --> D[queue]
+    D --> E[prefill]
+    E --> F[첫 token]
+    F --> G[반복 decode]
+    G --> H[마지막 token·종료]
+```
+
+예를 들어 인증 5ms, tokenization 8ms, queue 40ms, prefill 60ms가 걸리면 TTFT는 대략 `5 + 8 + 40 + 60 = 113ms`다. 이후 token 20개를 평균 15ms 간격으로 내보냈다면 마지막 token까지는 추가로 약 `19 × 15 = 285ms`가 든다. 첫 token을 이미 센 상태라 간격은 20개가 아니라 19개다. 네트워크 전송과 측정 지점이 다르면 실제 E2E 값은 더 커질 수 있다.
 
 ## 핵심 용어
 
@@ -83,6 +100,27 @@ bounded queue는 큐 길이 또는 큐 대기 시간을 제한한다.
 실패 응답도 설계의 일부다.
 무작정 받아서 모두 느리게 만드는 것보다, 빨리 거절하고 재시도 위치를 명확히 하는 편이 전체 시스템을 안정시킬 수 있다.
 
+### Admission control은 실행 전에 지킬 수 있는 약속을 고른다
+
+**Admission control(입장 제어)**은 요청을 queue에 넣기 전에 현재 용량과 요청 비용을 보고 받을지 결정하는 절차다. 단순 queue 길이만 볼 수도 있고, prompt token 수, 최대 출력 길이, 사용 가능한 KV block, tenant quota와 deadline을 함께 볼 수도 있다.
+
+예를 들어 남은 KV slot이 10,000 token인데 요청 A와 B의 예약 상한이 각각 다음과 같다고 하자.
+
+```text
+A: prompt 2,000 + max output 2,000 = 최대 4,000 slots
+B: prompt 7,000 + max output 3,000 = 최대 10,000 slots
+```
+
+A를 먼저 받으면 단순 최악 상한상 6,000 slots가 남아 B는 동시에 받기 어렵다. 실제 출력은 상한보다 짧을 수 있지만, 낙관적으로 모두 받으면 decode 중 cache가 부족해질 수 있다. 반대로 항상 최악 상한만 예약하면 사용률이 낮아질 수 있다. 그래서 엔진은 실제 증가량에 따라 block을 배정하되, 부족할 때 거절·대기·재계산·offload 중 무엇을 할지 정책을 가져야 한다.
+
+Deadline이 500ms 남았고 예상 queue 400ms, prefill 300ms라면 실행 전에 이미 first-token 목표를 지키기 어렵다. 이 요청을 queue 끝에 넣는 것은 처리량에는 잡힐 수 있어도 goodput에는 기여하지 못한다. 예상은 오차가 있으므로 입장 정책의 예측값과 실제 오차도 관측한다.
+
+### Queue 정책이 누구를 먼저 느리게 하는가
+
+**FIFO(First In, First Out, 선입선출)**는 먼저 온 요청을 먼저 처리해 이해하기 쉽지만, 매우 긴 prompt 하나가 뒤의 짧은 요청을 오래 막는 head-of-line blocking을 만들 수 있다. **우선순위 queue**는 중요한 tenant나 deadline이 가까운 요청을 앞세울 수 있지만 낮은 우선순위 요청이 계속 밀리는 starvation을 막아야 한다.
+
+Queue 길이 100이라는 숫자만으로 대기 시간을 알 수 없다. 앞선 요청 100개가 짧은 embedding인지, 각각 긴 prefill과 2,000 token 출력을 가진 생성 요청인지 비용이 다르다. 최소한 waiting requests와 waiting tokens를 나누고, prompt/output 길이 분포와 함께 본다.
+
 ## Timeout과 재시도
 
 timeout은 한 숫자가 아니다.
@@ -129,6 +167,21 @@ print(max_requests_per_second)
 하지만 이 값은 순수 decode 상한이다.
 prefill, queue, sampling, 네트워크, padding, cache miss, 긴 prompt 분포가 들어가면 실제 허용률은 더 낮다.
 capacity 숫자는 “이보다 많이 받을 수 있다”가 아니라 “이 단순 가정에서는 이보다 높기 어렵다”로 읽는다.
+
+### Batching과 preemption에서 보존해야 할 상태
+
+**Batching(묶음 처리)**은 여러 요청의 tensor를 한 장치 실행에 모으는 일이다. Prefill batch는 prompt 길이가 달라 padding이나 token 예산이 중요하고, decode batch는 실행 중인 여러 요청에서 보통 다음 token 한 자리씩을 모은다. “Batch size 32”만 적으면 요청 수 32인지, 총 token 32인지, 최대 sequence 32인지 알 수 없으므로 단위를 붙인다.
+
+**Preemption(선점)**은 실행 중인 요청을 잠시 빼 더 높은 우선순위나 더 실행하기 좋은 요청에 자원을 주는 정책이다. CPU process를 멈추는 것처럼 항상 싸게 중단·재개되는 것은 아니다. 재개하려면 지금까지의 token IDs, sampling 상태, KV cache 또는 그것을 다시 만드는 정보, deadline과 출력 위치를 보존해야 한다.
+
+가능한 정책의 비용은 다르다.
+
+- KV block을 GPU에 그대로 둔 채 scheduler에서만 제외하면 재개는 빠르지만 GPU memory를 계속 쓴다.
+- KV block을 CPU나 다른 계층으로 offload하면 GPU memory는 비우지만 전송 시간과 host memory가 든다.
+- KV를 버리고 token IDs에서 recompute하면 저장 공간은 줄지만 다시 prefill하는 GPU 계산이 든다.
+- 요청을 실패시키면 자원은 즉시 회수하지만 client가 부분 출력과 재시도를 처리해야 한다.
+
+이미 제출한 GPU kernel 중간에서 요청 하나만 즉시 빼는 것은 일반적으로 어렵다. Scheduler는 iteration 경계에서 다음 batch에 그 요청을 넣지 않는 방식으로 반응할 수 있다. 따라서 preemption latency는 정책 결정 시각과 실제 GPU 자원 해제 시각을 따로 잰다.
 
 ## Worked calculation: goodput
 
@@ -185,6 +238,28 @@ cancel이 들어오면 세 가지를 정리해야 한다.
 GPU kernel 하나가 이미 제출되었다면 즉시 사라지는 것이 아니다.
 취소는 대개 “다음 반복부터 더 넣지 않는다”에 가깝다.
 그래서 cancel metric은 “사용자가 취소했다”와 “GPU 시간이 얼마나 더 쓰였나”를 함께 봐야 한다.
+
+### 취소와 과부하 FAQ
+
+**Q. 사용자가 브라우저를 닫으면 GPU 계산이 즉시 멈추는가?**
+
+항상 그렇지 않다. Client 연결 종료가 proxy와 frontend를 거쳐 scheduler까지 전달되어야 하고, 이미 제출된 kernel은 완료될 수 있다. 취소 신호 수신 시각, scheduler 제거 시각, KV block 반환 시각을 나누어 기록한다.
+
+**Q. Queue timeout 요청은 그냥 queue에서 지우면 끝인가?**
+
+아직 실행되지 않았다면 요청 record와 예약 자원을 함께 지운다. Prefill 일부가 시작되었다면 생성한 KV block과 임시 buffer도 반환해야 한다. Metric에는 client cancel, deadline 초과, admission 거절, 서버 오류를 같은 “failed” 한 종류로만 합치지 않는다.
+
+**Q. 재시도하면 성공률이 항상 올라가는가?**
+
+과부하 원인이 그대로인데 모든 client가 즉시 재시도하면 새 요청이 폭증하는 retry storm이 생긴다. 지수 backoff, jitter, 최대 횟수와 서버의 `Retry-After` 같은 계약이 필요하다. 부분 token을 받은 생성 요청은 멱등하지 않을 수 있으므로 자동 재시도 범위를 더 좁게 잡는다.
+
+**Q. 긴 요청을 선점하면 짧은 요청 지연은 항상 좋아지는가?**
+
+짧은 요청은 빨라질 수 있지만 긴 요청의 recompute/offload 비용과 starvation이 생긴다. 정책을 평가할 때 평균 TTFT만 보지 말고 길이 구간별 p95/p99, 선점 횟수, 버린 계산량, 완료율을 함께 본다.
+
+**Q. GPU 사용률이 100%면 admission을 닫아야 하는가?**
+
+사용률 하나만으로 결정하지 않는다. 목표 goodput이 높고 queue와 tail latency가 안정적이면 높은 사용률은 정상일 수 있다. 반대로 사용률이 낮아도 KV memory가 가득 찼거나 CPU tokenization이 막혀 새 요청을 받을 수 없을 수 있다.
 
 ## Rollout과 model readiness
 

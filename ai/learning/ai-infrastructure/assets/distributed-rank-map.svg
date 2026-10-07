@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="480" viewBox="0 0 1000 480" role="img" aria-labelledby="title desc">
+  <title id="title">두 노드에서 global rank와 local rank의 관계</title>
+  <desc id="desc">각 노드에 GPU 두 장과 process 두 개가 있고 전체 global rank는 0부터 3, 각 노드의 local rank는 0부터 1로 반복되는 구조</desc>
+  <defs><style>.node{fill:#f8fafc;stroke:#475569;stroke-width:3}.gpu{fill:#dbeafe;stroke:#2563eb;stroke-width:2}.proc{fill:#dcfce7;stroke:#16a34a;stroke-width:2}.h{font:700 22px sans-serif;fill:#0f172a}.t{font:16px sans-serif;fill:#334155}.s{font:14px sans-serif;fill:#475569}.line{stroke:#64748b;stroke-width:2}</style></defs>
+  <rect width="1000" height="480" fill="#ffffff"/>
+  <text x="500" y="36" text-anchor="middle" class="h">world size = 4: process 번호와 장치 번호는 다른 좌표</text>
+  <rect class="node" x="40" y="75" width="430" height="310" rx="16"/><text x="255" y="110" text-anchor="middle" class="h">Node 0</text>
+  <rect class="node" x="530" y="75" width="430" height="310" rx="16"/><text x="745" y="110" text-anchor="middle" class="h">Node 1</text>
+  <rect class="proc" x="75" y="145" width="160" height="80" rx="10"/><text x="155" y="177" text-anchor="middle" class="t">global rank 0</text><text x="155" y="202" text-anchor="middle" class="s">local rank 0</text>
+  <rect class="gpu" x="275" y="145" width="150" height="80" rx="10"/><text x="350" y="190" text-anchor="middle" class="t">GPU index 0</text><line class="line" x1="235" y1="185" x2="275" y2="185"/>
+  <rect class="proc" x="75" y="260" width="160" height="80" rx="10"/><text x="155" y="292" text-anchor="middle" class="t">global rank 1</text><text x="155" y="317" text-anchor="middle" class="s">local rank 1</text>
+  <rect class="gpu" x="275" y="260" width="150" height="80" rx="10"/><text x="350" y="305" text-anchor="middle" class="t">GPU index 1</text><line class="line" x1="235" y1="300" x2="275" y2="300"/>
+  <rect class="proc" x="565" y="145" width="160" height="80" rx="10"/><text x="645" y="177" text-anchor="middle" class="t">global rank 2</text><text x="645" y="202" text-anchor="middle" class="s">local rank 0</text>
+  <rect class="gpu" x="765" y="145" width="150" height="80" rx="10"/><text x="840" y="190" text-anchor="middle" class="t">GPU index 0</text><line class="line" x1="725" y1="185" x2="765" y2="185"/>
+  <rect class="proc" x="565" y="260" width="160" height="80" rx="10"/><text x="645" y="292" text-anchor="middle" class="t">global rank 3</text><text x="645" y="317" text-anchor="middle" class="s">local rank 1</text>
+  <rect class="gpu" x="765" y="260" width="150" height="80" rx="10"/><text x="840" y="305" text-anchor="middle" class="t">GPU index 1</text><line class="line" x1="725" y1="300" x2="765" y2="300"/>
+  <text x="500" y="425" text-anchor="middle" class="t">DIMM rank는 DRAM 칩 묶음이며 이 그림의 process rank와 무관하다.</text>
+</svg>

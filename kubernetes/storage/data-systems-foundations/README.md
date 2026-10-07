@@ -8,7 +8,15 @@
 
 [다섯 교재 통합 학습 순서](../../../learning/README.md) · [Linux·커널 독립 교재](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF 독립 교재](../../networking/networking-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
-파일 descriptor·프로세스·커널이라는 단어가 처음이면 00b 안내를 통해 운영체제 입문부터 읽는다. 본문에는 한글 한 글자 쓰기, 작은 파일시스템 이미지, DB 페이지·인덱스·복구 로그를 숫자와 시간표로 따라가는 예제를 넣었다. 단어를 찾을 때는 [10장 사전](10-glossary.md)을 이용한다.
+파일 디스크립터·프로세스·커널이라는 단어가 처음이어도 괜찮다. [00b장](00b-linux-processes-and-memory.md)은 프로그램이 프로세스가 되고 메모리·fd·시스템 호출을 거쳐 I/O를 요청하는 과정을 이 교재 안에서 처음부터 설명한다. [00c장](00c-linux-observation-and-troubleshooting.md)은 `ps`, `/proc`, `strace` 출력이 무엇을 보여 주고 무엇은 보여 주지 않는지 설명한다. 본문에는 한글 한 글자 쓰기, 작은 파일시스템 이미지, DB 페이지·인덱스·복구 로그를 숫자와 시간표로 따라가는 예제를 넣었다. 단어를 찾을 때는 [10장 사전](10-glossary.md)을 이용하되, 사전만 외우지 말고 해당 장의 경로 예제로 돌아온다.
+
+처음 읽는 사람은 각 장을 다음 순서로 사용한다.
+
+1. 도입부의 Mermaid 지도로 등장 주체와 화살표를 먼저 본다.
+2. 영어·약어의 첫 정의에서 “누가 소유하고 무엇에 쓰는가”를 한 문장으로 말한다.
+3. 숫자 예제에서 단위와 계산을 직접 확인한다.
+4. 실습 출력은 성공/실패보다 각 필드가 증명하는 범위를 해석한다.
+5. 장 끝 문제를 답을 가리고 푼 뒤 짧은 답과 비교한다.
 
 ## 먼저 떠올려 볼 질문
 
@@ -33,8 +41,8 @@
 | --- | --- | --- |
 | 00 | [계층 지도와 기초 용어](00-map-and-vocabulary.md) | 값·스키마·payload·buffer·주소·ACK·commit·복구를 하나의 흐름으로 어떻게 이해하는가? |
 | 00a | [바이트·페이로드·패킷 심화](00a-bytes-payload-and-packets.md) | JSON·UTF-8·HTTP·TCP·IP·Ethernet은 어떻게 연결되고 메시지 경계는 누가 정하는가? |
-| 00b | [프로그램·프로세스·메모리 입문](00b-linux-processes-and-memory.md) | Linux·커널 독립 교재에서 셸·주소·권한부터 어떻게 시작하는가? |
-| 00c | [Linux 관측과 문제 해결](00c-linux-observation-and-troubleshooting.md) | 어떤 관측으로 원인 후보를 구별하는가? |
+| 00b | [프로그램·프로세스·메모리 입문](00b-linux-processes-and-memory.md) | 프로그램·PID·가상 메모리·fd·시스템 호출·페이지 캐시는 어떻게 연결되는가? |
+| 00c | [Linux 관측과 문제 해결](00c-linux-observation-and-troubleshooting.md) | `ps`·`/proc`·`strace`·용량·장치 지표로 원인 후보를 어떻게 구별하는가? |
 | 01 | [Linux 읽기·쓰기 경로](01-linux-read-write.md) | buffer·page cache·writeback·fsync는 각각 무엇을 보장하는가? |
 | 02 | [파일시스템·블록 장치·SSD](02-filesystems-block-devices.md) | inode·extent·journal·FTL·I/O queue가 어떻게 연결되는가? |
 | 03 | [HDFS와 분산 파일](03-hdfs-distributed-files.md) | NameNode·DataNode와 블록 복제·쓰기 ACK는 어떻게 동작하는가? |
@@ -46,7 +54,7 @@
 | 09 | [연구 학습 경로와 구술 질문](09-study-roadmap-and-questions.md) | 개념을 설명하는 수준에서 검증 가능한 연구 질문으로 어떻게 넘어가는가? |
 | 10 | [용어 찾아보기](10-glossary.md) | 풀네임·쉬운 정의·계층·혼동 대상을 어디서 확인하는가? |
 
-처음에는 **00 → 00a → 00b → 01 → 02 → 08**을 읽으며 값의 표현·전송과 로컬 I/O를 이해한다. 00장의 용어를 먼저 익힌 뒤 00a장의 메모리 안에서만 동작하는 Python 예제로 바이트 길이와 메시지 경계를 확인한다. 이후 **03 → 04 → 05 → 06**, 마지막으로 **07 → 09**를 읽는다. 각 장의 질문은 답을 가리고 먼저 설명한 뒤 확인한다.
+처음에는 **00 → 00a → 00b → 00c → 01 → 02 → 08**을 읽으며 값의 표현·전송과 로컬 I/O를 이해한다. 00장의 용어를 먼저 익힌 뒤 00a장의 메모리 안에서만 동작하는 Python 예제로 바이트 길이와 메시지 경계를 확인한다. 이후 **03 → 04 → 05 → 06**, 마지막으로 **07 → 09**를 읽는다. 각 장의 질문은 답을 가리고 먼저 설명한 뒤 확인한다.
 
 ## 한 장으로 보는 범위
 

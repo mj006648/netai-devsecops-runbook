@@ -1,8 +1,27 @@
 # 04. DNS, HTTP, TLS
 
-범위: 이 장은 사용자가 URL을 입력했을 때 DNS, TCP/QUIC, TLS, HTTP가 어떻게 이어지는지 설명한다.
-recursive/authoritative DNS, TTL, negative cache, URL parsing, certificate trust, SNI, ALPN, HTTP/1.1·2·3, proxy, L4/L7 load balancing, layered error를 다룬다.
+범위: 이 장은 사용자가 URL을 입력했을 때 DNS(Domain Name System, 이름으로 주소와 여러 record를 찾는 분산 체계), TCP/QUIC(서버 process까지 데이터를 운반하는 transport), TLS(Transport Layer Security, 상대 인증·암호화·무결성을 제공하는 보호 계층), HTTP(웹 요청과 응답의 의미 규칙)가 어떻게 이어지는지 설명한다.
+recursive DNS(답을 대신 찾아 주는 재귀 resolver), authoritative DNS(해당 zone의 원본 record를 답할 권한 서버), TTL(cache가 답을 믿는 시간), negative cache(없다는 답의 저장), URL parsing을 다룬다. TLS에서는 certificate(공개키와 이름을 신뢰 체인으로 묶은 인증서), handshake(사용할 암호 방식과 키·상대 신원을 합의하는 초기 교환), SNI(접속하려는 서버 이름 전달), ALPN(HTTP 같은 상위 프로토콜 협상)을 설명한다. 이어서 HTTP/1.1·2·3, proxy, L4/L7 load balancing, 계층별 오류를 연결한다.
 실습 명령이나 packet capture는 포함하지 않는다.
+
+```mermaid
+sequenceDiagram
+    participant U as Browser
+    participant R as Recursive resolver
+    participant A as Authoritative DNS
+    participant W as Web endpoint
+    U->>R: www.example.com A/AAAA?
+    R->>A: cache miss이면 권한 서버에 질의
+    A-->>R: record + DNS TTL
+    R-->>U: address
+    U->>W: TCP 또는 QUIC 연결
+    U->>W: TLS: SNI, ALPN, key agreement
+    W-->>U: certificate와 handshake 응답
+    U->>W: 보호된 HTTP request
+    W-->>U: 보호된 HTTP response
+```
+
+DNS 성공, transport 연결, TLS 인증, HTTP 응답은 각각 별도의 성공 조건이다. 앞 단계가 성공했다는 사실만으로 다음 단계의 성공까지 증명되지는 않는다.
 
 ## 1. URL은 주소 문자열이 아니라 여러 필드의 묶음이다
 

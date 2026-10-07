@@ -1,8 +1,30 @@
 # 01. Linux를 처음 만나는 사람을 위한 프로그램·프로세스·메모리
 
-[학습 목차](README.md) · 이전: [바이트와 패킷](../../../kubernetes/storage/data-systems-foundations/00a-bytes-payload-and-packets.md) · 다음: [읽기·쓰기의 전체 경로](../../../kubernetes/storage/data-systems-foundations/01-linux-read-write.md)
+[학습 목차](README.md) · 이전: [운영체제는 왜 필요한가](00-why-operating-systems.md) · 다음: [부팅·시스템콜·인터럽트](02-boot-syscalls-and-interrupts.md) · 연결 읽기: [바이트와 패킷](../../../kubernetes/storage/data-systems-foundations/00a-bytes-payload-and-packets.md)
 
 이 장은 명령어를 외우기 전에 **누가 명령을 실행하며, 메모리를 누구에게 주고, 왜 파일 접근을 거절할 수 있는지** 설명한다. 컴퓨터를 처음 배우는 독자는 하드웨어 교재의 [전기에서 컴퓨터까지](../../../hardware/learning/server-hardware/00-physical-bits-to-computer.md)를 먼저 읽어도 된다. 아래 주소·시간·PID는 모두 교육용이다.
+
+### 먼저 알아둘 말과 이 장의 지도
+
+- **프로그램(program)**은 디스크에 저장된 명령 묶음이고, **프로세스(process)**는 그 프로그램을 실제로 실행하기 위해 커널이 만든 작업 단위다.
+- **스레드(thread, 실행 흐름)**는 프로세스 안에서 CPU 명령을 이어서 수행하는 흐름이다. 한 프로세스에 여러 스레드가 있으면 주소 공간과 열린 파일을 주로 공유하지만, 각자 명령 위치와 레지스터·스택을 가진다.
+- **PID(Process ID, 프로세스 번호)**는 커널이 프로세스를 구별하는 숫자다. 사람 이름이 아니라 실행할 때마다 달라질 수 있는 식별자다.
+- **파일 디스크립터(fd, 열린 대상 번호표)**는 프로세스가 파일·파이프·소켓을 가리킬 때 쓰는 작은 정수다. 보통 0·1·2는 표준 입력·출력·오류다.
+- **셸(shell, 명령 해석기)**은 사용자가 쓴 명령을 단어로 나누고 프로그램 실행과 입출력 연결을 준비한다.
+
+```mermaid
+flowchart LR
+    T[터미널에 글자 입력] --> S[셸이 명령·인자·리다이렉션 해석]
+    S --> P[커널이 프로세스 생성]
+    P --> TH[스레드가 CPU에서 실행]
+    TH -->|파일·장치 필요| SC[시스템 호출]
+    SC --> K[커널이 권한과 자원 검사]
+    K -->|결과·오류·종료 상태| S
+```
+
+![실행 파일에서 프로세스와 스레드, 스케줄러와 CPU로 이어지는 구조](assets/process-thread-lifecycle.svg)
+
+*그림 1. ① 실행 파일을 실행하면 ② PID·주소 공간·fd 표를 가진 프로세스가 생긴다. 프로세스 안의 스레드는 ③ 실행 대기열에서 기다리고, 선택되면 ④ CPU 코어에서 실행된다. I/O나 잠금을 기다리면 ⑤ blocked 상태가 되었다가 사건이 끝나면 다시 실행 가능해진다.*
 
 ## 1. 운영체제가 없으면 어떤 문제가 생길까?
 

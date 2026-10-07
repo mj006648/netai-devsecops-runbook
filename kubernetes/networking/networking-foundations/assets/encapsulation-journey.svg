@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Encapsulation and decapsulation journey</title>
+  <desc id="desc">HTTP 데이터가 TCP 세그먼트, IP 패킷, 이더넷 프레임, 물리 신호로 감싸지고 수신 측에서 역순으로 풀리는 과정</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8fafc}.app{fill:#dbeafe;stroke:#334155;stroke-width:2}.tcp{fill:#dcfce7;stroke:#334155;stroke-width:2}.ip{fill:#fef3c7;stroke:#334155;stroke-width:2}.eth{fill:#fee2e2;stroke:#334155;stroke-width:2}.sig{fill:#ede9fe;stroke:#334155;stroke-width:2}.t{font-family:'DejaVu Sans',sans-serif;font-size:22px;font-weight:700;fill:#0f172a}.s{font-family:'DejaVu Sans',sans-serif;font-size:16px;font-weight:400;fill:#334155}.a{stroke:#475569;stroke-width:3;fill:none;marker-end:url(#m)}
+    </style>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+  </defs>
+  <rect class="bg" width="1200" height="620" rx="20"/>
+  <text class="t" x="48" y="55">SEND: each layer adds its own header</text>
+  <rect class="app" x="60" y="90" width="210" height="90" rx="12"/><text class="t" x="98" y="125">HTTP data</text><text class="s" x="84" y="155">user content</text>
+  <rect class="tcp" x="330" y="90" width="210" height="90" rx="12"/><text class="t" x="355" y="125">TCP segment</text><text class="s" x="352" y="155">ports / seq / ACK</text>
+  <rect class="ip" x="600" y="90" width="210" height="90" rx="12"/><text class="t" x="631" y="125">IP packet</text><text class="s" x="626" y="155">end IPs / TTL</text>
+  <rect class="eth" x="870" y="90" width="260" height="90" rx="12"/><text class="t" x="906" y="125">Ethernet frame</text><text class="s" x="909" y="155">next-hop MAC / FCS</text>
+  <path class="a" d="M270 135H325"/><path class="a" d="M540 135H595"/><path class="a" d="M810 135H865"/>
+  <rect class="sig" x="380" y="245" width="440" height="88" rx="44"/><text class="t" x="482" y="281">bits → symbols → signal</text><text class="s" x="456" y="310">voltage / light / radio wave</text>
+  <path class="a" d="M1000 180C1000 245 890 288 825 288"/>
+  <text class="t" x="48" y="405">RECEIVE: verify and decode in reverse order</text>
+  <path class="a" d="M820 455H875"/><path class="a" d="M550 455H605"/><path class="a" d="M280 455H335"/>
+  <rect class="eth" x="880" y="415" width="250" height="82" rx="12"/><text class="t" x="919" y="464">frame check</text>
+  <rect class="ip" x="610" y="415" width="210" height="82" rx="12"/><text class="t" x="661" y="464">IP delivery</text>
+  <rect class="tcp" x="340" y="415" width="210" height="82" rx="12"/><text class="t" x="378" y="464">TCP reassembly</text>
+  <rect class="app" x="60" y="415" width="220" height="82" rx="12"/><text class="t" x="105" y="464">HTTP parsing</text>
+  <text class="s" x="60" y="555">A router replaces the Ethernet header for each link; the end IP usually stays the same.</text>
+  <text class="s" x="60" y="585">Encapsulation is packaging. It does not automatically mean encryption.</text>
+</svg>

@@ -4,6 +4,30 @@
 
 근거 확인일: **2026-09-22**. 이 장은 PyTorch `torch.distributed`, `DistributedDataParallel`, FSDP, DeepSpeed ZeRO, NVIDIA NCCL, Megatron-LM 문서를 기준으로 한다. 분산 학습 프레임워크의 세부 기본값은 버전마다 바뀔 수 있으므로, 여기서는 “어떤 데이터가 복제되고, 어떤 데이터가 나뉘며, 어떤 통신이 필요한가”를 먼저 세운다.
 
+**분산 학습(distributed training)**은 여러 process와 장치가 한 학습 작업을 나누어 수행하는 방식이다. **Shard(샤드, 조각)**는 tensor·모델·데이터를 나눈 한 부분이고, **replica(복제본)**는 같은 내용을 여러 장치에 그대로 둔 사본이다. **Collective(집단 통신)**는 group의 여러 process가 같은 순서로 함께 참여하는 통신이며, all-reduce처럼 값을 합친 뒤 모두에게 돌려주는 연산이 대표적이다.
+
+## 시작하기 전에: 여기서 rank는 process 번호다
+
+![두 노드의 GPU 네 장에 process rank 0부터 3까지 배치한 예](assets/distributed-rank-map.svg)
+
+*그림 1. world size는 참여 process 수다. global rank, node-local rank, 실제 GPU 번호는 서로 다른 좌표다.*
+
+```mermaid
+flowchart TB
+    subgraph N0[Node 0]
+      P0[process: global rank 0<br/>local rank 0] --> G0[GPU 0]
+      P1[process: global rank 1<br/>local rank 1] --> G1[GPU 1]
+    end
+    subgraph N1[Node 1]
+      P2[process: global rank 2<br/>local rank 0] --> G2[GPU 0]
+      P3[process: global rank 3<br/>local rank 1] --> G3[GPU 1]
+    end
+```
+
+이 예의 world size는 4다. `global rank 2`는 전체 group의 세 번째 process이고, 그 process의 `local rank 0`은 두 번째 노드 안의 첫 번째 process라는 뜻이다. GPU 0은 노드마다 다시 등장하므로 global rank와 같지 않다. 또한 서버 메모리의 DIMM rank는 DRAM 칩 묶음을 뜻하며 이 번호 체계와 관계없다.
+
+Collective를 호출할 때는 참여자·tensor shape·dtype·호출 순서가 group 전체에서 맞아야 한다. rank 0만 all-reduce를 호출하고 나머지가 호출하지 않으면, rank 0은 상대를 기다리며 멈춘 것처럼 보일 수 있다.
+
 ## 1. rank, world size, process group
 
 **Process**는 실행 중인 프로그램 인스턴스다.
@@ -50,6 +74,40 @@ NCCL은 all-gather, all-reduce, broadcast, reduce, reduce-scatter 같은 routine
 Collective는 참여자와 tensor 모양이 맞아야 한다.
 PyTorch distributed 문서는 일부 collective에서 노드 간 개별 shape checking이 구현되어 있지 않을 수 있으므로 주의하라고 설명한다.
 한 rank만 다른 크기의 tensor를 넣으면 오류가 즉시 나지 않고 잘못된 결과나 hang이 날 수 있다.
+
+### 네 rank의 값을 연산별로 직접 이동시키기
+
+Rank 0~3이 각각 한 숫자 `[1]`, `[2]`, `[3]`, `[4]`를 갖고 있다고 하자.
+
+**Broadcast(방송)**는 root rank 하나의 값을 모두에게 복사한다. Root가 rank 0이면 결과는 다음과 같다.
+
+```text
+입력: r0=[1], r1=[2], r2=[3], r3=[4]
+결과: r0=[1], r1=[1], r2=[1], r3=[1]
+```
+
+**All-reduce(전체 축약)**는 모든 값을 더하거나 최댓값을 고르는 reduce를 수행한 뒤 결과를 모든 rank에 둔다. Sum이면 `1+2+3+4=10`이므로 네 rank 모두 `[10]`을 받는다. 평균이 필요하면 collective 자체 또는 framework 의미에 따라 4로 나눈다.
+
+**All-gather(전체 모으기)**는 각 rank가 가진 서로 다른 shard를 순서대로 모아 모든 rank에 완전한 목록을 만든다.
+
+```text
+입력: r0=[A], r1=[B], r2=[C], r3=[D]
+결과: 모든 rank=[A,B,C,D]
+```
+
+**Reduce-scatter(축약 후 나누기)**는 rank별 입력의 같은 위치를 먼저 reduce한 뒤 결과 조각을 나눠 갖는다. 각 rank가 길이 4 tensor를 넣는 예다.
+
+```text
+r0=[ 1, 10, 100, 1000]
+r1=[ 2, 20, 200, 2000]
+r2=[ 3, 30, 300, 3000]
+r3=[ 4, 40, 400, 4000]
+
+위치별 sum=[10, 100, 1000, 10000]
+결과: r0=[10], r1=[100], r2=[1000], r3=[10000]
+```
+
+All-gather는 분할된 parameter를 잠시 완전한 tensor로 만들 때, reduce-scatter는 gradient를 합치면서 각 rank 담당 shard만 남길 때 사용할 수 있다. 실제 framework는 bucket, padding, dtype 변환과 비동기 실행을 더하므로 이 작은 값 예제는 의미를 보여주는 모형이다.
 
 ## 3. DDP는 모델 복제와 gradient 동기화다
 
@@ -124,6 +182,33 @@ optimizer는 각 rank에서 같은 평균 gradient로 같은 update를 한다.
 
 Ring all-reduce는 데이터를 조각으로 나눠 ring을 따라 reduce-scatter와 all-gather를 수행하는 모델로 설명할 수 있다.
 NCCL은 ring, tree 등 여러 알고리즘을 topology와 메시지에 따라 선택할 수 있으며, `NCCL_ALGO`로 algorithm 선택을 제한할 수 있다. 공식 문서: <https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html>.
+
+### 네 참가자의 ring을 step으로 보기
+
+각 rank의 tensor를 네 chunk로 나누고, rank는 오른쪽 이웃에게 한 chunk를 보내며 왼쪽 이웃에서 한 chunk를 받는다고 하자. Ring all-reduce는 개념적으로 두 phase를 갖는다.
+
+1. **Reduce-scatter phase:** `p-1=3`번 이동하며 같은 chunk 위치의 값을 합친다. 끝나면 각 rank는 완전히 합쳐진 chunk 하나를 담당한다.
+2. **All-gather phase:** 다시 3번 이동하며 완성된 chunk를 이웃에게 전달한다. 끝나면 모든 rank가 완전한 합 tensor를 갖는다.
+
+```text
+ring: r0 → r1 → r2 → r3 → r0
+
+reduce-scatter
+  step 1: 각 rank가 chunk 1개 송신, 받은 chunk에 local 값 축약
+  step 2: 다음 chunk 송신·축약
+  step 3: 다음 chunk 송신·축약
+  결과: rank마다 완성 chunk 1개
+
+all-gather
+  step 1: 완성 chunk 1개를 이웃에 전달
+  step 2: 새로 받은 완성 chunk를 다음 이웃에 전달
+  step 3: 마지막 완성 chunk 전달
+  결과: 모든 rank가 chunk 4개 보유
+```
+
+Tensor 전체가 1GiB이고 균등하게 네 chunk로 나뉘면 chunk 하나는 0.25GiB다. 각 phase에서 rank마다 `3 × 0.25 = 0.75GiB`를 보내므로 두 phase 송신 합은 1.5GiB다. 수신량도 별도로 약 1.5GiB다. “총 트래픽 1.5GiB”라고 쓸 때 송신만 센 것인지 송수신 합 3GiB를 말하는지 분모를 밝혀야 한다.
+
+시간을 `1.5GiB ÷ 링크 대역폭`만으로 단정할 수는 없다. 각 step의 latency, 링크 동시성, 단방향·양방향 대역폭 정의, PCIe/NVLink/NIC 경로, 다른 통신과의 경쟁이 붙는다. NCCL이 언제나 이 단순 ring을 고른다는 뜻도 아니다.
 
 단순 ring 모델의 자주 쓰는 근사:
 
@@ -201,13 +286,17 @@ rough peak can be:
 
 Megatron-LM 병렬화 가이드는 data, tensor, pipeline, context, expert parallelism을 구분한다. 공식 문서: <https://github.com/NVIDIA/Megatron-LM/blob/main/docs/user-guide/parallelism-guide.md>.
 
+**DP(Data Parallelism, 데이터 병렬화)**는 같은 모델 복제본이 서로 다른 입력 sample을 처리한다. **TP(Tensor Parallelism, 텐서 병렬화)**는 한 layer의 큰 행렬·tensor 계산을 여러 GPU가 나눈다. **PP(Pipeline Parallelism, 파이프라인 병렬화)**는 연속 layer 묶음을 **stage(단계)**로 나누고 앞 stage의 activation을 다음 stage로 보낸다. Stage가 입력을 기다리거나 마지막 일을 끝내느라 일부 GPU가 비는 시간을 **pipeline bubble(파이프라인 빈 구간)**이라고 한다.
+
+**EP(Expert Parallelism, 전문가 병렬화)**는 **MoE(Mixture of Experts, 전문가 혼합)** 모델의 여러 **expert(전문가, token별로 선택되는 하위 신경망)**를 rank에 나눈다. Token을 선택된 expert가 있는 rank로 보내는 과정을 **dispatch(분배)**, expert 결과를 원래 token 순서로 모으는 과정을 **combine(결합)**이라고 한다. **CP(Context Parallelism, 문맥 병렬화)**는 긴 sequence/context 축을 여러 rank가 나누어 처리한다.
+
 | 이름 | 무엇을 나누나 | 직관 |
 |---|---|---|
-| DP | batch dimension | 같은 모델, 다른 데이터 |
-| TP | layer 안 tensor/행렬 | 큰 layer를 여러 GPU가 나눠 계산 |
-| PP | model depth | layer 묶음을 stage로 나눔 |
-| EP | MoE expert | expert를 rank에 나눠 배치 |
-| CP | sequence/context | 긴 sequence 축을 나눔 |
+| DP, Data Parallelism | batch dimension | 같은 모델, 다른 데이터 |
+| TP, Tensor Parallelism | layer 안 tensor/행렬 | 큰 layer를 여러 GPU가 나눠 계산 |
+| PP, Pipeline Parallelism | model depth | layer 묶음을 stage로 나눔 |
+| EP, Expert Parallelism | MoE expert | expert를 rank에 나눠 배치 |
+| CP, Context Parallelism | sequence/context | 긴 sequence 축을 나눔 |
 
 TP는 한 layer의 행렬곱 자체를 나눠 계산하므로 layer마다 통신이 잦을 수 있다.
 PP는 앞 stage 출력 activation을 다음 stage로 보내며, pipeline bubble과 microbatch scheduling이 성능에 영향을 준다.
@@ -216,6 +305,20 @@ EP는 token을 담당 expert가 있는 rank로 보내는 dispatch와 combine 비
 현실의 큰 학습은 이들을 섞는다.
 예를 들어 64GPU를 `DP=4, TP=4, PP=4`로 쓸 수 있다.
 곱하면 `4 × 4 × 4 = 64`지만, 각 parallel dimension의 group과 통신 패턴은 다르다.
+
+한 sample이 이 64GPU 배치를 지나는 개념 trace는 다음과 같다.
+
+```text
+1. DP group 4개가 서로 다른 microbatch A, B, C, D를 받는다.
+2. 각 DP 복제본 안에서 TP GPU 4개가 stage 0의 같은 layer 행렬곱을 분할 계산한다.
+3. TP 결과를 조합해 만든 activation을 PP의 다음 stage로 전달한다.
+4. Stage 1도 자기 TP GPU 4개로 다음 layer 묶음을 계산한다.
+5. PP stage 0→1→2→3을 지나 loss를 계산한다.
+6. Backward는 stage를 거꾸로 지나며, 각 TP group이 layer gradient 계산을 협력한다.
+7. 마지막으로 같은 parameter 복제본을 가진 DP rank들이 gradient를 동기화한다.
+```
+
+따라서 global world size 64를 effective batch 식에 곱하지 않는다. 서로 다른 입력을 받은 DP 크기 4만 batch 축에 기여하고, TP와 PP의 16 GPU는 각 DP 복제본 안에서 같은 microbatch의 모델 계산을 나눈다.
 
 ## 10. Topology는 collective 시간을 바꾼다
 

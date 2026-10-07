@@ -8,6 +8,24 @@
 
 핵심 질문은 하나다. **프로그램이 `write()`를 호출했을 때, 어떤 바이트가 어느 계층의 buffer·cache·queue를 지나고, 누가 무엇을 보장하며, 전원 손실 뒤에도 남는다고 말하려면 어디까지 기다려야 하는가?**
 
+```mermaid
+sequenceDiagram
+    participant P as 프로세스 buffer
+    participant K as 커널 page cache
+    participant F as 파일시스템
+    participant D as 저장장치
+    P->>K: write(fd, bytes)
+    K-->>P: 처리한 byte 수 반환
+    Note over K: dirty page: 새 내용이 RAM에만 있음
+    K->>F: writeback
+    F->>D: block I/O 제출
+    P->>F: fsync(fd)
+    F->>D: 데이터·필요 metadata 동기화
+    D-->>P: 계약상 완료
+```
+
+**버퍼(buffer)**는 속도 차이를 완충하려고 데이터를 잠시 모으는 곳, **캐시(cache)**는 재사용을 빠르게 하려고 사본을 두는 곳, **큐(queue)**는 아직 처리하지 않은 요청의 대기열이다. **더티(dirty)**는 메모리 쪽 내용이 저장본보다 새롭다는 상태, **라이트백(writeback)**은 이를 아래 저장 계층으로 쓰는 과정이다. `flush()`는 “어느 버퍼를 어디까지 비우는가”를 붙여야 하며, `fsync()`와 자동으로 같은 뜻이 아니다. 전체 경계 그림은 [그림 00b-1](00b-linux-processes-and-memory.md#10-사용자-버퍼와-페이지-캐시는-다른-메모리다)도 참고한다.
+
 ## 1. 먼저 “쓰기”라는 말을 네 단계로 나눈다
 
 일상에서는 모두 “파일에 썼다”라고 말하지만, Linux에서는 최소 네 사건을 구분해야 한다.

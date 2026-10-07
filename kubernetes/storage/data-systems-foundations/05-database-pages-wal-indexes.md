@@ -2,6 +2,22 @@
 
 작성·문헌 확인일: **2026-09-22**. 이 장은 연구자가 데이터 시스템 논문과 운영 문서를 읽을 때 혼동하기 쉬운 “페이지”, “로그”, “스냅샷”, “컴팩션”을 낮은 층에서 정리한다. 공식 문서의 세부는 버전별로 달라질 수 있으므로, 구현 판단 전에는 사용 중인 PostgreSQL·RocksDB·Iceberg 릴리스 문서를 다시 고정한다. 여기서 쓰는 예제는 모두 **개념 설명용 가상 사례**이며, 실제 데이터베이스에 실행할 SQL이나 운영 명령이 아니다. Lakehouse 논문별 성능·연구 리뷰는 이미 [Iceberg·Open Table Format 주요 논문 리뷰](../lakehouse/02-paper-reviews.md)에 정리되어 있으므로, 이 장은 파일·페이지·로그의 기계적 동작에 집중한다.
 
+```mermaid
+sequenceDiagram
+    participant T as transaction
+    participant B as DB buffer pool
+    participant W as WAL
+    participant D as data page files
+    T->>B: row 변경
+    B->>W: redo record와 LSN 추가
+    T->>W: COMMIT record 안정 저장 요청
+    W-->>T: commit 성공
+    Note over B,D: data page는 아직 dirty일 수 있음
+    B->>D: checkpoint/writeback 때 기록
+```
+
+**트랜잭션(transaction)**은 여러 읽기·쓰기를 하나의 논리 작업으로 다루는 단위다. **WAL(Write-Ahead Log, 선행 기록 로그)**은 데이터 페이지보다 복구 로그를 먼저 안정 저장하는 규칙이고, **체크포인트(checkpoint)**는 복구가 시작할 기준을 앞당기도록 로그와 dirty page 상태를 정리하는 사건이다. **인덱스(index)**는 원본 행을 전부 훑지 않고 키에서 후보 위치를 찾게 하는 보조 구조다. WAL 하나가 원자성·격리성·모든 복제를 혼자 해결하는 것은 아니다.
+
 ## 1. 세 종류의 “페이지”를 먼저 분리한다
 
 데이터베이스 페이지는 DB 엔진이 테이블·인덱스 내용을 나누어 관리하는 논리적 저장 단위다. PostgreSQL heap과 기존 인덱스는 보통 8 KiB 고정 크기 페이지 배열로 저장되며, 컴파일 시 다른 크기를 고를 수 있다. [PostgreSQL 18 Database Page Layout](https://www.postgresql.org/docs/18/storage-page-layout.html) 파일시스템 블록은 OS와 파일시스템이 파일 바이트를 디스크 블록에 배치하고 캐시하는 단위다. 메모리 페이지는 CPU MMU와 커널 가상 메모리가 주소 변환·보호·스왑을 관리하는 단위다. 이 셋은 우연히 비슷한 단어를 쓰지만, 소유자·목적·크기·수명 주기가 다르다. DB 페이지는 행·인덱스 엔트리·free space 같은 DB 의미를 가진다. 파일시스템 블록은 파일 오프셋과 물리 저장 장치 사이의 매핑을 가진다. 메모리 페이지는 프로세스 주소 공간과 물리 RAM 사이의 매핑을 가진다. 따라서 “페이지 캐시 hit”라는 표현이 OS page cache인지, DB buffer pool인지, CPU TLB 근처의 가상 메모리 이야기인지 확인해야 한다.

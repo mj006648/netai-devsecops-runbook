@@ -4,7 +4,21 @@
 
 근거 확인일: **2026-09-22**.
 
-범위: 이 장은 eBPF를 처음 보는 독자가 "커널 모듈보다 제한된 작은 프로그램", "packet path의 여러 hook", "Cilium datapath의 재료"를 구분하도록 만든다. 실제 eBPF program을 attach하지 않는다. 모든 예시는 읽기용 pseudo code, 상태 추적, 산술 예시다.
+범위: 이 장은 eBPF(커널이 허용한 hook에서 검증된 작은 프로그램을 실행하는 Linux 기능)를 처음 보는 독자가 "kernel module보다 제한된 작은 program", "packet path의 여러 hook", "Cilium datapath의 재료"를 구분하도록 만든다. Cilium은 Kubernetes의 Pod network·Service·통신 정책을 eBPF 등으로 구현할 수 있는 CNI 제품이고, datapath는 실제 packet을 처리하는 경로다. hook은 kernel이 program을 실행하도록 마련한 특정 사건·경로의 연결 지점이다. XDP(eXpress Data Path)는 수신 driver 가까운 이른 packet hook이고, TC(Traffic Control)는 skb 기반 ingress(장치로 들어오는 방향)·egress(장치에서 나가는 방향)에서 분류·정책·redirect 등을 할 수 있는 계층이다. verifier는 program을 load하기 전에 memory 접근과 control flow의 안전 조건을 검사하고, map은 BPF program과 user space가 key-value 상태를 공유하는 저장 구조다. 실제 eBPF program을 attach하지 않는다. 모든 예시는 읽기용 pseudo code, 상태 추적, 산술 예시다.
+
+```mermaid
+flowchart LR
+    C["C/Rust source"] --> O["BPF object bytecode + BTF"]
+    O --> L["loader: map 생성·relocation"]
+    L --> V{"kernel verifier 통과?"}
+    V -- no --> E["load 거부 + verifier log"]
+    V -- yes --> J["JIT 또는 interpreter"]
+    J --> A["XDP·TC·tracepoint 등에 attach"]
+    A --> M["map/event를 user space가 읽고 갱신"]
+    M --> Z["link 해제·fd close·pin cleanup"]
+```
+
+여기서 반드시 분리할 말은 `load`, `attach`, `execute`다. verifier를 통과해 kernel에 **load**됐어도 hook에 **attach**되지 않으면 packet에서 실행되지 않는다. attach됐어도 그 packet이 해당 경로를 지나지 않으면 **execute**되지 않는다.
 
 ## 1. BPF는 무엇에서 출발했는가
 

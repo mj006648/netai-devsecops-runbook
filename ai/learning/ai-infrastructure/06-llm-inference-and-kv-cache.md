@@ -4,6 +4,30 @@
 
 근거 확인일: **2026-09-22**. 이 장은 Hugging Face Transformers의 cache 문서, vLLM의 PagedAttention·automatic prefix caching·disaggregated prefill 문서, LoRA/PEFT 문서, speculative decoding의 공개 논문을 기준으로 한다. 추론 엔진의 구현은 빠르게 변하므로, 여기서는 개별 명령 대신 prefill, decode, KV cache, batching, memory manager의 원리를 익힌다.
 
+**Prefill(입력 채우기)**은 prompt token 전체를 병렬로 처리해 첫 KV cache와 첫 출력 확률을 만드는 단계다. **Decode(반복 생성)**는 새 token 하나를 고르고 그 token의 KV를 cache에 보태는 일을 반복하는 단계다. **Batching(묶음 처리)**은 여러 요청의 계산을 한 번의 장치 실행에 모으는 방법이고, **memory manager(메모리 관리자)**는 요청마다 늘고 줄어드는 cache block을 배정·회수한다.
+
+## 한 요청에서 KV cache가 생기는 위치
+
+```mermaid
+sequenceDiagram
+    participant U as 사용자 prompt
+    participant T as Tokenizer
+    participant M as Transformer layers
+    participant K as 요청별 KV cache
+    U->>T: 문자열
+    T->>M: prompt token IDs
+    M->>K: 각 layer의 과거 K,V 저장
+    loop 다음 token마다
+      M->>K: 과거 K,V 읽기
+      M->>K: 새 token의 K,V 추가
+      M-->>U: 생성 token
+    end
+```
+
+K와 V는 원문 token 자체가 아니다. Attention layer가 token 표현을 서로 다른 projection으로 바꾼 중간 tensor다. Query는 현재 위치에서 무엇을 찾을지를 나타내고, Key는 과거 위치가 어떤 특징을 가졌는지, Value는 선택되었을 때 가져올 내용을 담는다. 과거 token의 K와 V를 저장하면 decode 때 이전 모든 token의 K,V projection을 다시 계산하지 않아도 된다.
+
+가정이 `layers=32`, `KV heads=8`, `head_dim=128`, `dtype=2 bytes`라면 token 하나가 추가될 때 요청당 KV payload 증가는 `32 × 8 × 128 × 2(K,V) × 2 = 131,072 bytes = 128 KiB`다. 4,096 token이면 512 MiB다. block allocator의 반올림, metadata, tensor parallel 배치 때문에 실제 예약량은 이 payload와 다를 수 있다.
+
 ## 1. Autoregressive 생성은 한 토큰씩 이어 붙인다
 
 **Autoregressive LLM**은 앞 token들을 보고 다음 token의 확률분포를 만든다. 완성 문장을 통째로 계산하는 것이 아니라, 다음 token 하나를 고르고 그 token을 다시 입력 맥락에 붙인다.
@@ -52,6 +76,22 @@ decode step:
 ```
 
 KV cache는 학습용 optimizer state가 아니라 요청마다 생기는 추론 중간 상태이며, 요청이 끝나면 보통 해제된다.
+
+### Token 하나의 K/V가 살아 있는 시간
+
+Prompt의 첫 token이 들어오면 모든 Transformer layer는 그 token의 K와 V를 만든다. 이 값은 마지막 layer 하나에만 있는 것이 아니라 cache를 사용하는 각 attention layer에 따로 존재한다. 이후 decode token이 추가될 때마다 각 layer의 K/V가 한 자리씩 늘어난다.
+
+```text
+요청 시작:             KV 없음
+prefill token 0..99:   각 layer에 100개 위치의 K/V 생성
+decode token 100:      각 layer cache에 위치 100 추가
+decode token 101:      각 layer cache에 위치 101 추가
+요청 종료 또는 취소:   요청이 소유한 block 반환
+```
+
+현재 token의 Query는 다음 token을 계산할 때 새로 만들며 장기간 보관할 필요가 없는 경우가 많다. 과거의 Key와 Value는 앞으로 생성할 token들이 계속 참고하므로 요청 수명 동안 남는다. 그래서 이름이 QKV cache가 아니라 KV cache다. 구체적인 buffer 수명과 배치는 엔진 구현에 따라 달라질 수 있다.
+
+Context 길이 상한을 4,096으로 설정했다고 요청 시작부터 4,096 token payload를 모두 채우는 것은 아니다. 실제 사용 token이 500이면 payload는 500 위치만 필요하지만, 연속 buffer를 미리 크게 예약하거나 graph capture용 공간을 잡는 구현에서는 예약량이 더 클 수 있다. **사용 payload**, **할당 block**, **예약 pool**을 구분해 측정한다.
 
 ## 3. MHA, MQA, GQA와 KV head
 
@@ -170,6 +210,38 @@ block table:
 
 이 방식은 남는 작은 조각을 줄이고, prefix 공유나 copy-on-write 같은 최적화의 기반이 된다.
 하지만 attention kernel이 block table을 따라 KV를 읽어야 하므로, 구현 복잡도와 kernel 지원이 중요하다.
+
+### Page와 block, 마지막 빈칸 계산
+
+여기서 **page 또는 block**은 여러 연속 token 위치의 K/V를 담는 고정 크기 할당 단위다. 운영체제 page와 비슷한 아이디어를 빌리지만 CPU의 virtual memory page와 같은 객체는 아니다. 엔진이 정한 KV 전용 단위다.
+
+Block이 16 token을 담고 현재 sequence가 33 token이면 필요한 block 수는 올림 계산이다.
+
+```text
+ceil(33 / 16) = 3 blocks
+할당 token slots = 3 × 16 = 48
+현재 빈 slots = 48 - 33 = 15
+```
+
+요청마다 최대 길이만큼 연속 공간을 미리 잡는 대신 필요한 만큼 block을 추가하면 sequence 길이가 제각각일 때 낭비를 줄일 수 있다. 그래도 마지막 block의 빈 slot과 block table metadata는 남는다. Block을 아주 작게 하면 빈칸은 줄지만 table entry와 관리 비용이 늘 수 있다.
+
+### Prefix 공유, reference count, copy-on-write
+
+두 요청이 완전히 같은 system prompt 32 token으로 시작하고 block 크기가 16이라고 하자. 공통 prefix는 block 2개다. 엔진이 안전한 조건에서 prefix KV를 공유하면 두 요청이 물리 block 2개를 각각 복사해 4개를 쓰는 대신 같은 2개를 가리킬 수 있다.
+
+```text
+physical block P7: prefix token 0..15, refcount=2
+physical block P9: prefix token 16..31, refcount=2
+
+request A table: [P7, P9, A의 새 block]
+request B table: [P7, P9, B의 새 block]
+```
+
+**Reference count(참조 수)**는 몇 요청이 block을 가리키는지 세는 값이다. Request A가 끝나도 refcount가 2에서 1로 줄 뿐 Request B가 쓰는 block을 즉시 반환하면 안 된다. 마지막 참조가 사라질 때 반환할 수 있다.
+
+공유 중인 block의 내용을 한 요청만 바꿔야 한다면 **copy-on-write(쓸 때 복사)**가 필요할 수 있다. 읽는 동안 공유하고, 변경 직전에 별도 block을 만들어 다른 요청의 상태가 바뀌지 않게 한다. 다만 실제 prefix cache가 immutable한 완성 block만 공유하는지, 부분 block을 어떻게 처리하는지는 엔진 구현에 따라 다르다.
+
+공유 가능성은 문자열이 비슷해 보이는 것으로 결정하지 않는다. Tokenizer revision이 다르면 token ID가 달라질 수 있고, model/adapter revision이나 위치 정보가 다르면 같은 token열이라도 KV가 호환되지 않을 수 있다. Tenant 권한과 cache key 조건도 함께 맞아야 한다.
 
 ## 8. Prefix cache와 response cache는 다르다
 

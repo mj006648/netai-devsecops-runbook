@@ -2,7 +2,44 @@
 
 이전: [가상 메모리와 reclaim](04-virtual-memory-and-reclaim.md) · 다음: [격리·보안·컨테이너](06-isolation-security-and-containers.md)
 
-보강·근거 확인일: **2026-09-22**. 이 장은 Linux 커널 관점에서 파일 I/O가 어떤 객체와 queue를 거쳐 장치 완료로 돌아오는지 설명한다. 데이터 durability와 파일시스템 관점은 기존 [데이터 시스템 기초](../../../kubernetes/storage/data-systems-foundations/README.md)와 함께 읽으면 좋다.
+보강·근거 확인일: **2026-09-22**. 이 장은 Linux 커널 관점에서 파일 입출력(I/O)이 어떤 객체와 대기열(queue)을 거쳐 장치 완료로 돌아오는지 설명한다. 장애 뒤에도 데이터가 남는 영속성(durability)과 파일시스템 관점은 기존 [데이터 시스템 기초](../../../kubernetes/storage/data-systems-foundations/README.md)와 함께 읽으면 좋다.
+
+### 왜 배우며, 파일 이름 뒤의 단어를 먼저 풀어 보기
+
+프로그램은 파일 이름으로 시작하지만 저장장치는 파일 이름을 모른다. 중간 계층을 알아야 “`write()`가 성공했는데 전원 장애 뒤 데이터가 없다”거나 “디스크는 빠른데 읽기가 느리다”는 현상을 설명할 수 있다.
+
+- **VFS(Virtual File System, 가상 파일시스템 계층)**: ext4·XFS·tmpfs처럼 구현이 다른 파일시스템을 `open()`·`read()` 같은 공통 인터페이스로 연결하는 커널 계층이다.
+- **inode(아이노드, 파일 본체 메타데이터)**: 파일 종류·소유자·권한·크기·데이터 위치를 나타낸다. 파일 이름 자체는 보통 inode에 들어 있지 않다.
+- **dentry(directory entry, 이름 연결 객체)**: 디렉터리 안의 이름을 inode와 연결하고 경로 탐색 결과를 캐시한다.
+- **파일 디스크립터(fd, 열린 대상 번호표)**: 한 프로세스의 열린 파일 표에서 항목을 찾는 작은 정수다.
+- **버퍼(buffer)**: 생산자와 소비자의 속도·처리 단위를 맞추기 위해 데이터를 잠시 모아 두는 공간을 뜻한다.
+- **캐시(cache)**: 다시 필요할 가능성이 있는 데이터를 빠른 계층에 복사해 재사용하는 공간이다. Linux의 **페이지 캐시(page cache)**는 파일 내용을 RAM에 둔다.
+- **더티 페이지(dirty page)**: RAM의 파일 내용이 바뀌었지만 아직 저장장치에 반영되지 않은 페이지다.
+- **저장장치 반영(writeback)**: 더티 페이지의 내용을 파일시스템과 장치 쪽으로 보내는 과정이다.
+- **완료(completion)**는 요청 처리가 특정 경계까지 끝났다는 알림이고, **영속성(durability)**은 전원 장애 같은 실패 뒤에도 데이터가 남는다는 보장이다.
+
+```mermaid
+flowchart TD
+    subgraph OPEN[open pathname: 이름으로 열린 상태 만들기]
+      OP[open 경로] --> D[dentry: 이름 연결]
+      D --> I[inode: 파일 본체 정보]
+      I --> F[열린 file 객체 생성]
+      F --> FD[프로세스 fd 표에 번호 연결]
+    end
+    subgraph IO[read/write fd: 열린 번호로 데이터 이동]
+      RW[read 또는 write fd] --> FD2[프로세스 fd 표 조회]
+      FD2 --> F2[열린 file 객체와 offset]
+      F2 --> I2[inode·파일시스템 연산]
+      I2 --> PC[페이지 캐시]
+      PC -->|cache miss 또는 writeback| FS[개별 파일시스템]
+      FS --> B[block layer 요청]
+      B --> DR[장치 드라이버]
+      DR --> DEV[SSD/HDD]
+      DEV -->|completion| DR
+    end
+```
+
+`open()`은 경로 이름에서 dentry와 inode를 찾은 뒤 열린 file 객체와 fd를 만든다. 반대로 `read()`·`write()`는 이미 받은 fd에서 file 객체를 찾아 데이터 경로로 간다. 두 호출의 출발점과 목적이 다르다. 화살표는 개념 순서를 단순화했으며, 모든 파일이 block device로 가는 것은 아니다. 예를 들어 tmpfs는 주로 메모리에 있고, pipe·socket·장치 파일도 같은 fd 인터페이스를 쓰지만 일반 파일(regular file)과 다른 연산으로 연결된다.
 
 ## 1. VFS는 여러 파일시스템을 하나의 인터페이스로 보이게 한다
 
@@ -51,6 +88,18 @@ kernel:
 ~~~
 
 `open()`은 파일 내용을 읽는 syscall이 아니다. metadata lookup과 권한 검사, 열린 file 객체 생성이 중심이다. path lookup 중 directory block 읽기가 필요할 수 있지만, data block read와 같은 의미는 아니다.
+
+이어서 `read(fd, ...)`가 처음 호출됐고 필요한 페이지가 캐시에 없다고 가정해 보자.
+
+1. 커널은 프로세스 fd 표에서 열린 `struct file`과 현재 offset을 찾는다.
+2. VFS는 그 객체가 가리키는 파일시스템의 읽기 연산으로 연결한다.
+3. 파일시스템은 inode의 파일 위치 정보로 필요한 파일 구간을 찾는다.
+4. page cache에 데이터가 없으면 block layer와 드라이버가 장치 읽기 요청을 만든다.
+5. 요청이 기다려야 하면 현재 스레드는 blocked 상태가 되고, 스케줄러가 다른 runnable 스레드를 실행한다.
+6. 장치가 completion을 알리면 커널은 페이지를 준비하고 기다리던 스레드를 깨운다.
+7. 데이터가 사용자 버퍼로 복사되고 읽은 바이트 수가 반환되며 file offset이 전진한다.
+
+이 흐름에서 fd는 파일 자체가 아니라 “프로세스가 열린 상태를 찾는 번호”이고, inode는 이름이 아니라 파일 본체의 메타데이터다. cache hit라면 4–6단계의 장치 읽기는 생략될 수 있다.
 
 ## 5. buffered I/O: page cache를 통과하는 기본 경로
 

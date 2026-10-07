@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">프로그램이 프로세스가 되고 스레드가 실행되는 흐름</title>
+  <desc id="desc">실행 파일, 프로세스 주소 공간, 여러 스레드, 스케줄러와 CPU 사이의 관계를 단계별 화살표로 나타낸 그림</desc>
+  <defs>
+    <style>
+      .box { fill:#f7f9fc; stroke:#375a7f; stroke-width:2; rx:14; }
+      .shared { fill:#eaf5ea; stroke:#39814b; stroke-width:2; rx:12; }
+      .thread { fill:#fff4dd; stroke:#a66b00; stroke-width:2; rx:12; }
+      .cpu { fill:#fce8ef; stroke:#a33b63; stroke-width:2; rx:12; }
+      .t { font-family:'UnDotum','Noto Sans CJK KR','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; font-size:18px; font-weight:600; fill:#17202a; }
+      .s { font-family:'UnDotum','Noto Sans CJK KR','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; font-size:14px; fill:#34495e; }
+      .xs { font-family:'UnDotum','Noto Sans CJK KR','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; font-size:11px; fill:#34495e; }
+      .arrow { stroke:#526777; stroke-width:2.5; fill:none; marker-end:url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#526777"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="white"/>
+  <rect class="box" x="40" y="55" width="180" height="105"/>
+  <text class="t" x="130" y="91" text-anchor="middle">1. 실행 파일</text>
+  <text class="s" x="130" y="120" text-anchor="middle">저장된 코드와 데이터</text>
+  <text class="s" x="130" y="143" text-anchor="middle">아직 실행 중은 아님</text>
+
+  <rect class="shared" x="305" y="35" width="290" height="180"/>
+  <text class="t" x="450" y="68" text-anchor="middle">2. 프로세스 (process)</text>
+  <text class="s" x="450" y="96" text-anchor="middle">PID + 주소 공간 + fd 표</text>
+  <rect class="thread" x="335" y="122" width="105" height="60"/>
+  <rect class="thread" x="460" y="122" width="105" height="60"/>
+  <text class="s" x="387" y="150" text-anchor="middle">스레드 1</text>
+  <text class="xs" x="387" y="171" text-anchor="middle">실행 위치 + 레지스터</text>
+  <text class="s" x="512" y="150" text-anchor="middle">스레드 2</text>
+  <text class="xs" x="512" y="171" text-anchor="middle">실행 위치 + 레지스터</text>
+
+  <rect class="box" x="680" y="55" width="220" height="105"/>
+  <text class="t" x="790" y="91" text-anchor="middle">3. 실행 대기열</text>
+  <text class="s" x="790" y="120" text-anchor="middle">스케줄러가 실행 가능한</text>
+  <text class="s" x="790" y="143" text-anchor="middle">스레드 하나를 선택</text>
+
+  <rect class="cpu" x="680" y="265" width="220" height="105"/>
+  <text class="t" x="790" y="301" text-anchor="middle">4. CPU 코어</text>
+  <text class="s" x="790" y="330" text-anchor="middle">선택된 스레드의</text>
+  <text class="s" x="790" y="353" text-anchor="middle">명령을 실행</text>
+
+  <rect class="box" x="305" y="285" width="290" height="145"/>
+  <text class="t" x="450" y="320" text-anchor="middle">5. 대기 또는 종료</text>
+  <text class="s" x="450" y="350" text-anchor="middle">I/O·잠금 대기 → blocked</text>
+  <text class="s" x="450" y="375" text-anchor="middle">사건 완료 → runnable</text>
+  <text class="s" x="450" y="400" text-anchor="middle">종료 → 부모가 상태 회수</text>
+
+  <path class="arrow" d="M220 107 H305"/>
+  <text class="s" x="261" y="96" text-anchor="middle">exec</text>
+  <path class="arrow" d="M595 110 H680"/>
+  <path class="arrow" d="M790 160 V265"/>
+  <text class="s" x="806" y="218">선택</text>
+  <path class="arrow" d="M680 335 H595"/>
+  <path class="arrow" d="M595 305 C650 225 620 185 595 170"/>
+  <text class="s" x="625" y="255">깨움</text>
+  <text class="s" x="450" y="482" text-anchor="middle">프로세스는 자원을 담고, 스케줄러는 스레드를 CPU에 배치한다.</text>
+</svg>

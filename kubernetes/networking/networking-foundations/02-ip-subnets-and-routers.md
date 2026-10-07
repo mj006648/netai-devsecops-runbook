@@ -1,7 +1,22 @@
 # 02. IP, Subnet, Router
 
-범위: 이 장은 IPv4/IPv6 주소, CIDR, subnet, longest prefix match, ARP/NDP, routing, TTL, ICMP, PMTUD, NAT를 설명한다.
+범위: 이 장은 IP(Internet Protocol, 네트워크 사이에서 packet을 전달하는 규칙) 주소, subnet(같은 network prefix를 공유하는 주소 범위), CIDR(Classless Inter-Domain Routing, `/26`처럼 prefix 길이로 범위를 나타내는 방식), routing(목적지로 갈 다음 경로 선택), ARP(Address Resolution Protocol, IPv4 next-hop IP에 대응하는 MAC을 찾는 규칙)를 설명한다. 이어서 NDP(IPv6 이웃 발견), TTL(packet의 hop 수명), ICMP(IP 오류·진단 메시지), PMTUD(경로 MTU 탐색), NAT(주소·포트 변환)를 다룬다.
 명령 실행이나 호스트 설정 없이 손계산과 packet journey로 이해한다.
+
+이 장에서 **prefix(프리픽스)**는 IP 주소 앞쪽의 network 부분이고, **gateway(게이트웨이)**는 host가 직접 닿지 않는 목적지로 보낼 때 선택하는 next-hop router다. `192.0.2.10/26`의 `/26`은 앞 26 bit가 prefix라는 뜻이다.
+
+```mermaid
+flowchart TD
+    A["목적지 IP"] --> B{"on-link prefix와 일치?"}
+    B -- yes --> C["목적지 IP의 MAC을 ARP/NDP로 확인"]
+    B -- no --> D["routing table에서 longest prefix match"]
+    D --> E["선택된 next hop의 MAC을 ARP/NDP로 확인"]
+    C --> F["Ethernet frame 전송"]
+    E --> F
+    F --> G["router: TTL 감소, 새 링크 frame 생성"]
+```
+
+`subnet 계산`, `route 선택`, `next-hop MAC 확인`은 서로 다른 단계다. “목적지가 같은 `/24`처럼 보인다”는 계산만으로 실제 route와 policy까지 확정할 수는 없다.
 
 ## 1. IP 주소는 host가 아니라 interface에 붙는 네트워크 계층 주소다
 

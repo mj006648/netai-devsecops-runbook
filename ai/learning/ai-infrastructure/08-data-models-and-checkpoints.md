@@ -6,9 +6,29 @@ AI 인프라에서 데이터는 학습용 파일만 뜻하지 않는다.
 dataset, tokenizer, model weight, adapter, config, 학습 코드, optimizer 상태, checkpoint manifest, serving bundle이 모두 운영 대상이다.
 이 장은 “파일이 있다”와 “재현 가능하고 재시작 가능한 상태다”를 구별한다.
 
+**Dataset(데이터셋)**은 학습·평가 샘플의 모음이고, **revision(리비전)**은 그 데이터나 모델의 식별 가능한 버전이다. **Checkpoint(체크포인트)**는 학습 중간 상태를 다시 읽을 수 있게 저장한 묶음이며, **manifest(명세 파일)**는 어떤 shard와 상태가 그 묶음에 속하는지 적는다. **Serving bundle(서빙 묶음)**은 추론에 필요한 weight, tokenizer, config와 관련 파일을 함께 배포하는 단위다.
+
 목표는 두 가지다.
 첫째, 많은 작은 파일과 큰 객체 저장소가 왜 병목을 만드는지 계산한다.
 둘째, 체크포인트가 모델 weight 하나가 아니라 학습을 이어가기 위한 상태 묶음임을 이해한다.
+
+## 파일이 존재하는 것과 복구 가능한 것은 다르다
+
+```mermaid
+flowchart LR
+    D[dataset + tokenizer revision] --> J[training job]
+    C[code + config] --> J
+    J --> W[model weights]
+    J --> O[optimizer/scheduler state]
+    J --> R[RNG + data position]
+    W --> M[manifest]
+    O --> M
+    R --> M
+    M --> P[complete marker 게시]
+    P --> X[reader가 복구 시작]
+```
+
+8개 rank가 각각 5GiB shard를 쓰고 각 rank의 유효 쓰기 속도가 1GiB/s라면 완전히 병렬인 하한은 5초다. 저장소 총 대역폭이 4GiB/s로 제한되면 전체 40GiB를 쓰는 하한은 `40 ÷ 4 = 10초`다. 실제 시간에는 metadata 요청, 작은 파일, 동기화, checksum, commit marker 비용이 붙는다. 따라서 “rank당 파일 크기 ÷ 로컬 속도”와 “전체 크기 ÷ 공유 병목 대역폭” 중 큰 값을 출발점으로 삼는다.
 
 ## 핵심 용어
 

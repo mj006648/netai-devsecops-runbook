@@ -1,8 +1,35 @@
 # 06. 격리, 보안, 컨테이너: UID에서 KVM까지
 
-이전: [VFS·장치·I/O](05-vfs-devices-and-io.md) · 다음: 관측·문제해결 장
+이전: [VFS·장치·I/O](05-vfs-devices-and-io.md) · 다음: [관측과 문제 해결](07-observation-and-troubleshooting.md)
 
-보강·근거 확인일: **2026-09-22**. 이 장은 Linux가 “누가 무엇을 할 수 있는가”를 어떻게 판단하고, 컨테이너와 VM이 어떤 격리 경계를 제공하는지 설명한다. eBPF의 packet path와 observability/security hook은 네트워크 교재에서 별도 심화하고, 이 장에서는 커널 보안 경계와 연결점만 둔다.
+보강·근거 확인일: **2026-09-22**. 이 장은 Linux가 “누가 무엇을 할 수 있는가”를 어떻게 판단하고, 컨테이너와 가상 머신(VM)이 어떤 격리 경계를 제공하는지 설명한다. eBPF(검증된 작은 프로그램을 커널의 정해진 지점에서 실행하는 기술)의 패킷 처리·관측·보안 연결점은 네트워크 교재에서 별도 심화하고, 이 장에서는 커널 보안 경계와의 관계만 다룬다.
+
+### 왜 배우며, 격리를 이루는 부품은 무엇인가
+
+컨테이너는 하나의 기능 이름처럼 보이지만 실제로는 여러 커널 기능을 조합한 실행 환경이다. 각 부품이 답하는 질문을 나누면 “컨테이너니까 안전하다” 또는 “root니까 무엇이든 된다”는 오해를 피할 수 있다.
+
+- **namespace(이름 공간)**: 프로세스가 볼 수 있는 PID·mount·network interface 같은 자원의 관점을 분리한다. 무엇이 **보이는가**를 바꾼다.
+- **cgroup(control group, 제어 그룹)**: 프로세스 묶음별 CPU·메모리·I/O·프로세스 수를 계정하고 제한한다. 얼마나 **쓸 수 있는가**를 다룬다.
+- **capability(세분화된 커널 권한)**: 전통적인 root의 강한 권한을 `CAP_NET_ADMIN` 같은 작은 조각으로 나눈다. 어떤 특권 동작을 **할 수 있는가**를 다룬다.
+- **seccomp(시스템 호출 필터)**: 프로세스가 사용할 수 있는 시스템 호출을 제한한다.
+- **LSM(Linux Security Module, 추가 보안 정책 연결 틀)**: SELinux·AppArmor 같은 정책 엔진이 파일·프로세스·소켓 접근을 추가로 판단하게 한다.
+- **컨테이너(container)**: 별도 커널 한 개를 뜻하지 않는다. 보통 namespace·cgroup·capability·seccomp·LSM과 파일시스템 구성을 묶어 만든 격리된 프로세스 환경이다.
+
+```mermaid
+flowchart TD
+    P[컨테이너 안 프로세스] --> N[namespace<br/>무엇이 보이는가]
+    P --> C[cgroup<br/>얼마나 쓸 수 있는가]
+    P --> CAP[capability·UID<br/>어떤 특권이 있는가]
+    P --> S[seccomp<br/>어떤 syscall을 부를 수 있는가]
+    P --> L[LSM·DAC·ACL<br/>어떤 대상에 접근 가능한가]
+    N --> K[공유하는 호스트 Linux 커널]
+    C --> K
+    CAP --> K
+    S --> K
+    L --> K
+```
+
+모든 화살표가 같은 커널로 모인다는 점이 중요하다. namespace로 호스트 PID가 안 보이더라도 커널은 공유하며, cgroup 한도가 있어도 파일 접근 권한이 자동으로 생기지는 않는다.
 
 ## 1. 보안은 하나의 기능이 아니라 여러 질문의 조합이다
 
@@ -128,6 +155,17 @@ container runtime
 ~~~
 
 컨테이너의 핵심 경계는 **host kernel을 공유한다**는 점이다. 컨테이너 안 process가 syscall을 하면 host kernel이 처리한다. 따라서 kernel 취약점, 위험한 capability, device mount, privileged container, hostPath mount는 trust boundary를 크게 약화한다.
+
+웹 서버 컨테이너 하나를 시작하는 흐름을 단순화하면 다음과 같다.
+
+1. runtime이 image의 읽기 전용 층과 쓰기 가능한 층을 합쳐 root filesystem 관점을 준비한다.
+2. 새 mount·PID·network 등의 namespace를 만들거나 기존 namespace에 프로세스를 넣는다.
+3. cgroup에 프로세스를 배치하고 메모리·CPU·PID 한도 같은 값을 설정한다.
+4. 필요한 capability만 남기고, seccomp·LSM·UID/GID 정책을 적용한다.
+5. 준비된 환경에서 컨테이너의 첫 프로세스를 실행한다.
+6. 그 프로세스가 `open()`이나 `send()`를 호출하면 공유하는 호스트 커널이 요청을 검사하고 수행한다.
+
+따라서 격리 실패를 조사할 때는 “컨테이너인가”만 묻지 않고, 어느 namespace와 cgroup에 속했는지, 어떤 capability와 syscall·LSM 정책이 실제 적용됐는지를 확인한다.
 
 ## 10. VM과 KVM은 더 두꺼운 경계를 제공한다
 

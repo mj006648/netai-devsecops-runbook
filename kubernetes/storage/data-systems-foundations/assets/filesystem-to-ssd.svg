@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc" font-family="Noto-Serif-CJK-KR, sans-serif">
+  <title id="title">경로 이름에서 SSD NAND 페이지까지의 주소 변환</title>
+  <desc id="desc">디렉터리 엔트리, inode, extent, 파일시스템 블록, LBA, FTL, NAND 페이지와 erase block 사이의 매핑을 나타낸다.</desc>
+  <defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#315b7d"/></marker><style>.b{fill:#f2f7fb;stroke:#315b7d;stroke-width:2}.s{fill:#fff2dc;stroke:#aa6700;stroke-width:2}.d{fill:#edf8ef;stroke:#397647;stroke-width:2}.t{font-size:16px;fill:#17212b}.m{font-size:13px;fill:#3e4b57}.a{stroke:#315b7d;stroke-width:2;fill:none;marker-end:url(#a)}</style></defs>
+  <rect x="30" y="35" width="185" height="92" rx="10" class="b"/><text x="122" y="68" text-anchor="middle" class="t">경로 /data/a.log</text><text x="122" y="95" text-anchor="middle" class="m">사람이 쓰는 이름</text>
+  <rect x="260" y="35" width="185" height="92" rx="10" class="b"/><text x="352" y="68" text-anchor="middle" class="t">dentry</text><text x="352" y="95" text-anchor="middle" class="m">이름 → inode 연결 cache</text>
+  <rect x="490" y="35" width="185" height="92" rx="10" class="b"/><text x="582" y="68" text-anchor="middle" class="t">inode</text><text x="582" y="95" text-anchor="middle" class="m">권한·크기·block mapping</text>
+  <rect x="720" y="35" width="185" height="92" rx="10" class="b"/><text x="812" y="68" text-anchor="middle" class="t">extent</text><text x="812" y="95" text-anchor="middle" class="m">논리 block 구간 → 물리 구간</text>
+  <path d="M215 81 H252" class="a"/><path d="M445 81 H482" class="a"/><path d="M675 81 H712" class="a"/>
+  <rect x="220" y="195" width="250" height="105" rx="10" class="s"/><text x="345" y="230" text-anchor="middle" class="t">파일시스템 block</text><text x="345" y="258" text-anchor="middle" class="m">예: 논리 block 0..1</text><text x="345" y="281" text-anchor="middle" class="m">파일시스템이 관리하는 할당 단위</text>
+  <rect x="650" y="195" width="250" height="105" rx="10" class="s"/><text x="775" y="230" text-anchor="middle" class="t">장치 LBA</text><text x="775" y="258" text-anchor="middle" class="m">host가 장치에 제시하는 논리 주소</text><text x="775" y="281" text-anchor="middle" class="m">NAND 물리 위치 자체가 아님</text>
+  <path d="M812 127 V160 H345 V187" class="a"/><path d="M470 247 H642" class="a"/>
+  <rect x="220" y="370" width="250" height="105" rx="10" class="d"/><text x="345" y="405" text-anchor="middle" class="t">FTL mapping</text><text x="345" y="433" text-anchor="middle" class="m">LBA → NAND 위치 변환</text><text x="345" y="456" text-anchor="middle" class="m">wear leveling·GC 수행 가능</text>
+  <rect x="650" y="370" width="250" height="105" rx="10" class="d"/><text x="775" y="405" text-anchor="middle" class="t">NAND page / erase block</text><text x="775" y="433" text-anchor="middle" class="m">page 단위 program/read</text><text x="775" y="456" text-anchor="middle" class="m">더 큰 block 단위 erase</text>
+  <path d="M775 300 V335 H345 V362" class="a"/><path d="M470 422 H642" class="a"/>
+  <text x="950" y="210" class="m">한 계층의 “block/page”를</text><text x="950" y="233" class="m">다른 계층의 같은 단어와</text><text x="950" y="256" class="m">동일시하지 않는다.</text>
+  <text x="30" y="505" class="m">각 화살표는 주소 변환 또는 metadata lookup이다. 논리적으로 연속된 extent가 NAND에서도 물리적으로 연속된다고 보장하지 않는다.</text>
+</svg>

@@ -4,6 +4,22 @@
 
 약어를 처음부터 외울 필요는 없다. 이 표에서 **무엇을 가리키는 단어인지** 확인하고 해당 장의 연결 그림으로 돌아간다. 숫자가 붙으면 단위와 제품 버전을 함께 확인한다.
 
+```mermaid
+flowchart TD
+    CH[CPU memory channel] --> DIMM[DIMM 모듈]
+    DIMM --> RANK[DRAM rank: 함께 선택되는 chip 집합]
+    RANK --> CHIP[DRAM chip]
+    CHIP --> BG[bank group]
+    BG --> BANK[bank]
+    BANK --> ROW[row 활성화]
+    ROW --> COL[column 선택]
+    HBM[HBM stack/channel] -. 다른 패키징과 경로 .-> BANK
+    SHARED[GPU shared-memory bank] -. DRAM bank와 다른 on-chip 저장소 .-> BANK
+    DIST[distributed process rank] -. 메모리 계층이 아닌 프로세스 번호 .-> RANK
+```
+
+같은 `rank`와 `bank`라는 단어가 서로 다른 분야에서 재사용된다. 실선은 DRAM 주소 계층의 단순화이고, 점선은 **이름은 비슷하지만 같은 물리 계층이 아닌 개념**을 구분한다.
+
 ## 전기·논리·정보의 첫 용어
 
 | 용어 | 쉬운 뜻 | 구별할 것 | 본문 |
@@ -42,10 +58,17 @@
 
 | 용어 | 뜻·역할 | 자주 혼동하는 것 | 장 |
 |---|---|---|---|
-| DRAM / DDR | 작업용 메모리 기술 / 전송 방식·규격 계열 | 디스크·캐시와 구분 | [02](02-cpu-memory-numa.md) |
-| DIMM | 메모리 모듈 | 슬롯·CPU 채널과 개수 구분 | [02](02-cpu-memory-numa.md) |
-| Channel / Subchannel | CPU 메모리 경로 / DDR5 내부의 더 작은 독립 경로 | 숫자를 중복해서 대역폭 합산하지 않음 | [02](02-cpu-memory-numa.md) |
-| Rank / RDIMM | 모듈 내부 칩 조직 / 등록형 모듈 | 같은 의미가 아님 | [02](02-cpu-memory-numa.md) |
+| DRAM / DDR | 전하로 bit를 저장하는 작업 메모리 기술 / DDR 계열의 동기식 전송 규격 | DDR은 DIMM 모양이나 용량 이름이 아님 | [02](02-cpu-memory-numa.md) |
+| Memory channel | CPU 메모리 컨트롤러에서 DIMM으로 이어지는 독립 데이터 경로 | DIMM 수·rank 수와 별개. 대역폭 합산은 실제 사용 채널 기준 | [02](02-cpu-memory-numa.md) |
+| DIMM | 여러 DRAM chip과 배선·SPD 등을 한 기판에 실은 교체형 모듈 | channel은 길, DIMM은 그 길에 연결하는 모듈 | [02](02-cpu-memory-numa.md) |
+| DRAM rank | 한 DIMM 안에서 같은 chip-select로 함께 선택되어 채널 데이터 폭을 만드는 chip 집합 | 1R/2R은 채널 수가 아니며 분산 process rank와 무관 | [02](02-cpu-memory-numa.md), [AI 05](../../../ai/learning/ai-infrastructure/05-distributed-training-and-collectives.md) |
+| DRAM chip | DIMM 위의 개별 메모리 집적회로 | DIMM 전체, rank 전체와 같은 단위가 아님 | [02](02-cpu-memory-numa.md) |
+| Bank group / Bank | DRAM chip 내부의 bank 묶음 / 독립적으로 row를 열어 작업할 수 있는 배열 단위 | rank·channel보다 안쪽 계층 | [02](02-cpu-memory-numa.md) |
+| Row / Column | bank에서 한 번 활성화하는 셀의 줄 / 열린 row 안에서 선택하는 위치 | row 활성화와 실제 byte 전송은 같은 동작이 아님 | [02](02-cpu-memory-numa.md) |
+| DDR / HBM | CPU DIMM 등에 널리 쓰이는 DRAM 인터페이스 계열 / 넓은 인터페이스를 가까이 적층한 고대역폭 메모리 계열 | 둘 다 DRAM일 수 있으나 패키징·폭·장착·접근 경로가 다름 | [02](02-cpu-memory-numa.md), [05](05-gpu-npu-execution.md) |
+| Shared-memory bank | GPU/NPU 연산 블록 가까이 있는 작은 on-chip shared/local memory의 내부 bank | DRAM bank와 목적·위치가 다르고 bank conflict는 실행 접근 패턴 문제 | [05](05-gpu-npu-execution.md) |
+| Distributed rank | 분산 process group 안의 프로세스 식별 번호 | DRAM rank도 tensor rank(축 수)도 아님 | [AI 05](../../../ai/learning/ai-infrastructure/05-distributed-training-and-collectives.md) |
+| RDIMM | register/buffer를 거쳐 명령·주소 신호 부하를 줄이는 서버용 DIMM 계열 | DRAM rank의 R과 RDIMM의 R을 같은 뜻으로 읽지 않음 | [02](02-cpu-memory-numa.md) |
 | ECC | 오류 검출·정정용 부호 | 모든 고장 복구·백업을 뜻하지 않음 | [02](02-cpu-memory-numa.md) |
 | NUMA / NPS | 접근 위치에 따른 비용 차이 / 소켓당 NUMA 노드 관련 설정 | NUMA 하나가 항상 소켓 하나는 아님 | [02](02-cpu-memory-numa.md) |
 | Affinity / First-touch | 실행 위치 제한 / 처음 실제 페이지를 할당하는 접근과 지역성 | CPU 고정만으로 기존 메모리가 이동하지 않음 | [02](02-cpu-memory-numa.md) |

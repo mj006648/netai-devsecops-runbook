@@ -4,6 +4,17 @@
 
 단어의 뜻을 찾은 뒤 해당 장의 동작 예제로 돌아간다. 같은 약어도 계층에 따라 뜻이 달라진다. 이 사전에서 B는 문맥에 따라 batch 또는 billion이므로 계산식에서 정의를 확인한다.
 
+```mermaid
+flowchart LR
+    T[용어를 만남] --> D[이 문서의 정의 확인]
+    D --> L[어느 계층인지 확인]
+    L --> U[단위·shape·범위 확인]
+    U --> E[작은 예제에 대입]
+    E --> C[원래 문장으로 돌아가 해석]
+```
+
+특히 `rank`, `kernel`, `cache`처럼 여러 계층이 공유하는 단어는 수식이나 로그 앞에서 뜻을 다시 확인한다.
+
 ## 모델과 계산
 
 | 용어 | 쉬운 뜻 | 혼동하면 안 되는 것 |
@@ -82,6 +93,11 @@
 
 | 용어 | 쉬운 뜻 | 혼동하면 안 되는 것 |
 | --- | --- | --- |
+| Process rank / global rank | 분산 process group 전체에서 process를 구분하는 번호 | GPU 제품 등급이나 DIMM rank가 아님 |
+| Local rank | 한 node 안에서 process를 구분할 때 흔히 쓰는 번호 | global rank와 항상 같지 않고, GPU index와의 연결도 launcher 설정에 따름 |
+| DIMM rank | 메모리 모듈에서 함께 선택되어 data bus 폭을 구성하는 DRAM 칩 묶음 | 분산 학습 process rank가 아님 |
+| DRAM bank | DRAM 내부에서 비교적 독립적으로 행을 열고 접근할 수 있는 저장 구획 | DIMM 하나나 process 번호가 아님 |
+| A7, TwinX 같은 로컬 이름 | 특정 조직이 장비·호스트·랙에 붙인 별칭일 수 있음 | 업계 공통 사양명으로 간주하지 말고 해당 문서의 정의와 사양 확인 |
 | host / device | 작업을 제어하는 호스트 / 가속 장치 | CPU RAM과 장치 메모리가 언제나 같은 접근 계약인 것은 아님 |
 | CUDA stream / event | 장치 작업의 순서 있는 제출 흐름 / 작업 진행을 기록·동기화하는 표식 | 여러 stream이 실제 겹침을 보장하지 않음 |
 | allocated / reserved | 살아 있는 tensor에 쓰는 양 / allocator가 확보한 양 | reserved를 모두 메모리 누수로 판정하지 않기 |

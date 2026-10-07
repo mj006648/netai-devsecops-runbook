@@ -2,7 +2,33 @@
 
 이전: [운영체제는 왜 필요한가](00-why-operating-systems.md) · 다음: [스케줄링과 동시성](03-scheduling-and-concurrency.md)
 
-보강·근거 확인일: **2026-09-22**. 이 장은 전원이 들어온 뒤 Linux가 어떻게 시작되고, 실행 중인 프로그램과 장치가 어떤 문으로 커널에 들어오는지 설명한다. architecture마다 trap frame, vector table, privilege instruction은 다르므로, 여기서는 공통 개념을 잡고 x86의 IDT 같은 이름은 대표 예로만 둔다.
+보강·근거 확인일: **2026-09-22**. 이 장은 전원이 들어온 뒤 Linux가 어떻게 시작되고, 실행 중인 프로그램과 장치가 어떤 문으로 커널에 들어오는지 설명한다. CPU 아키텍처(명령과 레지스터의 기본 설계)마다 커널 진입 때 상태를 저장하는 트랩 프레임(trap frame), 처리 위치를 찾는 벡터 테이블(vector table), 높은 권한에서만 실행할 수 있는 명령이 다르다. 여기서는 공통 개념을 잡고 x86의 IDT(Interrupt Descriptor Table, 인터럽트 처리 위치 표) 같은 이름은 대표 예로만 쓴다.
+
+### 왜 배우며, 어떤 단어부터 잡아야 하는가
+
+컴퓨터가 켜지지 않거나 `read()`가 오래 걸릴 때는 “어느 문 앞에서 멈췄는가”를 찾아야 한다. 부팅과 실행 중 사건은 겉보기에는 달라도, 제어권이 누구에게 넘어가는지를 추적한다는 점에서 같다.
+
+- **부팅(boot)**: 전원이 들어온 뒤 펌웨어·커널·첫 사용자 프로세스를 차례로 준비하는 과정이다.
+- **시스템 호출(system call, syscall)**: 사용자 프로그램이 파일 읽기처럼 권한이 필요한 일을 커널에 요청하는 공식 입구다.
+- **예외(exception)**: 현재 CPU 명령을 실행하다 생긴 사건이다. 0으로 나누기, 아직 준비되지 않은 메모리 접근 등이 예다.
+- **인터럽트(interrupt)**: 장치 완료나 타이머처럼 현재 명령 흐름 바깥에서 CPU에 도착하는 알림이다.
+- **사용자 모드/커널 모드(user/kernel mode)**: CPU가 허용하는 권한 수준이다. 모드 전환은 같은 스레드가 커널 코드를 실행하는 일이며, 다른 스레드로 바뀌는 **문맥 교환(context switch)**과는 다르다.
+- **DMA(Direct Memory Access, 직접 메모리 접근)**: 장치가 CPU로 바이트 하나씩 복사시키지 않고 메모리와 데이터를 주고받는 기능이다.
+
+```mermaid
+flowchart TD
+    A[사용자 스레드 실행] -->|syscall: 의도한 요청| K[커널 진입]
+    A -->|exception: 현재 명령에서 사건| K
+    DEV[장치·타이머] -->|interrupt: 바깥 알림| K
+    K --> C{바로 끝낼 수 있는가?}
+    C -->|예| R[원래 스레드로 복귀]
+    C -->|아니요, 기다림 필요| B[스레드를 blocked로 표시]
+    B --> S[스케줄러가 다른 runnable 스레드 실행]
+    DEV -->|완료 알림| W[기다리던 스레드를 깨움]
+    W --> S
+```
+
+그림의 핵심은 커널 진입과 문맥 교환이 같은 사건이 아니라는 점이다. 짧은 시스템 호출은 같은 스레드로 바로 돌아올 수 있고, I/O를 기다려야 할 때에야 그 스레드가 잠들고 다른 스레드가 실행될 수 있다.
 
 ## 1. reset에서 PID 1까지 한 줄 지도
 
@@ -86,7 +112,7 @@ user mode
 
 **page fault**는 이름에 fault가 들어가지만 항상 “오류”가 아니다. 사용자가 처음 만지는 anonymous page에 대해 커널이 demand-zero page를 할당하는 정상 경로일 수 있다. 파일을 `mmap()`한 뒤 처음 읽을 때 해당 file page를 page cache에서 가져오거나 디스크에서 읽는 경로일 수도 있다.
 
-반면 device interrupt는 현재 실행 중인 user instruction과 직접 관계가 없을 수 있다. NIC가 packet 수신을 알릴 때 CPU는 전혀 다른 프로세스를 실행 중일 수 있다. 커널은 interrupt handler에서 최소한의 일을 처리하고, 나머지는 softirq, workqueue, threaded interrupt 같은 뒤 단계로 미룬다.
+반면 장치 인터럽트(device interrupt)는 현재 실행 중인 사용자 명령과 직접 관계가 없을 수 있다. 네트워크 카드(NIC)가 패킷 수신을 알릴 때 CPU는 전혀 다른 프로세스를 실행 중일 수 있다. 커널은 인터럽트 처리기에서 최소한의 일만 하고 나머지는 뒤의 지연 처리 경로로 미룬다. 구체적인 방식의 뜻과 실행 주체는 10절에서 처음부터 나눈다.
 
 ## 8. vector table과 IDT는 “어디로 뛸지” 찾는 표다
 
@@ -125,20 +151,26 @@ device가 interrupt 발생
 kernel interrupt path가 completion을 처리하고 대기 task를 깨움
 ~~~
 
-DMA는 강력하지만 위험하다. 장치가 잘못된 주소에 DMA하면 커널이나 다른 프로세스 메모리를 망가뜨릴 수 있다. 그래서 IOMMU, DMA mapping API, device driver의 소유권 규칙이 중요하다.
+DMA는 강력하지만 위험하다. 장치가 잘못된 주소에 DMA하면 커널이나 다른 프로세스 메모리를 망가뜨릴 수 있다. **IOMMU(Input-Output Memory Management Unit, 입출력 주소 변환 장치)**는 장치가 사용하는 주소를 실제 메모리 주소로 변환하고 접근 범위를 제한한다. **DMA 매핑(mapping)**은 드라이버가 “이 버퍼를 이 방향의 장치 전송에 사용한다”고 커널에 등록해 장치가 쓸 주소와 일관성 규칙을 얻는 과정이다. CPU 포인터 값을 그대로 장치에 넘긴다는 뜻이 아니다.
 
-## 10. top half, bottom half, softirq, threaded interrupt
+## 10. 인터럽트 일을 “즉시”와 “나중”으로 나누는 이유
 
-전통적인 설명에서 **top half**는 interrupt가 들어왔을 때 즉시 실행해야 하는 짧은 부분이고, **bottom half**는 나중에 처리해도 되는 일을 미룬 부분이다. Linux의 실제 기법에는 softirq, tasklet, workqueue, threaded interrupt 등이 있다.
+장치 인터럽트가 들어온 순간의 **하드 IRQ 문맥(hard IRQ context)**에서는 현재 실행 중이던 코드가 중단돼 있다. 여기서 오래 머물면 같은 CPU의 다른 작업과 추가 인터럽트 처리가 늦어진다. 반면 장치가 보낸 원인을 확인하거나 인터럽트를 확인했다는 **acknowledge(ack, 수신 확인)**를 하지 않으면 장치가 계속 알림을 보내거나 다음 작업을 진행하지 못할 수 있다. 그래서 꼭 필요한 일만 즉시 처리하고, 오래 걸릴 일은 나중 실행 경로로 넘긴다.
 
-| 방식 | 대략적 성격 | 주의점 |
-| --- | --- | --- |
-| hard IRQ handler | 매우 빠르게 원인 확인, 장치 ack, 후속 작업 예약 | 잠들 수 없는 context 제약 |
-| softirq | 네트워크 RX 등 지연 처리 경로 | CPU별 실행과 지연, PREEMPT_RT 차이 |
-| workqueue | kernel thread context에서 작업 실행 | 잠들 수 있지만 scheduling 지연 가능 |
-| threaded interrupt | interrupt 처리를 schedulable thread로 이동 | PREEMPT_RT와 일반 kernel 동작 차이 이해 필요 |
+전통적으로 즉시 처리 부분을 **top half(상반부)**, 미룬 부분을 **bottom half(하반부)**라고 부른다. 이는 설계 개념이고, 현재 Linux의 구체적인 실행 수단은 다음처럼 나뉜다.
 
-kernel.org generic IRQ 문서는 driver가 `request_threaded_irq()` 같은 API로 interrupt line을 요청하는 방식을 설명한다. PREEMPT_RT 문서는 forced threaded interrupt와 softirq 동작이 일반 kernel과 달라질 수 있음을 설명한다. 따라서 “softirq는 항상 preemption disabled다” 같은 문장은 커널 설정과 RT 여부를 무시한 과잉 일반화가 될 수 있다.
+| 실행 방식 | 누가 실행하는가 | 잠들 수 있는가 | 대표 역할 |
+| --- | --- | --- | --- |
+| hard IRQ handler(하드 인터럽트 처리기) | 인터럽트가 끊어 들어온 CPU가 즉시 실행 | 아니요 | 원인 확인, 장치 ack, 완료 정보 최소 수거, 후속 작업 예약 |
+| softirq(소프트 인터럽트) | 커널의 지연 처리 경로가 CPU별로 실행 | 일반적으로 잠드는 코드를 쓰지 않음 | 네트워크 수신처럼 양이 많고 빠른 후속 처리 |
+| workqueue(작업 대기열) | 커널 워커 스레드가 스케줄되어 실행 | 예 | 잠금 대기나 메모리 할당처럼 sleep 가능한 후속 작업 |
+| threaded IRQ(스레드형 인터럽트) | 해당 인터럽트용 커널 스레드가 실행 | 예 | 긴 장치 처리를 스케줄 가능한 문맥으로 이동 |
+
+여기서 **문맥(context)**은 “지금 어떤 실행 규칙과 권한 아래에서 코드가 도는가”를 뜻한다. 하드 IRQ 문맥은 일반 프로세스 문맥과 달리 잠들 수 없고, workqueue와 threaded IRQ는 커널 스레드 문맥이라 스케줄러가 다룰 수 있다.
+
+사건 흐름은 `장치 인터럽트 → hard IRQ에서 원인 확인·ack → softirq/workqueue/threaded IRQ 중 알맞은 경로 예약 → 미룬 작업 수행 → 기다리던 task 깨움`으로 읽는다. 모든 드라이버가 모든 단계를 쓰는 것은 아니다.
+
+**PREEMPT_RT(실시간 선점 설정)**는 커널의 긴 비선점 구간을 줄여 최악 지연을 낮추려는 구성이다. 이 구성에서는 많은 인터럽트 처리가 스레드화되고 softirq 실행 방식도 일반 커널과 달라질 수 있다. 따라서 “softirq는 언제나 선점 불가”처럼 설정을 무시한 문장은 피한다. kernel.org generic IRQ 문서는 드라이버가 `request_threaded_irq()`로 인터럽트와 스레드 처리 함수를 등록하는 방식을 설명한다.
 
 ## 11. 손으로 추적하는 예: `read()`가 blocking 되는 순간
 

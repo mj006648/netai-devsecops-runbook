@@ -6,9 +6,24 @@
 GPU utilization, achieved throughput, memory usage, TTFT, ITL, p99, goodput, cost per million tokens는 서로 다른 질문에 답한다.
 숫자 하나로 모든 것을 설명하려 하면 대부분 틀린다.
 
+**Utilization(사용률)**은 관측 구간 중 장치가 바빴다고 보고된 비율이고, **throughput(처리량)**은 단위 시간에 끝낸 요청·샘플·token 수다. **TTFT(Time To First Token)**는 요청 시작부터 첫 token까지, **ITL(Inter-Token Latency)**은 생성 token 사이의 지연이다. **Goodput(유효 처리량)**은 정한 품질과 SLO를 만족하며 끝난 처리량만 센다. `tokens/s`와 `requests/s`는 분모가 다르므로 같은 표에서 바꾸어 쓸 수 없다.
+
 여기서 계산하는 가격은 모두 가상의 숫자다.
 특정 cloud, GPU, vendor, 모델을 추천하지 않는다.
 목표는 비용 산식과 측정 경계를 익히는 것이다.
+
+## 숫자보다 먼저 측정 경계를 그린다
+
+```mermaid
+flowchart LR
+    L[고정: 모델·revision·dtype] --> W[고정: 입력/출력 길이·동시성]
+    W --> R[반복 실행 + warmup]
+    R --> M[측정: TTFT·ITL·throughput·오류]
+    M --> Q[SLO를 만족한 goodput]
+    Q --> C[비용/성공 요청 또는 비용/token]
+```
+
+가상의 시간당 비용이 8달러이고 한 시간에 720,000 token을 생성했지만 SLO를 만족한 token이 540,000개라면 raw 비용은 `8 ÷ 0.72 = 11.11달러/백만 token`, goodput 기준 비용은 `8 ÷ 0.54 = 14.81달러/백만 token`이다. 실패와 지연 초과를 분모에서 숨기면 운영자가 실제로 산 품질보다 싸게 보인다. 가격·전력·탄소 수치는 반드시 출처와 측정 시각을 붙인다.
 
 ## 핵심 용어
 

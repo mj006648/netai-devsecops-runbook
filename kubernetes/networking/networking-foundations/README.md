@@ -2,9 +2,31 @@
 
 [통합 학습 안내](../../../learning/README.md) · [Linux·커널](../../../linux/learning/linux-kernel/README.md) · [NIC·RDMA 하드웨어](../../../hardware/learning/server-hardware/06-networking-rdma.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
 
-**스위치, 라우터, 패킷이라는 말을 처음 듣는 사람**을 위한 교재다. 전기·빛으로 정보를 보내는 원리에서 시작해 프레임·주소·경로·연결·애플리케이션을 순서대로 설명한다. 이후 같은 패킷을 Linux 커널 안에서 추적하고, eBPF가 어느 지점에 어떤 역할로 들어가는지 연결한다. 마지막에는 Kubernetes와 Cilium을 배운다.
+**스위치, 라우터, 패킷이라는 말을 처음 듣는 사람**을 위한 교재다. 스위치(switch)는 같은 링크 영역에서 MAC 주소를 보고 frame을 전달하는 장비이고, 라우터(router)는 IP 주소와 routing table을 보고 서로 다른 network 사이로 packet을 전달하는 장비다. frame(프레임)은 한 링크에서 운반하는 묶음이고, packet(패킷)은 여러 network를 건너는 IP 계층의 묶음이다. 전기·빛으로 정보를 보내는 원리에서 시작해 주소·경로·연결·애플리케이션을 순서대로 설명한다. 이후 같은 packet을 Linux kernel(운영체제의 핵심부) 안에서 추적하고, eBPF가 어느 지점에 어떤 역할로 들어가는지 연결한다. 마지막에는 Kubernetes와 Cilium을 배운다. CNI(Container Network Interface)는 Pod의 interface·IP·route를 준비하기 위해 runtime이 network plugin을 호출하는 규격이다. Cilium(실리움)은 Kubernetes에서 Pod 연결·Service 변환·통신 정책·관측을 구현할 수 있는 CNI 제품이며, eBPF를 주요 데이터 경로 기술로 사용한다.
 
 목표는 제품 설정을 외우는 것이 아니다. **어떤 바이트를 누가 포장했고, 어느 주소를 보고 보냈으며, 어디에서 기다리거나 버렸고, 성공 응답이 무엇을 뜻하는지** 설명할 수 있어야 한다.
+
+처음 읽을 때는 모르는 약어를 전부 외우려 하지 않는다. 각 장에서 먼저 아래 네 질문에 답한 뒤 세부 필드로 내려간다.
+
+1. 이 계층은 바로 아래 계층만으로 해결하지 못한 어떤 문제 때문에 생겼는가?
+2. 입력으로 무엇을 받고, 어떤 header나 상태를 더해, 누구에게 넘기는가?
+3. 요청과 응답은 어느 경로를 지나며, hop마다 무엇이 바뀌는가?
+4. 관측한 성공은 어디까지의 성공이고, 아직 무엇은 증명하지 못했는가?
+
+```mermaid
+flowchart LR
+    A["00 신호·frame"] --> B["01 MAC·switch"]
+    B --> C["02 IP·route"]
+    C --> D["03 socket·TCP/UDP/QUIC"]
+    D --> E["04 DNS·TLS·HTTP"]
+    E --> F["05 Linux packet path"]
+    F --> G["06 eBPF·XDP·TC"]
+    G --> H["07 CNI·Cilium"]
+    H --> I["08 진단·안전 실습"]
+    I --> J["09 종합 설계"]
+```
+
+위 화살표는 “앞 장을 완벽히 암기해야 다음 장을 읽을 수 있다”는 뜻이 아니다. 뒤에서 막혔을 때 어떤 바닥 개념으로 돌아갈지 보여 주는 의존 지도다.
 
 ## 읽는 순서
 
@@ -38,6 +60,10 @@ PC A: 192.0.2.10/26
 ~~~
 
 물리적 선으로 이어진 그림만으로 정상 통신을 보장하지 않는다. VLAN, 링크 상태, 주소·경로, 필터 정책, 서비스 바인딩, 응답 경로까지 필요하다. 장마다 같은 그림에 하나씩 조건을 더해 무엇을 새로 알아야 하는지 살펴본다.
+
+![HTTP 데이터가 TCP, IP, Ethernet을 거쳐 물리 신호가 되고 수신 측에서 역순으로 풀리는 그림](assets/encapsulation-journey.svg)
+
+*그림 1. 같은 애플리케이션 byte가 계층마다 다른 이름과 header를 얻는다. router가 링크를 바꿀 때 Ethernet header는 새로 만들어진다.*
 
 ## 실습과 관측의 구별
 
