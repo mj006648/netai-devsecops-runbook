@@ -1,4 +1,4 @@
-"""Check the five textbooks and their diagrams without extra dependencies.
+"""Check the learning textbooks and their diagrams without extra dependencies.
 
 Reuses the existing AI lesson checker for tables, fences and code syntax.
 Python snippets run only with --run-python, in temporary working directories.

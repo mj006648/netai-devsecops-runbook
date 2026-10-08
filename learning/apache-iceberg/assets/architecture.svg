@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">Apache Iceberg의 엔진, 카탈로그, 객체 저장소 역할</title>
+  <desc id="desc">사용자의 SQL이 실행 엔진을 거쳐 카탈로그의 현재 메타데이터 위치를 찾고, 객체 저장소의 메타데이터와 데이터 파일을 읽는 전체 흐름. Iceberg는 별도 데이터베이스 서버가 아니라 이 세 영역을 연결하는 테이블 형식이다.</desc>
+  <defs>
+    <style>
+      text{font-family:'Noto Sans CJK KR','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;fill:#172033}.h1{font-size:30px;font-weight:800}.h2{font-size:22px;font-weight:800}.t{font-size:17px;font-weight:650}.s{font-size:14px}.xs{font-size:12px}.box{stroke-width:3;rx:18}.engine{fill:#e8f1ff;stroke:#1756a9}.catalog{fill:#fff2cc;stroke:#9a6500}.store{fill:#e6f7ed;stroke:#187647}.meta{fill:#f2eaff;stroke:#6941a5}.data{fill:#e4f7fa;stroke:#0b7385}.note{fill:#fff;stroke:#64748b;stroke-width:2}.arrow{fill:none;stroke:#263b59;stroke-width:3;marker-end:url(#arrow)}.dash{fill:none;stroke:#6941a5;stroke-width:3;stroke-dasharray:8 6;marker-end:url(#purple)}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#263b59"/></marker>
+    <marker id="purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#6941a5"/></marker>
+  </defs>
+  <rect width="1200" height="700" fill="#fff"/>
+  <text class="h1" x="600" y="45" text-anchor="middle">Iceberg는 “파일을 표처럼 읽는 규칙”이다</text>
+  <text class="s" x="600" y="72" text-anchor="middle">엔진·카탈로그·저장소가 역할을 나누며, Iceberg 자체가 쿼리 엔진이나 저장 서버로 실행되는 것은 아니다.</text>
+
+  <rect class="box engine" x="55" y="125" width="300" height="355"/>
+  <text class="h2" x="205" y="162" text-anchor="middle">① 실행 엔진</text>
+  <text class="s" x="205" y="188" text-anchor="middle">Spark · Flink · Trino 등</text>
+  <rect class="note" x="88" y="215" width="234" height="70" rx="12"/>
+  <text class="t" x="205" y="244" text-anchor="middle">SQL/작업 계획</text><text class="s" x="205" y="268" text-anchor="middle">필터·조인·쓰기 실행</text>
+  <rect class="note" x="88" y="307" width="234" height="70" rx="12"/>
+  <text class="t" x="205" y="336" text-anchor="middle">Iceberg 라이브러리</text><text class="s" x="205" y="360" text-anchor="middle">메타데이터를 해석·커밋</text>
+  <text class="s" x="205" y="414" text-anchor="middle">읽을 파일을 계획한 뒤</text><text class="s" x="205" y="437" text-anchor="middle">필요한 파일만 저장소에서 읽는다.</text>
+
+  <rect class="box catalog" x="450" y="125" width="300" height="215"/>
+  <text class="h2" x="600" y="162" text-anchor="middle">② 카탈로그</text>
+  <text class="s" x="600" y="188" text-anchor="middle">REST · Hive · Glue · JDBC · Nessie 등</text>
+  <rect class="note" x="485" y="213" width="230" height="78" rx="12"/>
+  <text class="s" x="600" y="243" text-anchor="middle">sales → metadata/v42.json</text>
+  <text class="s" x="600" y="270" text-anchor="middle">현재 테이블 메타데이터 위치</text>
+  <text class="xs" x="600" y="319" text-anchor="middle">원자적 포인터 교체(CAS)가 동시 커밋의 관문</text>
+
+  <rect class="box store" x="845" y="125" width="300" height="355"/>
+  <text class="h2" x="995" y="162" text-anchor="middle">③ 객체/파일 저장소</text>
+  <text class="s" x="995" y="188" text-anchor="middle">S3 · ADLS · GCS · HDFS 등</text>
+  <rect class="meta" x="880" y="215" width="230" height="96" rx="12"/>
+  <text class="t" x="995" y="245" text-anchor="middle">메타데이터 계층</text>
+  <text class="s" x="995" y="270" text-anchor="middle">JSON · manifest list · manifest</text>
+  <text class="s" x="995" y="293" text-anchor="middle">통계·스냅샷·파일 목록</text>
+  <rect class="data" x="880" y="334" width="230" height="96" rx="12"/>
+  <text class="t" x="995" y="364" text-anchor="middle">콘텐츠 파일</text>
+  <text class="s" x="995" y="389" text-anchor="middle">Parquet/ORC/Avro 데이터</text>
+  <text class="s" x="995" y="412" text-anchor="middle">delete 파일 · Puffin 통계</text>
+
+  <path class="arrow" d="M355 230 H450"/><text class="s" x="402" y="215" text-anchor="middle">현재 위치 조회</text>
+  <path class="arrow" d="M750 270 H845"/><text class="s" x="797" y="254" text-anchor="middle">URI</text>
+  <path class="dash" d="M845 363 C690 430 515 430 355 363"/><text class="s" x="600" y="446" text-anchor="middle">메타데이터로 파일을 선별 → 데이터 읽기/쓰기</text>
+
+  <rect class="note" x="55" y="530" width="1090" height="112" rx="16"/>
+  <text class="t" x="80" y="562">읽기 한 바퀴</text>
+  <text class="s" x="80" y="590">1) 엔진이 카탈로그에 현재 metadata.json 위치를 묻는다.  2) JSON → 스냅샷 → manifest를 따라가며 필요한 파일을 고른다.</text>
+  <text class="s" x="80" y="615">3) 저장소에서 그 파일만 읽는다. 쓰기는 새 파일과 새 메타데이터를 만든 뒤, 마지막에 카탈로그 포인터를 원자적으로 교체한다.</text>
+  <text class="xs" x="600" y="675" text-anchor="middle">핵심: 카탈로그는 보통 데이터 전체가 아니라 “현재 메타데이터 파일의 위치”를 관리한다.</text>
+</svg>
