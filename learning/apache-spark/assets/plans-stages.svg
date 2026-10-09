@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Spark: 코드에서 계획·stage·task로</title>
+<desc id="desc">코드 표현, 실행 요청, 최적화 계획, 분산 실행 단위를 구분한다. 논리 계획은 업무 의미, 물리 계획은 실행 방법이다. Job·stage·task는 같은 단어가 아니다. stage 수·task 수·job 수는 실제 실행 계획과 action을 보고 판단한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Spark: 코드에서 계획·stage·task로</text>
+<text x="40" y="92" font-size="17" fill="#475569">코드 표현, 실행 요청, 최적화 계획, 분산 실행 단위를 구분한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. 사용자 표현</text>
+<text x="60" y="218" font-size="17" fill="#334155">filter · groupBy · join</text>
+<text x="60" y="242" font-size="17" fill="#334155">무엇을 계산할지 연산을 연결한다.</text>
+<text x="60" y="266" font-size="17" fill="#334155">보통 transformation만으로 계산하지 않는다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. 논리 계획</text>
+<text x="680" y="218" font-size="17" fill="#334155">열·타입·관계와 연산의 의미</text>
+<text x="680" y="242" font-size="17" fill="#334155">분석과 Catalyst 최적화</text>
+<text x="680" y="266" font-size="17" fill="#334155">스키마 확인 등 준비 I/O는 가능하다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Action</text>
+<text x="60" y="448" font-size="17" fill="#334155">show · count · collect · write</text>
+<text x="60" y="472" font-size="17" fill="#334155">필요한 결과 계산을 요청한다.</text>
+<text x="60" y="496" font-size="17" fill="#334155">action 하나가 항상 job 하나는 아니다.</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. 물리 계획</text>
+<text x="680" y="448" font-size="17" fill="#334155">HashAggregate · Join · Exchange</text>
+<text x="680" y="472" font-size="17" fill="#334155">구체적인 계산 방식과 데이터 이동</text>
+<text x="680" y="496" font-size="17" fill="#334155">AQE가 실행 중 계획을 조정할 수 있다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Stage: shuffle 이전</text>
+<text x="60" y="678" font-size="17" fill="#334155">partition별 filter·부분 집계</text>
+<text x="60" y="702" font-size="17" fill="#334155">각 task가 한 partition의 작업을 맡는다.</text>
+<text x="60" y="726" font-size="17" fill="#334155">task들은 executor에서 실행된다.</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Stage: shuffle 이후</text>
+<text x="680" y="678" font-size="17" fill="#334155">같은 키의 데이터를 모아 최종 집계</text>
+<text x="680" y="702" font-size="17" fill="#334155">보통 shuffle 경계가 stage를 나눈다.</text>
+<text x="680" y="726" font-size="17" fill="#334155">task 수는 그 stage의 분할에 대응한다.</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">표현</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">계획 선택</text>
+<path d="M 540 455 L 660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">실행 요청</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">job 실행</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">shuffle</text>
+<text x="40" y="815" font-size="16" fill="#475569">논리 계획은 업무 의미, 물리 계획은 실행 방법이다. Job·stage·task는 같은 단어가 아니다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">stage 수·task 수·job 수는 실제 실행 계획과 action을 보고 판단한다.</text>
+</g>
+</svg>

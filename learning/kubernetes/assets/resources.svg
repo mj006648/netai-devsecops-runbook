@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Requests·limits: 배치 판단과 실행 제한</title>
+<desc id="desc">숫자 예시: allocatable CPU 4 core인 node에 CPU request 1 core의 Pod를 배치한다. request 1 core Pod 네 개라는 단순 계산은 다른 자원·기존 Pod·제약이 없다는 교육용 가정이다. limit만 지정하면 admission 기본값 등의 조건에 따라 request가 limit 값으로 정해질 수 있다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Requests·limits: 배치 판단과 실행 제한</text>
+<text x="40" y="92" font-size="17" fill="#475569">숫자 예시: allocatable CPU 4 core인 node에 CPU request 1 core의 Pod를 배치한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Node allocatable</text>
+<text x="60" y="218" font-size="17" fill="#334155">capacity에서 예약 등 제외한 실행 가능량</text>
+<text x="60" y="242" font-size="17" fill="#334155">예: CPU 4 core, RAM 8 GiB</text>
+<text x="60" y="266" font-size="17" fill="#334155">실시간 여유 사용률과 같은 값은 아니다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Pod·container requests</text>
+<text x="680" y="218" font-size="17" fill="#334155">예: CPU 1 core, memory 1 GiB</text>
+<text x="680" y="242" font-size="17" fill="#334155">scheduler가 배치 판단에 사용</text>
+<text x="680" y="266" font-size="17" fill="#334155">init·overhead·Pod 자원 조건도 고려</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Scheduler·배치 제약</text>
+<text x="60" y="448" font-size="17" fill="#334155">요청 합계와 node 적합성 검토</text>
+<text x="60" y="472" font-size="17" fill="#334155">affinity·taint/toleration·volume 제약</text>
+<text x="60" y="496" font-size="17" fill="#334155">조건이 안 맞으면 Pending 가능</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. CPU limit</text>
+<text x="680" y="448" font-size="17" fill="#334155">예: 2 core의 사용 상한</text>
+<text x="680" y="472" font-size="17" fill="#334155">CPU는 초과 사용 때 throttling 가능</text>
+<text x="680" y="496" font-size="17" fill="#334155">request를 정했다고 항상 전용 core는 아님</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Memory limit</text>
+<text x="60" y="678" font-size="17" fill="#334155">예: 2 GiB의 container 제한</text>
+<text x="60" y="702" font-size="17" fill="#334155">메모리 초과는 OOM 종료 가능</text>
+<text x="60" y="726" font-size="17" fill="#334155">Pod eviction과 container OOM을 구분</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Spark executor 적용</text>
+<text x="680" y="678" font-size="17" fill="#334155">JVM heap 외 native·Python도 사용</text>
+<text x="680" y="702" font-size="17" fill="#334155">memory overhead와 Pod 제한을 연결</text>
+<text x="680" y="726" font-size="17" fill="#334155">CPU request·limit과 task 동시성은 별도</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">배치 입력</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">가용량</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">실행 설정</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">배치 후</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">CPU 조건</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">메모리 조건</text>
+<text x="40" y="815" font-size="16" fill="#475569">request 1 core Pod 네 개라는 단순 계산은 다른 자원·기존 Pod·제약이 없다는 교육용 가정이다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">limit만 지정하면 admission 기본값 등의 조건에 따라 request가 limit 값으로 정해질 수 있다.</text>
+</g>
+</svg>

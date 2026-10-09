@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Pod: 같이 배치되는 container의 실행 단위</title>
+<desc id="desc">아래 app과 sidecar는 한 Pod의 교육용 예시다. 모든 Pod에 sidecar가 필요한 것은 아니다. 실제 container와 volume 수는 Pod spec에 따른다. Pod 하나가 반드시 container 하나는 아니다. emptyDir는 container 재시작을 견딜 수 있지만 Pod가 삭제·교체되면 그 내용이 사라진다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Pod: 같이 배치되는 container의 실행 단위</text>
+<text x="40" y="92" font-size="17" fill="#475569">아래 app과 sidecar는 한 Pod의 교육용 예시다. 모든 Pod에 sidecar가 필요한 것은 아니다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Pod spec·identity</text>
+<text x="60" y="218" font-size="17" fill="#334155">Namespace·name·UID·labels</text>
+<text x="60" y="242" font-size="17" fill="#334155">같은 Pod의 container는 같은 node에 배치</text>
+<text x="60" y="266" font-size="17" fill="#334155">Pod 교체와 container 재시작은 다르다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Pod network</text>
+<text x="680" y="218" font-size="17" fill="#334155">일반적인 Pod는 하나의 network 공간</text>
+<text x="680" y="242" font-size="17" fill="#334155">container끼리 localhost 통신 가능</text>
+<text x="680" y="266" font-size="17" fill="#334155">같은 Pod의 포트는 충돌하지 않게 설계</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. App container</text>
+<text x="60" y="448" font-size="17" fill="#334155">자기 image·process·filesystem</text>
+<text x="60" y="472" font-size="17" fill="#334155">자기 resources·probe 설정</text>
+<text x="60" y="496" font-size="17" fill="#334155">container마다 별도 root filesystem</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Sidecar container</text>
+<text x="680" y="448" font-size="17" fill="#334155">proxy·로그·보조 역할 예시</text>
+<text x="680" y="472" font-size="17" fill="#334155">같은 Pod IP와 lifecycle에 연결</text>
+<text x="680" y="496" font-size="17" fill="#334155">main process와 역할을 명확히 나눈다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Pod volume</text>
+<text x="60" y="678" font-size="17" fill="#334155">mount한 container가 데이터를 공유</text>
+<text x="60" y="702" font-size="17" fill="#334155">emptyDir: Pod 유지 동안 존재</text>
+<text x="60" y="726" font-size="17" fill="#334155">container root filesystem과 다른 공간</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Namespace·접근 정책</text>
+<text x="680" y="678" font-size="17" fill="#334155">객체 이름과 API 권한의 범위</text>
+<text x="680" y="702" font-size="17" fill="#334155">Namespace만으로 network 완전 격리 아님</text>
+<text x="680" y="726" font-size="17" fill="#334155">RBAC·NetworkPolicy·보안 정책 별도</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">Pod 속성</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">함께 배치</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">같은 IP</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">mount</text>
+<path d="M 910 540 L 910 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="612.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">공유 mount</text>
+<text x="40" y="815" font-size="16" fill="#475569">실제 container와 volume 수는 Pod spec에 따른다. Pod 하나가 반드시 container 하나는 아니다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">emptyDir는 container 재시작을 견딜 수 있지만 Pod가 삭제·교체되면 그 내용이 사라진다.</text>
+</g>
+</svg>

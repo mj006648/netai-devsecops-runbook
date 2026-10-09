@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">RBAC: 누구에게 어떤 API 작업을 허용할까</title>
+<desc id="desc">인증으로 identity를 정하고, 인가로 그 identity의 요청을 허용할지 판단한다. Spark driver가 executor Pod를 생성하려면 사용한 namespace와 API 동작에 맞는 ServiceAccount 권한이 필요하다. Secret의 저장 암호화·전달·노출 방지와 image·process 권한은 각각 실제 설정으로 확인한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">RBAC: 누구에게 어떤 API 작업을 허용할까</text>
+<text x="40" y="92" font-size="17" fill="#475569">인증으로 identity를 정하고, 인가로 그 identity의 요청을 허용할지 판단한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Identity·인증</text>
+<text x="60" y="218" font-size="17" fill="#334155">사용자·ServiceAccount 등</text>
+<text x="60" y="242" font-size="17" fill="#334155">token·인증서 등으로 identity 확인</text>
+<text x="60" y="266" font-size="17" fill="#334155">ServiceAccount는 namespace 소속</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. API 요청</text>
+<text x="680" y="218" font-size="17" fill="#334155">예: pods create in research</text>
+<text x="680" y="242" font-size="17" fill="#334155">API group·resource·verb·namespace</text>
+<text x="680" y="266" font-size="17" fill="#334155">container 내부 Linux 권한과 다른 층</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Role·ClusterRole</text>
+<text x="60" y="448" font-size="17" fill="#334155">허용할 resource·verb를 정의</text>
+<text x="60" y="472" font-size="17" fill="#334155">Role은 namespace 범위</text>
+<text x="60" y="496" font-size="17" fill="#334155">ClusterRole은 다양한 binding 범위에 사용</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. RoleBinding 등</text>
+<text x="680" y="448" font-size="17" fill="#334155">권한 묶음과 subject를 연결</text>
+<text x="680" y="472" font-size="17" fill="#334155">RoleBinding은 namespace에서 적용</text>
+<text x="680" y="496" font-size="17" fill="#334155">권한 정의만으로 자동 부여되지 않음</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 인가 결정</text>
+<text x="60" y="678" font-size="17" fill="#334155">요청 identity와 binding·rule 확인</text>
+<text x="60" y="702" font-size="17" fill="#334155">필요한 최소 권한으로 구성</text>
+<text x="60" y="726" font-size="17" fill="#334155">kubectl auth can-i로 특정 요청 확인</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Pod 실행 보안·Secret</text>
+<text x="680" y="678" font-size="17" fill="#334155">securityContext·admission·network</text>
+<text x="680" y="702" font-size="17" fill="#334155">Secret base64는 암호화가 아니다.</text>
+<text x="680" y="726" font-size="17" fill="#334155">RBAC만으로 모든 runtime 보안 완성 아님</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">요청</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">subject</text>
+<path d="M 540 455 L 660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">권한 연결</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">범위</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">rule 평가</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">실행 조건</text>
+<text x="40" y="815" font-size="16" fill="#475569">Spark driver가 executor Pod를 생성하려면 사용한 namespace와 API 동작에 맞는 ServiceAccount 권한이 필요하다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Secret의 저장 암호화·전달·노출 방지와 image·process 권한은 각각 실제 설정으로 확인한다.</text>
+</g>
+</svg>

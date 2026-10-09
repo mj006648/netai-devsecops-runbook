@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">연구 데이터: 적재에서 학습·실험까지</title>
+<desc id="desc">NetAI·센서 연구에 연결하는 교육용 설계다. 현재 연구실의 실제 배포·성능을 나타내지 않는다. 처리량이 작으면 단일 프로세스도 대안이다. 분산 준비 비용과 결과 검증을 함께 측정한다. 테이블 snapshot·Spark 실행 계획·Kubernetes 자원은 다른 기록이며 함께 남겨야 원인을 비교할 수 있다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">연구 데이터: 적재에서 학습·실험까지</text>
+<text x="40" y="92" font-size="17" fill="#475569">NetAI·센서 연구에 연결하는 교육용 설계다. 현재 연구실의 실제 배포·성능을 나타내지 않는다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Raw 입력·Bronze</text>
+<text x="60" y="218" font-size="17" fill="#334155">원본 값·event_id·수집 시각</text>
+<text x="60" y="242" font-size="17" fill="#334155">입력 위치와 schema version 기록</text>
+<text x="60" y="266" font-size="17" fill="#334155">원본 보존 범위와 민감정보 정책 결정</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. 정제·Silver</text>
+<text x="680" y="218" font-size="17" fill="#334155">결측·범위·중복·시간 기준</text>
+<text x="680" y="242" font-size="17" fill="#334155">Spark가 명시한 업무 규칙 실행</text>
+<text x="680" y="266" font-size="17" fill="#334155">제외한 행과 원인을 기록할 수 있다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Iceberg snapshot</text>
+<text x="60" y="448" font-size="17" fill="#334155">테이블의 일관된 시점 참조</text>
+<text x="60" y="472" font-size="17" fill="#334155">snapshot ID·schema·partition 이력</text>
+<text x="60" y="496" font-size="17" fill="#334155">file 이름만으로 연구 입력을 고정하지 않음</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Feature·Gold</text>
+<text x="680" y="448" font-size="17" fill="#334155">window·join·집계·특징 물리화</text>
+<text x="680" y="472" font-size="17" fill="#334155">미래 값이 과거 feature에 섞이지 않도록</text>
+<text x="680" y="496" font-size="17" fill="#334155">train·validation·test 분리 기준 기록</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 학습·평가</text>
+<text x="60" y="678" font-size="17" fill="#334155">Spark 전처리와 학습 runtime 구분</text>
+<text x="60" y="702" font-size="17" fill="#334155">모델·feature·입력 snapshot·seed</text>
+<text x="60" y="726" font-size="17" fill="#334155">지표와 재실행 결과를 함께 비교</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. 실험 실행 기록</text>
+<text x="680" y="678" font-size="17" fill="#334155">코드·버전·image digest·자원·설정</text>
+<text x="680" y="702" font-size="17" fill="#334155">시간·shuffle·spill·실패·출력 검증</text>
+<text x="680" y="726" font-size="17" fill="#334155">실측과 예상값·교육 예시를 구분</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">정제</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">입력 고정</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">계산</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">재현 입력</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">실험 기록</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">평가 기록</text>
+<text x="40" y="815" font-size="16" fill="#475569">처리량이 작으면 단일 프로세스도 대안이다. 분산 준비 비용과 결과 검증을 함께 측정한다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">테이블 snapshot·Spark 실행 계획·Kubernetes 자원은 다른 기록이며 함께 남겨야 원인을 비교할 수 있다.</text>
+</g>
+</svg>

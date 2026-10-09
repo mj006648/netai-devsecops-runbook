@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Kubernetes: 원하는 상태에서 노드 실행까지</title>
+<desc id="desc">화살표는 API 요청·제어·실행 보고 관계다. API server가 container를 직접 실행하지 않는다. Controller·scheduler도 API server를 통해 상태를 읽고 변경한다. 사용자가 이들에 직접 배포하지 않는다. Spark SQL 결과·Iceberg 커밋·DB backup은 Kubernetes reconciliation만으로 보장되지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Kubernetes: 원하는 상태에서 노드 실행까지</text>
+<text x="40" y="92" font-size="17" fill="#475569">화살표는 API 요청·제어·실행 보고 관계다. API server가 container를 직접 실행하지 않는다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. 사용자·kubectl</text>
+<text x="60" y="218" font-size="17" fill="#334155">YAML spec으로 원하는 상태 제출</text>
+<text x="60" y="242" font-size="17" fill="#334155">인증·인가를 거쳐 API 요청</text>
+<text x="60" y="266" font-size="17" fill="#334155">파일 작성과 apply 실행은 다른 작업</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. API server·etcd</text>
+<text x="680" y="218" font-size="17" fill="#334155">요청 검증·Kubernetes 객체 저장</text>
+<text x="680" y="242" font-size="17" fill="#334155">etcd는 control plane 상태 저장소</text>
+<text x="680" y="266" font-size="17" fill="#334155">업무 데이터의 자동 백업 저장소가 아니다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Controller·scheduler</text>
+<text x="60" y="448" font-size="17" fill="#334155">controller: 목표와 실제를 비교</text>
+<text x="60" y="472" font-size="17" fill="#334155">scheduler: 미배치 Pod의 노드 선택</text>
+<text x="60" y="496" font-size="17" fill="#334155">노드 allocatable·request·제약 고려</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Node: kubelet·runtime</text>
+<text x="680" y="448" font-size="17" fill="#334155">배치된 Pod spec을 보고 container 실행</text>
+<text x="680" y="472" font-size="17" fill="#334155">CRI runtime·image·volume·상태 보고</text>
+<text x="680" y="496" font-size="17" fill="#334155">container 실행과 task 계산은 별도 층</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Pod·Service·저장소</text>
+<text x="60" y="678" font-size="17" fill="#334155">Pod IP와 container·volume</text>
+<text x="60" y="702" font-size="17" fill="#334155">Service는 대상과 접속 이름을 연결</text>
+<text x="60" y="726" font-size="17" fill="#334155">데이터 지속성은 volume 종류에 의존</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. CNI·CSI 등 구현</text>
+<text x="680" y="678" font-size="17" fill="#334155">CNI: Pod network 구현</text>
+<text x="680" y="702" font-size="17" fill="#334155">CSI: storage driver 연동</text>
+<text x="680" y="726" font-size="17" fill="#334155">API 객체와 실제 제공 능력을 함께 확인</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">API</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">Pod 상태</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">선언 결과</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">제어·배치</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">연동</text>
+<text x="40" y="815" font-size="16" fill="#475569">Controller·scheduler도 API server를 통해 상태를 읽고 변경한다. 사용자가 이들에 직접 배포하지 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Spark SQL 결과·Iceberg 커밋·DB backup은 Kubernetes reconciliation만으로 보장되지 않는다.</text>
+</g>
+</svg>

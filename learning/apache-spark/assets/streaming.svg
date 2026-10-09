@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Structured Streaming: 입력·진행·state·출력</title>
+<desc id="desc">기본 micro-batch 예시: 끝없는 입력을 작은 배치로 처리하고 복구 정보를 기록한다. Checkpoint만 존재한다고 외부 HTTP 요청·DB 쓰기가 모두 exactly-once가 되지는 않는다. 이 그림은 micro-batch 설명이다. continuous·real-time 등 별도 모드는 지원 범위를 확인한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Structured Streaming: 입력·진행·state·출력</text>
+<text x="40" y="92" font-size="17" fill="#475569">기본 micro-batch 예시: 끝없는 입력을 작은 배치로 처리하고 복구 정보를 기록한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Source</text>
+<text x="60" y="218" font-size="17" fill="#334155">파일·Kafka·rate 등</text>
+<text x="60" y="242" font-size="17" fill="#334155">offset과 재읽기 능력은 source마다 다르다.</text>
+<text x="60" y="266" font-size="17" fill="#334155">event time과 수신 시간은 다를 수 있다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Micro-batch 실행</text>
+<text x="680" y="218" font-size="17" fill="#334155">trigger에 따라 입력 범위를 정한다.</text>
+<text x="680" y="242" font-size="17" fill="#334155">DataFrame 연산을 분산 실행</text>
+<text x="680" y="266" font-size="17" fill="#334155">배치 경계가 업무 transaction은 아니다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Checkpoint</text>
+<text x="60" y="448" font-size="17" fill="#334155">query 진행·offset·commit·state 정보</text>
+<text x="60" y="472" font-size="17" fill="#334155">재시작하려면 지속 경로 필요</text>
+<text x="60" y="496" font-size="17" fill="#334155">출력 데이터의 백업과는 다르다.</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Window·state·watermark</text>
+<text x="680" y="448" font-size="17" fill="#334155">집계와 join에 유지하는 상태</text>
+<text x="680" y="472" font-size="17" fill="#334155">watermark는 늦은 데이터 처리 기준</text>
+<text x="680" y="496" font-size="17" fill="#334155">모든 늦은 행을 언제나 보존하지 않는다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 재시작과 재처리</text>
+<text x="60" y="678" font-size="17" fill="#334155">호환되는 query·source·state 조건</text>
+<text x="60" y="702" font-size="17" fill="#334155">일부 batch는 다시 처리될 수 있다.</text>
+<text x="60" y="726" font-size="17" fill="#334155">checkpoint 삭제는 새로운 진행 상태</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Sink와 업무 결과</text>
+<text x="680" y="678" font-size="17" fill="#334155">sink의 commit·중복 제거 능력</text>
+<text x="680" y="702" font-size="17" fill="#334155">foreachBatch는 기본 at-least-once</text>
+<text x="680" y="726" font-size="17" fill="#334155">end-to-end 보장은 전체 조합으로 판단</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">입력 범위</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">offset 기록</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">상태 계산</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">복구</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">출력</text>
+<text x="40" y="815" font-size="16" fill="#475569">Checkpoint만 존재한다고 외부 HTTP 요청·DB 쓰기가 모두 exactly-once가 되지는 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">이 그림은 micro-batch 설명이다. continuous·real-time 등 별도 모드는 지원 범위를 확인한다.</text>
+</g>
+</svg>

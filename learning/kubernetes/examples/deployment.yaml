@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: textbook-web
+  namespace: netai-textbook
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: textbook-web
+  template:
+    metadata:
+      labels:
+        app: textbook-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.28.0
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: COURSE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: lab-settings
+                  key: COURSE_NAME
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10

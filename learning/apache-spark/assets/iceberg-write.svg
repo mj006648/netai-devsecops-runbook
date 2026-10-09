@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Spark와 Iceberg: 계산·파일·테이블 커밋</title>
+<desc id="desc">DELETE·UPDATE의 업무 조건, 엔진의 쓰기 전략, 테이블 포맷의 지원은 서로 다른 층이다. COW와 MOR은 작업 전략 대안이다. 엔진·연산·포맷 버전별 지원과 설정을 확인한다. Puffin은 v3 deletion vector blob을 담는 공식 컨테이너 포맷이며 Parquet data file의 대체가 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Spark와 Iceberg: 계산·파일·테이블 커밋</text>
+<text x="40" y="92" font-size="17" fill="#475569">DELETE·UPDATE의 업무 조건, 엔진의 쓰기 전략, 테이블 포맷의 지원은 서로 다른 층이다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Spark SQL·DataFrame</text>
+<text x="60" y="218" font-size="17" fill="#334155">읽기·집계·INSERT·DELETE·MERGE</text>
+<text x="60" y="242" font-size="17" fill="#334155">사용자는 조건과 작업을 표현한다.</text>
+<text x="60" y="266" font-size="17" fill="#334155">equality 조건이 equality delete file은 아니다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. 계획·확장·Catalog</text>
+<text x="680" y="218" font-size="17" fill="#334155">호환되는 Iceberg runtime 필요</text>
+<text x="680" y="242" font-size="17" fill="#334155">table metadata를 해석해 작업 계획</text>
+<text x="680" y="266" font-size="17" fill="#334155">Spark·Scala·Iceberg 버전을 함께 고정</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. COW: 데이터 파일 재작성</text>
+<text x="60" y="448" font-size="17" fill="#334155">영향받은 파일의 유효 행으로 새 파일</text>
+<text x="60" y="472" font-size="17" fill="#334155">작업 이후 읽기는 새 data file 사용</text>
+<text x="60" y="496" font-size="17" fill="#334155">이전 snapshot 참조 파일은 즉시 삭제 아님</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. MOR: 삭제 정보와 새 데이터</text>
+<text x="680" y="448" font-size="17" fill="#334155">읽을 때 적용해야 할 삭제 정보를 작성</text>
+<text x="680" y="472" font-size="17" fill="#334155">v2 position/equality delete 지원 조건</text>
+<text x="680" y="496" font-size="17" fill="#334155">v3 position 삭제는 DV 표현 사용</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 새 파일·metadata·snapshot</text>
+<text x="60" y="678" font-size="17" fill="#334155">새 테이블 상태의 참조를 구성</text>
+<text x="60" y="702" font-size="17" fill="#334155">작업별 COW/MOR 설정과 엔진 지원 확인</text>
+<text x="60" y="726" font-size="17" fill="#334155">같은 테이블에 여러 쓰기 이력 가능</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Catalog commit·reader</text>
+<text x="680" y="678" font-size="17" fill="#334155">원자적인 metadata pointer 갱신</text>
+<text x="680" y="702" font-size="17" fill="#334155">reader는 snapshot과 적용 조건을 따른다.</text>
+<text x="680" y="726" font-size="17" fill="#334155">실패·충돌·commit unknown은 따로 판단</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">해석</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">COW 예</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">MOR 예</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">새 상태</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">새 상태</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">commit</text>
+<text x="40" y="815" font-size="16" fill="#475569">COW와 MOR은 작업 전략 대안이다. 엔진·연산·포맷 버전별 지원과 설정을 확인한다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Puffin은 v3 deletion vector blob을 담는 공식 컨테이너 포맷이며 Parquet data file의 대체가 아니다.</text>
+</g>
+</svg>

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Volume·PVC·PV: 실행 수명과 저장 수명</title>
+<desc id="desc">지속 volume은 Pod 교체 후에도 데이터가 남도록 연결할 수 있지만 backup과 같은 개념은 아니다. 일반적인 access mode는 지원 저장소와 실제 attach 조건을 함께 봐야 한다. PVC·PV·snapshot 존재만으로 장애 시 복구가 검증된 backup이 되는 것은 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Volume·PVC·PV: 실행 수명과 저장 수명</text>
+<text x="40" y="92" font-size="17" fill="#475569">지속 volume은 Pod 교체 후에도 데이터가 남도록 연결할 수 있지만 backup과 같은 개념은 아니다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Container·Pod</text>
+<text x="60" y="218" font-size="17" fill="#334155">container root filesystem은 임시 성격</text>
+<text x="60" y="242" font-size="17" fill="#334155">Pod spec에서 volume을 참조</text>
+<text x="60" y="266" font-size="17" fill="#334155">경로 mount와 데이터 소유를 구분</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. PVC: 저장소 요청</text>
+<text x="680" y="218" font-size="17" fill="#334155">크기·access mode·StorageClass</text>
+<text x="680" y="242" font-size="17" fill="#334155">Namespace에 속한 요청 객체</text>
+<text x="680" y="266" font-size="17" fill="#334155">PV와 binding되는 조건을 확인</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. emptyDir</text>
+<text x="60" y="448" font-size="17" fill="#334155">Pod에 종속되는 임시 volume</text>
+<text x="60" y="472" font-size="17" fill="#334155">container 재시작 때 유지 가능</text>
+<text x="60" y="496" font-size="17" fill="#334155">Pod 삭제 시 데이터 소멸</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. PV·StorageClass·CSI</text>
+<text x="680" y="448" font-size="17" fill="#334155">PV: 실제 저장 자원을 나타내는 객체</text>
+<text x="680" y="472" font-size="17" fill="#334155">동적 생성은 provisioner·class 조건</text>
+<text x="680" y="496" font-size="17" fill="#334155">CSI driver가 storage와 연동</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 지속 데이터·새 Pod</text>
+<text x="60" y="678" font-size="17" fill="#334155">같은 claim을 조건에 맞게 재연결</text>
+<text x="60" y="702" font-size="17" fill="#334155">zone·attach·access mode 제약 가능</text>
+<text x="60" y="726" font-size="17" fill="#334155">앱 수준 일관성과 backup은 별도</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Reclaim policy</text>
+<text x="680" y="678" font-size="17" fill="#334155">Delete: backing storage 삭제 가능</text>
+<text x="680" y="702" font-size="17" fill="#334155">Retain: 해제 후 수동 관리 필요</text>
+<text x="680" y="726" font-size="17" fill="#334155">PVC 삭제와 저장소 정리의 관계 확인</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">claim 참조</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">임시 volume</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">binding</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">해제 정책</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">보존 판단</text>
+<text x="40" y="815" font-size="16" fill="#475569">일반적인 access mode는 지원 저장소와 실제 attach 조건을 함께 봐야 한다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">PVC·PV·snapshot 존재만으로 장애 시 복구가 검증된 backup이 되는 것은 아니다.</text>
+</g>
+</svg>

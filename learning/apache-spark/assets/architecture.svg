@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Spark: 계산을 계획하고 나누어 실행하기</title>
+<desc id="desc">화살표는 자원 요청·task 전달·데이터 읽기 또는 Python 실행 관계를 나타낸다. 개념도: 실제 executor 수·노드 수·프로세스 배치는 실행 모드와 설정에 따라 달라진다. Cluster manager가 Spark의 join 전략이나 Iceberg COW/MOR 의미를 대신 결정하지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Spark: 계산을 계획하고 나누어 실행하기</text>
+<text x="40" y="92" font-size="17" fill="#475569">화살표는 자원 요청·task 전달·데이터 읽기 또는 Python 실행 관계를 나타낸다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Driver</text>
+<text x="60" y="218" font-size="17" fill="#334155">사용자 코드·SparkSession</text>
+<text x="60" y="242" font-size="17" fill="#334155">계획을 만들고 task를 배치한다.</text>
+<text x="60" y="266" font-size="17" fill="#334155">큰 collect 결과는 driver에 모인다.</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Cluster manager</text>
+<text x="680" y="218" font-size="17" fill="#334155">Standalone · YARN · Kubernetes</text>
+<text x="680" y="242" font-size="17" fill="#334155">CPU·메모리와 프로세스 실행 자원 관리</text>
+<text x="680" y="266" font-size="17" fill="#334155">SQL 의미를 정하는 역할은 아니다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Executor A</text>
+<text x="60" y="448" font-size="17" fill="#334155">여러 task를 실행하는 프로세스</text>
+<text x="60" y="472" font-size="17" fill="#334155">partition 읽기·계산·shuffle·cache</text>
+<text x="60" y="496" font-size="17" fill="#334155">한 executor가 여러 task를 맡을 수 있다.</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Executor B</text>
+<text x="680" y="448" font-size="17" fill="#334155">다른 partition과 task 실행</text>
+<text x="680" y="472" font-size="17" fill="#334155">task 실패와 executor 손실은 다르다.</text>
+<text x="680" y="496" font-size="17" fill="#334155">local 모드에서는 구조가 축약된다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 데이터 저장소</text>
+<text x="60" y="678" font-size="17" fill="#334155">Parquet 파일 · Iceberg 테이블 등</text>
+<text x="60" y="702" font-size="17" fill="#334155">여러 executor가 같은 저장소를 읽는다.</text>
+<text x="60" y="726" font-size="17" fill="#334155">테이블 상태와 계산 엔진은 별도다.</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Python worker</text>
+<text x="680" y="678" font-size="17" fill="#334155">Python UDF 등에 필요한 별도 프로세스</text>
+<text x="680" y="702" font-size="17" fill="#334155">모든 SQL 연산이 Python을 통하지 않는다.</text>
+<text x="680" y="726" font-size="17" fill="#334155">Python 메모리도 container 사용량에 포함</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">자원 요청</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">task 전달</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">자원 할당</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">읽기·쓰기</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">필요할 때</text>
+<text x="40" y="815" font-size="16" fill="#475569">개념도: 실제 executor 수·노드 수·프로세스 배치는 실행 모드와 설정에 따라 달라진다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Cluster manager가 Spark의 join 전략이나 Iceberg COW/MOR 의미를 대신 결정하지 않는다.</text>
+</g>
+</svg>

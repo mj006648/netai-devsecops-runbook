@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Spark 메모리: JVM heap과 container 전체</title>
+<desc id="desc">메모리 오류를 조사할 때 어느 프로세스와 어느 제한에 닿았는지 먼저 구분한다. Kubernetes에서 memory limit은 container 수준이다. JVM heap 설정과 같은 숫자라고 가정하지 않는다. spill 가능성은 모든 연산이 임의 크기 데이터로 안전하게 완료된다는 보장이 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Spark 메모리: JVM heap과 container 전체</text>
+<text x="40" y="92" font-size="17" fill="#475569">메모리 오류를 조사할 때 어느 프로세스와 어느 제한에 닿았는지 먼저 구분한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Driver 프로세스</text>
+<text x="60" y="218" font-size="17" fill="#334155">계획·metadata·수집한 결과</text>
+<text x="60" y="242" font-size="17" fill="#334155">큰 collect·toPandas는 driver 부담</text>
+<text x="60" y="266" font-size="17" fill="#334155">driver 메모리와 executor 메모리는 별도</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Executor JVM heap</text>
+<text x="680" y="218" font-size="17" fill="#334155">execution: join·sort·집계</text>
+<text x="680" y="242" font-size="17" fill="#334155">storage: cache 등</text>
+<text x="680" y="266" font-size="17" fill="#334155">같은 heap 안에서도 용도가 다르다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Shuffle와 spill</text>
+<text x="60" y="448" font-size="17" fill="#334155">메모리 부족 때 디스크 사용 가능</text>
+<text x="60" y="472" font-size="17" fill="#334155">큰 키·많은 중간 데이터는 비용 증가</text>
+<text x="60" y="496" font-size="17" fill="#334155">디스크 부족도 별도 실패 원인</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Heap 밖의 사용량</text>
+<text x="680" y="448" font-size="17" fill="#334155">JVM native·직접 buffer·Python worker</text>
+<text x="680" y="472" font-size="17" fill="#334155">off-heap을 설정한 경우 그 사용량도 고려</text>
+<text x="680" y="496" font-size="17" fill="#334155">heap 숫자가 container 전체는 아니다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 측정과 실행 개선</text>
+<text x="60" y="678" font-size="17" fill="#334155">UI의 task 시간·spill·GC·skew</text>
+<text x="60" y="702" font-size="17" fill="#334155">필요한 열·행 축소, join·분할 재검토</text>
+<text x="60" y="726" font-size="17" fill="#334155">무조건 cache하거나 RAM만 늘리지 않는다.</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Container 제한·OOM</text>
+<text x="680" y="678" font-size="17" fill="#334155">heap 외 메모리도 limit에 포함</text>
+<text x="680" y="702" font-size="17" fill="#334155">executor memory overhead 조건 확인</text>
+<text x="680" y="726" font-size="17" fill="#334155">Spark 오류와 kernel OOM 종료를 구분</text>
+<path d="M 660 225 L 540 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">결과 반환</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">함께 사용</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">관찰·개선</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">합산 제한</text>
+<text x="40" y="815" font-size="16" fill="#475569">Kubernetes에서 memory limit은 container 수준이다. JVM heap 설정과 같은 숫자라고 가정하지 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">spill 가능성은 모든 연산이 임의 크기 데이터로 안전하게 완료된다는 보장이 아니다.</text>
+</g>
+</svg>

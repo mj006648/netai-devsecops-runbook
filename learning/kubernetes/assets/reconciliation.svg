@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Reconciliation: 목표와 현재 상태의 차이 줄이기</title>
+<desc id="desc">Deployment replicas=3의 교육용 예시다. 컨트롤러는 반복 관찰하며 목표 상태로 접근한다. 새 Pod는 이전 Pod의 UID를 되살리는 것이 아니다. 이름·UID·IP·임시 volume이 바뀔 수 있다. 그림은 한 방향으로 펼친 loop다. Controller는 최신 status를 계속 다시 관찰한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Reconciliation: 목표와 현재 상태의 차이 줄이기</text>
+<text x="40" y="92" font-size="17" fill="#475569">Deployment replicas=3의 교육용 예시다. 컨트롤러는 반복 관찰하며 목표 상태로 접근한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Desired state</text>
+<text x="60" y="218" font-size="17" fill="#334155">Deployment spec: replicas 3</text>
+<text x="60" y="242" font-size="17" fill="#334155">Pod template: image·label·자원</text>
+<text x="60" y="266" font-size="17" fill="#334155">사용자가 API에 선언한 목표</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Observed state</text>
+<text x="680" y="218" font-size="17" fill="#334155">현재 Ready Pod 2개라는 예시</text>
+<text x="680" y="242" font-size="17" fill="#334155">Pod·ReplicaSet·node 상태 관찰</text>
+<text x="680" y="266" font-size="17" fill="#334155">순간적인 상태와 목표는 다를 수 있다.</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. 차이 계산·Controller</text>
+<text x="60" y="448" font-size="17" fill="#334155">Deployment가 ReplicaSet을 관리</text>
+<text x="60" y="472" font-size="17" fill="#334155">ReplicaSet이 필요한 Pod 수를 관리</text>
+<text x="60" y="496" font-size="17" fill="#334155">각 controller의 책임 범위를 구분</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. API 변경 요청</text>
+<text x="680" y="448" font-size="17" fill="#334155">새 Pod 생성 등 필요한 객체 변경</text>
+<text x="680" y="472" font-size="17" fill="#334155">한 번의 요청이 즉시 완료는 아니다.</text>
+<text x="680" y="496" font-size="17" fill="#334155">재시도와 다음 관찰 loop 가능</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 배치·실행</text>
+<text x="60" y="678" font-size="17" fill="#334155">scheduler가 node 선택</text>
+<text x="60" y="702" font-size="17" fill="#334155">kubelet·runtime이 container 실행</text>
+<text x="60" y="726" font-size="17" fill="#334155">image·storage·자원 문제로 지연 가능</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Status 갱신·다음 loop</text>
+<text x="680" y="678" font-size="17" fill="#334155">Running과 Ready는 같은 조건이 아니다.</text>
+<text x="680" y="702" font-size="17" fill="#334155">관찰 결과를 다시 API 상태로 보고</text>
+<text x="680" y="726" font-size="17" fill="#334155">업무 데이터의 복구는 별도 설계</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">비교</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">목표</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">현재 상태</text>
+<path d="M 540 455 L 660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">차이 해소</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">새 Pod</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">결과 관찰</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">상태 보고</text>
+<text x="40" y="815" font-size="16" fill="#475569">새 Pod는 이전 Pod의 UID를 되살리는 것이 아니다. 이름·UID·IP·임시 volume이 바뀔 수 있다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">그림은 한 방향으로 펼친 loop다. Controller는 최신 status를 계속 다시 관찰한다.</text>
+</g>
+</svg>

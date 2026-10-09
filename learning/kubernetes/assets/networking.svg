@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Service: 바뀌는 Pod 앞의 안정적인 이름</title>
+<desc id="desc">일반적인 Service 경로 개념도다. 실제 구현은 kube-proxy·eBPF·CNI 등 구성에 따라 달라진다. Service가 Pod label로 선택하더라도 readiness와 endpoint 조건에 따라 실제 전달 대상은 달라진다. port-forward는 학습용 별도 API 연결 경로다. 일반 Service 패킷 경로 전체를 그대로 검증하지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Service: 바뀌는 Pod 앞의 안정적인 이름</text>
+<text x="40" y="92" font-size="17" fill="#475569">일반적인 Service 경로 개념도다. 실제 구현은 kube-proxy·eBPF·CNI 등 구성에 따라 달라진다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Client·DNS</text>
+<text x="60" y="218" font-size="17" fill="#334155">web.namespace.svc 같은 이름</text>
+<text x="60" y="242" font-size="17" fill="#334155">ClusterIP Service의 주소를 찾는다.</text>
+<text x="60" y="266" font-size="17" fill="#334155">DNS 이름 해석과 연결 성공은 별도</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Service</text>
+<text x="680" y="218" font-size="17" fill="#334155">selector·port·targetPort</text>
+<text x="680" y="242" font-size="17" fill="#334155">대상의 논리적 집합과 접속점</text>
+<text x="680" y="266" font-size="17" fill="#334155">container를 직접 실행하는 객체가 아님</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. EndpointSlice</text>
+<text x="60" y="448" font-size="17" fill="#334155">대상 Pod 주소·port·ready 조건</text>
+<text x="60" y="472" font-size="17" fill="#334155">readiness=false가 일반 전달 대상에 영향</text>
+<text x="60" y="496" font-size="17" fill="#334155">레코드 자체가 반드시 삭제되는 것은 아님</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Service 데이터 경로</text>
+<text x="680" y="448" font-size="17" fill="#334155">kube-proxy 또는 대체 구현</text>
+<text x="680" y="472" font-size="17" fill="#334155">패킷을 적절한 endpoint로 전달</text>
+<text x="680" y="496" font-size="17" fill="#334155">headless Service는 다른 동작</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Pod network·CNI</text>
+<text x="60" y="678" font-size="17" fill="#334155">Pod IP·node 간 연결·라우팅</text>
+<text x="60" y="702" font-size="17" fill="#334155">Service selector와 Pod label 확인</text>
+<text x="60" y="726" font-size="17" fill="#334155">NetworkPolicy 지원 구현도 필요</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Ingress·Gateway·외부 노출</text>
+<text x="680" y="678" font-size="17" fill="#334155">객체와 실제 controller·구현 필요</text>
+<text x="680" y="702" font-size="17" fill="#334155">HTTP routing·TLS 등 설정</text>
+<text x="680" y="726" font-size="17" fill="#334155">YAML 객체만으로 외부 접속이 완성되지 않음</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">이름 해석</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">접속</text>
+<path d="M 540 455 L 660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">대상 정보</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">Pod 주소</text>
+<path d="M 910 540 L 910 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="612.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">전달</text>
+<text x="40" y="815" font-size="16" fill="#475569">Service가 Pod label로 선택하더라도 readiness와 endpoint 조건에 따라 실제 전달 대상은 달라진다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">port-forward는 학습용 별도 API 연결 경로다. 일반 Service 패킷 경로 전체를 그대로 검증하지 않는다.</text>
+</g>
+</svg>

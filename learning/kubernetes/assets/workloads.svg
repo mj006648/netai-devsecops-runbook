@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Workload: 프로그램의 수명과 배치 의도</title>
+<desc id="desc">각 controller는 서로 다른 목표를 유지한다. 아래 여섯 유형을 한 줄의 replicas로 대체하지 않는다. StatefulSet의 안정적인 식별자는 데이터의 올바른 복제와 복구까지 보장하지 않는다. Spark application의 driver·executor 관리는 일반 웹 Deployment의 replicas 모델과 구분한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Workload: 프로그램의 수명과 배치 의도</text>
+<text x="40" y="92" font-size="17" fill="#475569">각 controller는 서로 다른 목표를 유지한다. 아래 여섯 유형을 한 줄의 replicas로 대체하지 않는다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Deployment</text>
+<text x="60" y="218" font-size="17" fill="#334155">교체 가능한 지속 실행 앱</text>
+<text x="60" y="242" font-size="17" fill="#334155">ReplicaSet을 통한 replica·rollout 관리</text>
+<text x="60" y="266" font-size="17" fill="#334155">같은 역할의 여러 웹 서버 예시</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. ReplicaSet</text>
+<text x="680" y="218" font-size="17" fill="#334155">selector와 Pod template 기준 개수 유지</text>
+<text x="680" y="242" font-size="17" fill="#334155">보통 Deployment가 관리</text>
+<text x="680" y="266" font-size="17" fill="#334155">업무 transaction 복구 controller 아님</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. StatefulSet</text>
+<text x="60" y="448" font-size="17" fill="#334155">안정적인 ordinal·network identity</text>
+<text x="60" y="472" font-size="17" fill="#334155">volumeClaimTemplates 등 지속 저장 연결</text>
+<text x="60" y="496" font-size="17" fill="#334155">DB replication·backup은 앱의 책임</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. DaemonSet</text>
+<text x="680" y="448" font-size="17" fill="#334155">조건에 맞는 node에 Pod 배치</text>
+<text x="680" y="472" font-size="17" fill="#334155">로그 agent·node exporter 등 예시</text>
+<text x="680" y="496" font-size="17" fill="#334155">모든 node의 무조건 실행을 뜻하지 않음</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Job</text>
+<text x="60" y="678" font-size="17" fill="#334155">완료할 때까지 실행하는 작업</text>
+<text x="60" y="702" font-size="17" fill="#334155">parallelism·completion·retry 조건</text>
+<text x="60" y="726" font-size="17" fill="#334155">재실행해도 외부 부작용은 자동 중복 제거 아님</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. CronJob</text>
+<text x="680" y="678" font-size="17" fill="#334155">일정에 따라 Job 생성</text>
+<text x="680" y="702" font-size="17" fill="#334155">timezone·missed schedule·concurrency 고려</text>
+<text x="680" y="726" font-size="17" fill="#334155">매 시각 정확히 한 번의 업무 완료 보장 아님</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">관리</text>
+<path d="M 660 685 L 540 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">Job 생성</text>
+<text x="40" y="815" font-size="16" fill="#475569">StatefulSet의 안정적인 식별자는 데이터의 올바른 복제와 복구까지 보장하지 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Spark application의 driver·executor 관리는 일반 웹 Deployment의 replicas 모델과 구분한다.</text>
+</g>
+</svg>

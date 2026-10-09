@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Probe와 rollout: 시작·준비·건강을 구분</title>
+<desc id="desc">서로 다른 질문을 같은 실패 처리로 묶지 않는다. probe 결과는 앱과 controller 정책에 연결된다. Liveness 실패는 container 재시작이다. Pod UID를 항상 새로 만드는 동작으로 설명하지 않는다. 자동 rollback·업무 무중단·진행 중 요청 보존은 probe와 Deployment만으로 완성되지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M 0 0 L 9 5 L 0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Probe와 rollout: 시작·준비·건강을 구분</text>
+<text x="40" y="92" font-size="17" fill="#475569">서로 다른 질문을 같은 실패 처리로 묶지 않는다. probe 결과는 앱과 controller 정책에 연결된다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Startup probe</text>
+<text x="60" y="218" font-size="17" fill="#334155">앱 시작이 끝났는가?</text>
+<text x="60" y="242" font-size="17" fill="#334155">성공 전에는 readiness/liveness 대기</text>
+<text x="60" y="266" font-size="17" fill="#334155">느린 초기화를 위한 시간 예산</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Readiness probe</text>
+<text x="680" y="218" font-size="17" fill="#334155">지금 요청을 받아도 되는가?</text>
+<text x="680" y="242" font-size="17" fill="#334155">실패 시 Ready 조건에 영향</text>
+<text x="680" y="266" font-size="17" fill="#334155">기본적으로 container를 재시작하지 않음</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Liveness probe</text>
+<text x="60" y="448" font-size="17" fill="#334155">실행이 회복 불가능하게 막혔는가?</text>
+<text x="60" y="472" font-size="17" fill="#334155">실패 조건에서 container 재시작</text>
+<text x="60" y="496" font-size="17" fill="#334155">외부 DB 장애를 무조건 묶으면 악화 가능</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Service endpoint 조건</text>
+<text x="680" y="448" font-size="17" fill="#334155">Ready 상태 등을 전달 대상에 반영</text>
+<text x="680" y="472" font-size="17" fill="#334155">EndpointSlice ready=false 가능</text>
+<text x="680" y="496" font-size="17" fill="#334155">Pod phase Running과 Ready는 다르다.</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Deployment rollout</text>
+<text x="60" y="678" font-size="17" fill="#334155">새 template에 맞는 Pod 생성</text>
+<text x="60" y="702" font-size="17" fill="#334155">maxSurge·maxUnavailable 고려</text>
+<text x="60" y="726" font-size="17" fill="#334155">새 Pod 준비와 이전 Pod 종료 조정</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. 종료·가용성</text>
+<text x="680" y="678" font-size="17" fill="#334155">SIGTERM·grace period·연결 정리</text>
+<text x="680" y="702" font-size="17" fill="#334155">PDB는 일부 voluntary disruption 제약</text>
+<text x="680" y="726" font-size="17" fill="#334155">모든 장애·rollout을 막는 보장은 아니다.</text>
+<path d="M 540 225 L 660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">시작 완료</text>
+<path d="M 290 310 L 290 340.0 L 290 340.0 L 290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">건강 검사 시작</text>
+<path d="M 910 310 L 910 340.0 L 910 340.0 L 910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">준비 조건</text>
+<path d="M 290 540 L 290 570.0 L 290 570.0 L 290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">실행 상태</text>
+<path d="M 910 540 L 910 570.0 L 910 570.0 L 910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">트래픽·종료</text>
+<path d="M 540 685 L 660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">교체</text>
+<text x="40" y="815" font-size="16" fill="#475569">Liveness 실패는 container 재시작이다. Pod UID를 항상 새로 만드는 동작으로 설명하지 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">자동 rollback·업무 무중단·진행 중 요청 보존은 probe와 Deployment만으로 완성되지 않는다.</text>
+</g>
+</svg>

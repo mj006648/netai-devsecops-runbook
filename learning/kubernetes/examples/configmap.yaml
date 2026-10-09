@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lab-settings
+  namespace: netai-textbook
+data:
+  COURSE_NAME: kubernetes-textbook

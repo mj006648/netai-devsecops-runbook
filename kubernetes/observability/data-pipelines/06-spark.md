@@ -1,5 +1,7 @@
 # 06. Apache Spark: Batch Archive와 Structured Streaming 운영
 
+처음 공부한다면 [처음부터 배우는 Apache Spark](../../../learning/apache-spark/README.md)에서 DataFrame·driver/executor·shuffle·join·메모리의 기초를 읽는다. 이 문서는 그 개념을 관측 데이터 archive 경로에 연결하는 운영 설계 자료다.
+
 ## 이 장의 위치
 
 - 상위 문서: [저장소 README](../../../README.md), [Kubernetes Observability](../README.md)
