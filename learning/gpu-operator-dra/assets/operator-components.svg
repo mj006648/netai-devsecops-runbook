@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">GPU Operator: 관리 모드와 구성요소</title>
+<desc id="desc">최신 26.7 managed workflow와 기존 ClusterPolicy를 비교한다. 같은 클러스터에 두 CR을 함께 두지 않는다. MIG를 할당하는 기능과 MIG geometry를 동적으로 생성하는 기능은 다르다. Managed GPUCluster에 standalone DRA Helm release를 추가 설치하거나 in-place migration하는 경로는 지원되지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">GPU Operator: 관리 모드와 구성요소</text>
+<text x="40" y="92" font-size="17" fill="#475569">최신 26.7 managed workflow와 기존 ClusterPolicy를 비교한다. 같은 클러스터에 두 CR을 함께 두지 않는다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. GPU Operator controller</text>
+<text x="60" y="218" font-size="17" fill="#334155">원하는 CR 상태를 관찰하고 조정</text>
+<text x="60" y="242" font-size="17" fill="#334155">Helm values·CR·operand 관계</text>
+<text x="60" y="266" font-size="17" fill="#334155">상태 표시와 실제 계산은 별도</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. 관리 모드 선택</text>
+<text x="680" y="218" font-size="17" fill="#334155">ClusterPolicy: device plugin 경로</text>
+<text x="680" y="242" font-size="17" fill="#334155">GPUCluster: DRA 경로</text>
+<text x="680" y="266" font-size="17" fill="#334155">두 관리 CR의 동시 사용은 지원하지 않음</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. ClusterPolicy operands</text>
+<text x="60" y="448" font-size="17" fill="#334155">driver·Toolkit·device plugin</text>
+<text x="60" y="472" font-size="17" fill="#334155">GPU Feature Discovery·MIG Manager</text>
+<text x="60" y="496" font-size="17" fill="#334155">DCGM·validator 등 선택 구성</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. GPUCluster operands</text>
+<text x="680" y="448" font-size="17" fill="#334155">DRA·ComputeDomain·DRA validator</text>
+<text x="680" y="472" font-size="17" fill="#334155">DCGM Exporter와 선택 DCGM</text>
+<text x="680" y="496" font-size="17" fill="#334155">Full GPU·기존 MIG 할당 경로</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Driver 관리 주체</text>
+<text x="60" y="678" font-size="17" fill="#334155">GPUCluster 자체는 driver 관리 아님</text>
+<text x="60" y="702" font-size="17" fill="#334155">별도 NVIDIADriver CR 또는 host driver</text>
+<text x="60" y="726" font-size="17" fill="#334155">driver root와 kernel 지원 확인</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Runtime와 정책 준비</text>
+<text x="680" y="678" font-size="17" fill="#334155">CDI-compatible runtime 사전 준비</text>
+<text x="680" y="702" font-size="17" fill="#334155">Toolkit 자동 관리라고 단정하지 않음</text>
+<text x="680" y="726" font-size="17" fill="#334155">RBAC·보안·자원·hardware 조건 확인</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">관리 선택</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">기존 모드</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">DRA 모드</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">소유 확인</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">준비 조건</text>
+<text x="40" y="815" font-size="16" fill="#475569">MIG를 할당하는 기능과 MIG geometry를 동적으로 생성하는 기능은 다르다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Managed GPUCluster에 standalone DRA Helm release를 추가 설치하거나 in-place migration하는 경로는 지원되지 않는다.</text>
+</g>
+</svg>

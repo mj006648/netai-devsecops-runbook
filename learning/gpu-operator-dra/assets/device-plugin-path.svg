@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Device plugin: 개수 광고와 node-local 할당</title>
+<desc id="desc">기존 NVIDIA device plugin 경로의 순서다. 같은 extended-resource 이름을 DRA로 연결하는 경로는 별도다. Scheduler의 개수 선택, kubelet/plugin의 장치 준비, 프로그램의 CUDA 계산은 서로 다른 단계다. 최신 DRA extended-resource mapping에서는 기존 Pod 개수 요청을 DRA backend가 처리할 수도 있다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Device plugin: 개수 광고와 node-local 할당</text>
+<text x="40" y="92" font-size="17" fill="#475569">기존 NVIDIA device plugin 경로의 순서다. 같은 extended-resource 이름을 DRA로 연결하는 경로는 별도다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. GPU·NVIDIA plugin</text>
+<text x="60" y="218" font-size="17" fill="#334155">node의 장치 발견·health 관찰</text>
+<text x="60" y="242" font-size="17" fill="#334155">kubelet의 plugin endpoint에 등록</text>
+<text x="60" y="266" font-size="17" fill="#334155">물리 또는 구성된 논리 단위를 광고</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Kubelet·Node 자원</text>
+<text x="680" y="218" font-size="17" fill="#334155">capacity·allocatable에 개수 반영</text>
+<text x="680" y="242" font-size="17" fill="#334155">nvidia.com/gpu 등 extended resource</text>
+<text x="680" y="266" font-size="17" fill="#334155">VRAM 크기의 일반 표준 필드는 아님</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Pod의 개수 요청</text>
+<text x="60" y="448" font-size="17" fill="#334155">limits: nvidia.com/gpu: 1</text>
+<text x="60" y="472" font-size="17" fill="#334155">CPU·RAM·affinity·taint 조건도 적용</text>
+<text x="60" y="496" font-size="17" fill="#334155">단위 1의 의미는 광고 정책에 의존</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Scheduler</text>
+<text x="680" y="448" font-size="17" fill="#334155">개수와 다른 조건이 맞는 node 선택</text>
+<text x="680" y="472" font-size="17" fill="#334155">구체 device 준비는 node-local 경로</text>
+<text x="680" y="496" font-size="17" fill="#334155">한 Pod는 일반적으로 한 node에 배치</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Kubelet → Allocate</text>
+<text x="60" y="678" font-size="17" fill="#334155">plugin이 장치 접근 설정을 제공</text>
+<text x="60" y="702" font-size="17" fill="#334155">env·mount·device·CDI 등 지원 전략</text>
+<text x="60" y="726" font-size="17" fill="#334155">container start에 필요한 준비</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Runtime·Container</text>
+<text x="680" y="678" font-size="17" fill="#334155">선택한 장치를 실제로 주입</text>
+<text x="680" y="702" font-size="17" fill="#334155">nvidia-smi와 CUDA 계산은 구별</text>
+<text x="680" y="726" font-size="17" fill="#334155">공유 정책·VRAM·실제 결과 확인</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">등록·목록</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">자원 정보</text>
+<path d="M540 455 L660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">요청</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">배치 후</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">접근 설정</text>
+<text x="40" y="815" font-size="16" fill="#475569">Scheduler의 개수 선택, kubelet/plugin의 장치 준비, 프로그램의 CUDA 계산은 서로 다른 단계다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">최신 DRA extended-resource mapping에서는 기존 Pod 개수 요청을 DRA backend가 처리할 수도 있다.</text>
+</g>
+</svg>

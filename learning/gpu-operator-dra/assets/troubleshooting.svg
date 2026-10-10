@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">GPU 진단: 상태·할당·준비·계산의 경계</title>
+<desc id="desc">원인을 확정하기 전에 실패한 단계와 그 단계를 구별할 관측을 찾는다. 예: 같은 GPU의 기존 경로 CUDA 성공과 DRA 경로 실패를 비교하면 injection·준비 차이를 좁힐 수 있다. 그 비교만으로 원인을 확정하지 않는다. 실제 device·library·error·수정 전후 결과를 연결한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">GPU 진단: 상태·할당·준비·계산의 경계</text>
+<text x="40" y="92" font-size="17" fill="#475569">원인을 확정하기 전에 실패한 단계와 그 단계를 구별할 관측을 찾는다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Pod Pending</text>
+<text x="60" y="218" font-size="17" fill="#334155">scheduler events·GPU 후보·quota</text>
+<text x="60" y="242" font-size="17" fill="#334155">Class·selector·공동 node·CPU/RAM</text>
+<text x="60" y="266" font-size="17" fill="#334155">장치 부족과 정책 대기 구별</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Claim allocation</text>
+<text x="680" y="218" font-size="17" fill="#334155">status.allocation·reservedFor</text>
+<text x="680" y="242" font-size="17" fill="#334155">driver·pool·device identity</text>
+<text x="680" y="266" font-size="17" fill="#334155">allocation 없음과 prepare 실패 구별</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Node prepare·CDI</text>
+<text x="60" y="448" font-size="17" fill="#334155">kubelet·plugin logs·CDI device</text>
+<text x="60" y="472" font-size="17" fill="#334155">driver root·UVM·mount·runtime</text>
+<text x="60" y="496" font-size="17" fill="#334155">Running plugin이 장치 health는 아님</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. 관리 API 조회</text>
+<text x="680" y="448" font-size="17" fill="#334155">container 안 nvidia-smi 등</text>
+<text x="680" y="472" font-size="17" fill="#334155">관리 interface 접근 범위 확인</text>
+<text x="680" y="496" font-size="17" fill="#334155">NVML 성공이 CUDA kernel 성공은 아님</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. 실제 계산·OOM</text>
+<text x="60" y="678" font-size="17" fill="#334155">CUDA memory·kernel·결과 비교</text>
+<text x="60" y="702" font-size="17" fill="#334155">VRAM OOM과 host OOM을 구분</text>
+<text x="60" y="726" font-size="17" fill="#334155">작은 예제 성공 범위를 기록</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. 성능·metric 귀속</text>
+<text x="680" y="678" font-size="17" fill="#334155">GPU utilization·memory·통신·대기</text>
+<text x="680" y="702" font-size="17" fill="#334155">DCGM·MIG·공유의 attribution 조건</text>
+<text x="680" y="726" font-size="17" fill="#334155">장치 전체 지표를 Pod 지표로 추정 금지</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">배치 상태</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">단계 추적</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">실행 접근</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">계산 확인</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">관측 범위</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">측정</text>
+<text x="40" y="815" font-size="16" fill="#475569">예: 같은 GPU의 기존 경로 CUDA 성공과 DRA 경로 실패를 비교하면 injection·준비 차이를 좁힐 수 있다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">그 비교만으로 원인을 확정하지 않는다. 실제 device·library·error·수정 전후 결과를 연결한다.</text>
+</g>
+</svg>

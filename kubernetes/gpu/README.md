@@ -4,6 +4,8 @@ TwinX/MiniX 클러스터의 GPU Operator, NVIDIA DRA, MIG, GPU node 운영 기�
 
 ## AI 인프라를 처음 공부한다면
 
+[GPU Operator·DRA 전용 교재](../../learning/gpu-operator-dra/README.md)에서 Linux driver·CUDA·device plugin·최신 GPUCluster·ResourceClaim·CDI·MIG·공유·ComputeDomain을 처음부터 배울 수 있습니다. 아래의 과거 운영 기록과 최신 지원 조합을 구분해 설명합니다.
+
 [AI 인프라 교재](../../ai/learning/ai-infrastructure/README.md)에서 모델·GPU 실행·메모리·학습·분산 통신·LLM 추론·서빙을 먼저 연결합니다. [GPU 클러스터 장](../../ai/learning/ai-infrastructure/09-gpu-clusters-and-placement.md)은 아래 운영 사례를 이해하는 선수지식을 설명합니다.
 
 ## Index

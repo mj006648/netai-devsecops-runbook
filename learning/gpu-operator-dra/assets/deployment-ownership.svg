@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">배포 소유권: 버전·관리 CR·driver·runtime</title>
+<desc id="desc">새 설치의 managed GPUCluster와 과거 standalone chart 운영 사례를 구분한다. 드라이버 변경·MIG 재구성·drain·재부팅은 이 교재 작성 과정에서 수행하지 않는다. 과거 25.x values와 최신 26.7 managed workflow의 키·관리 범위·전환 제한은 별도로 읽는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">배포 소유권: 버전·관리 CR·driver·runtime</text>
+<text x="40" y="92" font-size="17" fill="#475569">새 설치의 managed GPUCluster와 과거 standalone chart 운영 사례를 구분한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. 지원 matrix·release</text>
+<text x="60" y="218" font-size="17" fill="#334155">Kubernetes·OS·kernel·GPU·driver</text>
+<text x="60" y="242" font-size="17" fill="#334155">Operator·DRA·runtime·CDI 조합</text>
+<text x="60" y="266" font-size="17" fill="#334155">최대 버전 번호끼리 무조건 조합하지 않음</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. 관리 모드 하나 선택</text>
+<text x="680" y="218" font-size="17" fill="#334155">ClusterPolicy 또는 GPUCluster</text>
+<text x="680" y="242" font-size="17" fill="#334155">최신 GPUCluster은 새 설치 경로</text>
+<text x="680" y="266" font-size="17" fill="#334155">in-place migration 지원이라고 추정 금지</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. GPU driver 소유</text>
+<text x="60" y="448" font-size="17" fill="#334155">NVIDIADriver CR 또는 host 설치</text>
+<text x="60" y="472" font-size="17" fill="#334155">GPUCluster 자체의 관리 대상은 아님</text>
+<text x="60" y="496" font-size="17" fill="#334155">driver root /run/nvidia/driver 또는 /</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. DRA 소유</text>
+<text x="680" y="448" font-size="17" fill="#334155">GPUCluster managed operands</text>
+<text x="680" y="472" font-size="17" fill="#334155">standalone DRA release 중복 설치 금지</text>
+<text x="680" y="496" font-size="17" fill="#334155">장치 광고·allocation 책임을 명확히</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Runtime·CDI 소유</text>
+<text x="60" y="678" font-size="17" fill="#334155">지원 runtime의 CDI 기능 사전 준비</text>
+<text x="60" y="702" font-size="17" fill="#334155">Toolkit 관리 주체·설정 확인</text>
+<text x="60" y="726" font-size="17" fill="#334155">Unknown values 키가 기능 활성화는 아님</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. GitOps와 관찰</text>
+<text x="680" y="678" font-size="17" fill="#334155">values → rendered CR → operands</text>
+<text x="680" y="702" font-size="17" fill="#334155">inventory → claim → CUDA 확인</text>
+<text x="680" y="726" font-size="17" fill="#334155">동기화 성공과 계산 성공을 구분</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">지원 선택</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">driver 조합</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">관리 구성</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">접근 준비</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">광고·할당</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">계산 경로</text>
+<text x="40" y="815" font-size="16" fill="#475569">드라이버 변경·MIG 재구성·drain·재부팅은 이 교재 작성 과정에서 수행하지 않는다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">과거 25.x values와 최신 26.7 managed workflow의 키·관리 범위·전환 제한은 별도로 읽는다.</text>
+</g>
+</svg>

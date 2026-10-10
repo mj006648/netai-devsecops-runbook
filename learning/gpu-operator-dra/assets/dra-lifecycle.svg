@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">DRA 생애: 요청에서 prepare·사용·해제까지</title>
+<desc id="desc">아래는 일반 node-local GPU 경로다. allocation과 node 준비는 별도 단계다. 명시 Claim은 Pod보다 오래 남을 수 있다. Template 기반 생성 Claim은 Pod의 owner 관계에 묶인다. Claim 삭제·Pod 종료·unprepare·allocation 해제는 서로 구별한다. API 삭제가 즉시 물리 회수라는 뜻은 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">DRA 생애: 요청에서 prepare·사용·해제까지</text>
+<text x="40" y="92" font-size="17" fill="#475569">아래는 일반 node-local GPU 경로다. allocation과 node 준비는 별도 단계다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Pod·Claim 요청</text>
+<text x="60" y="218" font-size="17" fill="#334155">명시 Claim 또는 Template 기반 생성</text>
+<text x="60" y="242" font-size="17" fill="#334155">Pod 전체 요청의 공동 배치 조건</text>
+<text x="60" y="266" font-size="17" fill="#334155">spec.nodeName으로 scheduler를 우회하지 않음</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Inventory·Class</text>
+<text x="680" y="218" font-size="17" fill="#334155">Driver ResourceSlice의 후보 장치</text>
+<text x="680" y="242" font-size="17" fill="#334155">Class·CEL·capacity 선택 조건</text>
+<text x="680" y="266" font-size="17" fill="#334155">이미 배정된 device·공유 조건 고려</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Scheduler allocation</text>
+<text x="60" y="448" font-size="17" fill="#334155">후보 node와 device를 함께 판단</text>
+<text x="60" y="472" font-size="17" fill="#334155">요청별 구체 device 결정</text>
+<text x="60" y="496" font-size="17" fill="#334155">Claim status에 allocation 기록</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. Reservation·배치</text>
+<text x="680" y="448" font-size="17" fill="#334155">Claim 소비 Pod 관계 추적</text>
+<text x="680" y="472" font-size="17" fill="#334155">선택한 node에 Pod 배치</text>
+<text x="680" y="496" font-size="17" fill="#334155">예약 상태만으로 CUDA 성공은 아님</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Kubelet·DRA prepare</text>
+<text x="60" y="678" font-size="17" fill="#334155">NodePrepareResources 호출</text>
+<text x="60" y="702" font-size="17" fill="#334155">driver가 장치 준비·CDI 이름 반환</text>
+<text x="60" y="726" font-size="17" fill="#334155">실패하면 allocation 후에도 시작 지연</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Runtime·사용·종료</text>
+<text x="680" y="678" font-size="17" fill="#334155">CDI device 설정으로 container 시작</text>
+<text x="680" y="702" font-size="17" fill="#334155">실제 CUDA 결과와 metric 확인</text>
+<text x="680" y="726" font-size="17" fill="#334155">종료 시 unprepare·Claim 수명은 별도</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">요청</text>
+<path d="M910 310 L910 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="612.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">후보</text>
+<path d="M540 455 L660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">결정</text>
+<path d="M910 540 L910 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="612.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">node 준비</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">CDI</text>
+<text x="40" y="815" font-size="16" fill="#475569">명시 Claim은 Pod보다 오래 남을 수 있다. Template 기반 생성 Claim은 Pod의 owner 관계에 묶인다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Claim 삭제·Pod 종료·unprepare·allocation 해제는 서로 구별한다. API 삭제가 즉시 물리 회수라는 뜻은 아니다.</text>
+</g>
+</svg>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">Topology와 ComputeDomain: 배정 뒤의 연결</title>
+<desc id="desc">GPU 개수·연결 거리·분산 process·IMEX domain은 서로 다른 대상이다. ComputeDomain은 NVIDIA vendor CR이며 Kubernetes core GPU allocation 객체가 아니다. 일반 RTX GPU를 DRA로 할당하는 것과 GB200/GB300 등 지원 MNNVL의 ComputeDomain 사용을 구별한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">Topology와 ComputeDomain: 배정 뒤의 연결</text>
+<text x="40" y="92" font-size="17" fill="#475569">GPU 개수·연결 거리·분산 process·IMEX domain은 서로 다른 대상이다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Node·CPU·NUMA</text>
+<text x="60" y="218" font-size="17" fill="#334155">GPU·NIC가 어느 CPU에 가까운가?</text>
+<text x="60" y="242" font-size="17" fill="#334155">memory·PCI root·socket 거리</text>
+<text x="60" y="266" font-size="17" fill="#334155">same node라는 조건만으로 같지 않음</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. GPU·PCIe·NVLink</text>
+<text x="680" y="218" font-size="17" fill="#334155">장치 사이 link와 대역폭 조건</text>
+<text x="680" y="242" font-size="17" fill="#334155">같은 GPU 수여도 통신 비용은 다름</text>
+<text x="680" y="266" font-size="17" fill="#334155">모든 GPU가 MNNVL 지원하는 것은 아님</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. Pod·process·rank</text>
+<text x="60" y="448" font-size="17" fill="#334155">Pod 배치와 rank 생성은 별도</text>
+<text x="60" y="472" font-size="17" fill="#334155">launcher·framework가 분산 실행 구성</text>
+<text x="60" y="496" font-size="17" fill="#334155">할당 GPU index와 global rank 구별</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. NCCL·collective</text>
+<text x="680" y="448" font-size="17" fill="#334155">분산 process의 데이터 교환</text>
+<text x="680" y="472" font-size="17" fill="#334155">network·topology·straggler에 영향</text>
+<text x="680" y="496" font-size="17" fill="#334155">DRA가 collective를 대신 계산하지 않음</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. ComputeDomain·IMEX</text>
+<text x="60" y="678" font-size="17" fill="#334155">지원 MNNVL hardware의 domain/channel</text>
+<text x="60" y="702" font-size="17" fill="#334155">multi-node GPU memory 접근 준비</text>
+<text x="60" y="726" font-size="17" fill="#334155">GPU 자체를 배정하는 Claim과 별도</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. 측정과 해제</text>
+<text x="680" y="678" font-size="17" fill="#334155">정확성·throughput·tail latency</text>
+<text x="680" y="702" font-size="17" fill="#334155">domain·claim·Pod의 수명 각각 확인</text>
+<text x="680" y="726" font-size="17" fill="#334155">GPU 네 개를 받았다고 통신 속도 보장 아님</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">물리 연결</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">node 배치</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">통신 조건</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">별도 준비</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">실행·측정</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">사용 수명</text>
+<text x="40" y="815" font-size="16" fill="#475569">ComputeDomain은 NVIDIA vendor CR이며 Kubernetes core GPU allocation 객체가 아니다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">일반 RTX GPU를 DRA로 할당하는 것과 GB200/GB300 등 지원 MNNVL의 ComputeDomain 사용을 구별한다.</text>
+</g>
+</svg>

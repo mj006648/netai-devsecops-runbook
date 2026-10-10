@@ -2,13 +2,13 @@
 
 처음에는 컴퓨터 한 대에서 **누가 계산하고, 어디에 저장하고, 어떻게 다른 컴퓨터로 보내는지**부터 배운다. 그 뒤에 여러 프로그램과 서버가 자원을 나누고, 고장이 났을 때 복구하고, AI를 실행하는 과정을 연결한다. 컴퓨터 용어를 이미 알고 있다고 가정해서 이름만 나열하지 않는다. 자주 사용하는 전문용어는 한국어 뜻과 영어·약어를 함께 배우고, 그 용어가 가리키는 실제 대상과 동작을 설명한다.
 
-**처음 읽는다면 [00. 교재를 읽기 위한 첫 지도](START-HERE.md)에서 시작한다.** 서버·프로그램·CPU·RAM·운영체제 같은 기본 단어와 단위, 그림을 읽는 방법을 먼저 배운다. 이후 다음 여덟 교재 중 한 권으로 이동한다. 모르는 이름을 빠르게 다시 확인할 때는 [공통 용어사전](GLOSSARY.md)을 사용한다. 본문에서도 첫 등장한 전문용어의 의미를 설명한다.
+**처음 읽는다면 [00. 교재를 읽기 위한 첫 지도](START-HERE.md)에서 시작한다.** 서버·프로그램·CPU·RAM·운영체제 같은 기본 단어와 단위, 그림을 읽는 방법을 먼저 배운다. 이후 다음 아홉 교재 중 한 권으로 이동한다. 모르는 이름을 빠르게 다시 확인할 때는 [공통 용어사전](GLOSSARY.md)을 사용한다. 본문에서도 첫 등장한 전문용어의 의미를 설명한다.
 
 부품의 생김새가 먼저 궁금하다면 [사진으로 시작하는 하드웨어](HARDWARE-GALLERY.md)를 연다. DIMM·M.2·U.2·RJ45·QSFP·HDD의 실물 사진에서 무엇을 볼지 안내하고, 해당 장의 장착 예시·연결 구조·내부 동작으로 이어 준다.
 
 읽기만으로 특정 학위 수준이나 운영 숙련을 보장할 수는 없다. 여기서 목표로 삼는 실력은 **원리를 자기 말로 설명하고, 작은 예제를 손으로 계산하고, 안전한 실습으로 확인하고, 관측하지 않은 것은 구별해서 말하는 능력**이다. 대학원 단계에서는 여기에 기존 연구 비교, 반례 구성, 재현 가능한 실험이 더해진다.
 
-## 여덟 권의 교재와 맡은 질문
+## 아홉 권의 교재와 맡은 질문
 
 | 교재 | 가장 아래에서 시작하는 질문 | 연결되는 심화 주제 |
 | --- | --- | --- |
@@ -20,6 +20,7 @@
 | [Apache Iceberg](apache-iceberg/README.md) | 파일 몇 개가 어떻게 신뢰할 수 있는 분석 테이블이 되는가? | 메타데이터·커밋·시간 여행·v1/v2/v3·최신 v4 명세 상태·그림·로컬 실습·운영 |
 | [Apache Spark](apache-spark/README.md) | 여러 파일·서버의 데이터를 누가 어떻게 계산하는가? | DataFrame·SQL·driver/executor·DAG·shuffle·join·AQE·메모리·streaming·Iceberg·연구 |
 | [Kubernetes](kubernetes/README.md) | 여러 서버에서 프로그램의 원하는 상태를 어떻게 유지하는가? | 컨테이너·제어 루프·Pod·workload·Service·저장소·자원·보안·배포·진단·Spark 실행 |
+| [GPU Operator·DRA](gpu-operator-dra/README.md) | 서버의 GPU가 특정 container의 계산까지 어떻게 연결되는가? | Driver·CUDA·device plugin·GPUCluster·DRA 객체·CDI·MIG·공유·ComputeDomain·진단·연구 |
 
 네트워크 교재가 `kubernetes/` 아래 있다고 Kubernetes부터 알아야 하는 것은 아니다. **Kubernetes**는 여러 서버에서 프로그램을 실행하고 필요한 상태를 유지하도록 관리하는 시스템이다. 앞부분은 일반 네트워크 기초이고 Kubernetes는 뒤쪽 응용이다. **Linux**는 운영체제의 핵심인 커널이며, 보통 사용자 도구와 묶인 Linux 운영 환경도 그 이름으로 부른다. 각 교재는 특정 연구실 장비 없이 학습할 수 있다.
 
@@ -38,6 +39,8 @@ flowchart TD
     OS --> K8s["Kubernetes: 프로그램 배치·자원·상태 관리"]
     Network --> K8s
     Spark --> K8s
+    AI --> GPU["GPU Operator·DRA: 장치 관리·할당·준비"]
+    K8s --> GPU
 ```
 
 화살표는 다음 교재를 이해할 때 도움이 되는 관계다. 전부 완독해야 다음 것을 열 수 있다는 뜻은 아니다. 아래 상세 경로는 이미 첫 지도에서 기본 단어를 익힌 뒤 필요한 부분을 찾는 데 사용한다.
@@ -45,6 +48,8 @@ flowchart TD
 **Iceberg를 처음 공부한다면 [전용 교재](apache-iceberg/README.md)를 연다.** 파일·행·컬럼에서 시작해 13개 장으로 내부 구조, v2 삭제 파일, v3 삭제 벡터·행 계보·확장 타입, 최신 릴리스와 개발 중인 v4, 카탈로그·성능·스트리밍을 설명한다. 한글 SVG 그림과 Mermaid, 실제 로컬 실습, 문제·해설을 포함한다. 최신 정보의 확인 기준일은 2026-10-08이며 명세와 엔진 구현의 지원 범위를 구분한다.
 
 **실제 계산 엔진은 [Spark 교재](apache-spark/README.md), 실행 플랫폼은 [Kubernetes 교재](kubernetes/README.md)로 이어 읽는다.** Spark는 작은 표부터 실행 계획·shuffle·join·메모리·스트리밍·Iceberg 연동을 설명한다. Kubernetes는 컨테이너부터 Pod·Service·저장소·자원·권한·배포·진단을 설명하며 Spark driver/executor 실행으로 연결한다. 두 교재 모두 한국어 그림, 실습 경로, 문제·해설과 공식 자료를 포함한다.
+
+**GPU를 Kubernetes에서 쓰는 경로는 [GPU Operator·DRA 교재](gpu-operator-dra/README.md)에서 배운다.** Linux driver·CUDA·container부터 시작해 기존 device plugin과 최신 DRA 요청·선택·할당·준비를 설명한다. GPUCluster와 ClusterPolicy, CDI, MIG·time-slicing·MPS, ComputeDomain, 연구실의 과거 장애 사례를 구분하며 GPU 없는 로컬 모형과 문제·해설을 제공한다.
 
 ## 1. 정말 처음이라면 이 순서로 읽는다
 

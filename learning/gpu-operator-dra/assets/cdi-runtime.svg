@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">CDI: 선택한 장치를 container에 연결하기</title>
+<desc id="desc">CDI는 장치 주입 규격이다. GPU partitioning이나 수학 계산 라이브러리 자체가 아니다. 과거 운영 사례에서는 driver 준비와 CDI 생성이 겹쳐 nvidia-smi는 성공하지만 CUDA가 실패했다. CDI의 장치 노출, hardware 격리, 메모리 회계, 실제 program correctness는 각각 확인해야 한다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">CDI: 선택한 장치를 container에 연결하기</text>
+<text x="40" y="92" font-size="17" fill="#475569">CDI는 장치 주입 규격이다. GPU partitioning이나 수학 계산 라이브러리 자체가 아니다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. Claim allocation</text>
+<text x="60" y="218" font-size="17" fill="#334155">driver·pool·device identity 결정</text>
+<text x="60" y="242" font-size="17" fill="#334155">요청 조건을 만족한 배정 결과</text>
+<text x="60" y="266" font-size="17" fill="#334155">실제 container 접근은 아직 준비 필요</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. NodePrepareResources</text>
+<text x="680" y="218" font-size="17" fill="#334155">kubelet이 node-local driver에 요청</text>
+<text x="680" y="242" font-size="17" fill="#334155">driver가 GPU 사용 조건 준비</text>
+<text x="680" y="266" font-size="17" fill="#334155">CDI device 이름과 관련 설정 반환</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. CDI spec·device entry</text>
+<text x="60" y="448" font-size="17" fill="#334155">fully-qualified device name</text>
+<text x="60" y="472" font-size="17" fill="#334155">device nodes·mounts·hooks 등 설정</text>
+<text x="60" y="496" font-size="17" fill="#334155">실제 명세와 host 준비 상태 비교</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. CDI-compatible runtime</text>
+<text x="680" y="448" font-size="17" fill="#334155">요청된 CDI device 설정 적용</text>
+<text x="680" y="472" font-size="17" fill="#334155">OCI container 설정과 연결</text>
+<text x="680" y="496" font-size="17" fill="#334155">필요 runtime 기능이 켜져 있어야 함</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Container 접근</text>
+<text x="60" y="678" font-size="17" fill="#334155">device·library가 필요한 경로로 보임</text>
+<text x="60" y="702" font-size="17" fill="#334155">nvidia-smi는 관리 경로 조회</text>
+<text x="60" y="726" font-size="17" fill="#334155">UVM 등 CUDA 요구 경로가 다를 수 있음</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. 실제 CUDA 계산</text>
+<text x="680" y="678" font-size="17" fill="#334155">초기화·memory·kernel·결과 비교</text>
+<text x="680" y="702" font-size="17" fill="#334155">계산 예제 범위에서 성공 판단</text>
+<text x="680" y="726" font-size="17" fill="#334155">모델 전체·성능·장애 보장은 별도</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">prepare</text>
+<path d="M290 310 L290 340.0 L290 340.0 L290 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">device 식별</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">CDI 이름</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">접근 설정</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">실행 연결</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">계산</text>
+<text x="40" y="815" font-size="16" fill="#475569">과거 운영 사례에서는 driver 준비와 CDI 생성이 겹쳐 nvidia-smi는 성공하지만 CUDA가 실패했다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">CDI의 장치 노출, hardware 격리, 메모리 회계, 실제 program correctness는 각각 확인해야 한다.</text>
+</g>
+</svg>

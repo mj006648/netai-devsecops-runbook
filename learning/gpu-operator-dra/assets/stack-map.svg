@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">GPU: 하드웨어에서 Pod의 계산까지</title>
+<desc id="desc">여섯 상자의 의존·관리·할당·주입 관계를 구분한다. 실제 설치·측정 결과는 아니다. 일반 container는 host kernel과 driver를 공유한다. Driver·CUDA Toolkit·Container Toolkit은 역할이 다르다. 이 그림의 두 할당 경로는 비교 대상이다. 같은 물리 GPU를 두 allocator가 독립 관리하는 구성은 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">GPU: 하드웨어에서 Pod의 계산까지</text>
+<text x="40" y="92" font-size="17" fill="#475569">여섯 상자의 의존·관리·할당·주입 관계를 구분한다. 실제 설치·측정 결과는 아니다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. 물리 GPU·VRAM</text>
+<text x="60" y="218" font-size="17" fill="#334155">장치 identity·메모리·연결 구조</text>
+<text x="60" y="242" font-size="17" fill="#334155">GPU 두 장의 메모리가 자동 합산되지는 않음</text>
+<text x="60" y="266" font-size="17" fill="#334155">실제 hardware와 지원 기능 확인</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. Linux driver·CUDA</text>
+<text x="680" y="218" font-size="17" fill="#334155">Host kernel driver와 사용자 library</text>
+<text x="680" y="242" font-size="17" fill="#334155">관리 조회와 실제 계산은 다른 계약</text>
+<text x="680" y="266" font-size="17" fill="#334155">OS·kernel·CUDA 호환 조건 확인</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. GPU Operator</text>
+<text x="60" y="448" font-size="17" fill="#334155">선택한 관리 CR에 따라 구성요소 배포</text>
+<text x="60" y="472" font-size="17" fill="#334155">ClusterPolicy 또는 GPUCluster</text>
+<text x="60" y="496" font-size="17" fill="#334155">DRA 자체나 CUDA 계산 엔진과는 다름</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. 장치 광고·할당 경로</text>
+<text x="680" y="448" font-size="17" fill="#334155">Device plugin 또는 DRA 지원 경로</text>
+<text x="680" y="472" font-size="17" fill="#334155">개수·속성·공동 node 조건을 평가</text>
+<text x="680" y="496" font-size="17" fill="#334155">같은 GPU의 독립 중복 광고는 금지</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Runtime·CDI·Toolkit</text>
+<text x="60" y="678" font-size="17" fill="#334155">device·mount·library·설정 전달</text>
+<text x="60" y="702" font-size="17" fill="#334155">CDI-compatible runtime 준비 필요</text>
+<text x="60" y="726" font-size="17" fill="#334155">GPUCluster가 driver·Toolkit 모두 관리하지 않음</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Pod·CUDA 프로그램</text>
+<text x="680" y="678" font-size="17" fill="#334155">할당된 장치로 실제 workload 실행</text>
+<text x="680" y="702" font-size="17" fill="#334155">CUDA 초기화·계산·결과는 별도 확인</text>
+<text x="680" y="726" font-size="17" fill="#334155">Running·allocation 성공만으로 증명 불가</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">제어 연결</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">장치 정보</text>
+<path d="M540 455 L660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">관리 경로</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">장치 주입</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">할당</text>
+<text x="40" y="815" font-size="16" fill="#475569">일반 container는 host kernel과 driver를 공유한다. Driver·CUDA Toolkit·Container Toolkit은 역할이 다르다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">이 그림의 두 할당 경로는 비교 대상이다. 같은 물리 GPU를 두 allocator가 독립 관리하는 구성은 아니다.</text>
+</g>
+</svg>

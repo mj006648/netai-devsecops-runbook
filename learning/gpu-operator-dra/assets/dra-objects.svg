@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="870" viewBox="0 0 1200 870" role="img" aria-labelledby="title desc">
+<title id="title">DRA 객체: inventory·선택·요청·소비</title>
+<desc id="desc">Cluster scope와 namespace scope, 요청 이름과 실제 device identity를 구별한다. ResourceSlice는 장치 목록, DeviceClass는 규칙, ResourceClaim은 요청과 결과다. 같은 객체가 아니다. Attribute와 capacity의 domain/key는 해당 driver가 공개한다. 임의 GPU 속성을 표준 필드로 만들지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="870" rx="18" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="54" font-size="30" font-weight="700" fill="#0f172a">DRA 객체: inventory·선택·요청·소비</text>
+<text x="40" y="92" font-size="17" fill="#475569">Cluster scope와 namespace scope, 요청 이름과 실제 device identity를 구별한다.</text>
+<rect x="40" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="40" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="58" y="172" font-size="21" font-weight="700" fill="#1e40af">1. ResourceSlice: inventory</text>
+<text x="60" y="218" font-size="17" fill="#334155">Driver가 장치·pool·속성·용량 공개</text>
+<text x="60" y="242" font-size="17" fill="#334155">Cluster-scoped API 객체</text>
+<text x="60" y="266" font-size="17" fill="#334155">node·device 이름과 지원 attribute 확인</text>
+<rect x="660" y="140" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="140" width="500" height="48" rx="14" fill="#dbeafe"/>
+<rect x="660" y="167" width="500" height="21" fill="#dbeafe"/>
+<text x="678" y="172" font-size="21" font-weight="700" fill="#1e40af">2. DeviceClass: 규칙</text>
+<text x="680" y="218" font-size="17" fill="#334155">관리자/driver가 선택 규칙·설정 제공</text>
+<text x="680" y="242" font-size="17" fill="#334155">Cluster-scoped 장치 종류/정책</text>
+<text x="680" y="266" font-size="17" fill="#334155">Class 이름은 물리 GPU UUID가 아님</text>
+<rect x="40" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="58" y="402" font-size="21" font-weight="700" fill="#115e59">3. ResourceClaimTemplate</text>
+<text x="60" y="448" font-size="17" fill="#334155">namespace의 Claim 생성 청사진</text>
+<text x="60" y="472" font-size="17" fill="#334155">Pod별 concrete Claim을 생성</text>
+<text x="60" y="496" font-size="17" fill="#334155">원본 변경이 기존 Claim을 자동 수정하지 않음</text>
+<rect x="660" y="370" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="370" width="500" height="48" rx="14" fill="#ccfbf1"/>
+<rect x="660" y="397" width="500" height="21" fill="#ccfbf1"/>
+<text x="678" y="402" font-size="21" font-weight="700" fill="#115e59">4. ResourceClaim</text>
+<text x="680" y="448" font-size="17" fill="#334155">namespace의 구체 장치 요청</text>
+<text x="680" y="472" font-size="17" fill="#334155">exactly 또는 firstAvailable 조건</text>
+<text x="680" y="496" font-size="17" fill="#334155">status allocation·reservation 기록</text>
+<rect x="40" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="40" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="58" y="632" font-size="21" font-weight="700" fill="#5b21b6">5. Pod resourceClaims</text>
+<text x="60" y="678" font-size="17" fill="#334155">Claim 또는 Template을 참조</text>
+<text x="60" y="702" font-size="17" fill="#334155">Pod 지역 참조 이름: accelerator</text>
+<text x="60" y="726" font-size="17" fill="#334155">Claim object 이름과 별도</text>
+<rect x="660" y="600" width="500" height="170" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="660" y="600" width="500" height="48" rx="14" fill="#ede9fe"/>
+<rect x="660" y="627" width="500" height="21" fill="#ede9fe"/>
+<text x="678" y="632" font-size="21" font-weight="700" fill="#5b21b6">6. Container resources.claims</text>
+<text x="680" y="678" font-size="17" fill="#334155">name: accelerator로 Pod 참조 연결</text>
+<text x="680" y="702" font-size="17" fill="#334155">request: gpu로 요청 일부 선택 가능</text>
+<text x="680" y="726" font-size="17" fill="#334155">배정된 실제 GPU 이름·UUID와 별도</text>
+<path d="M540 225 L660 225" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="212" font-size="14" text-anchor="middle" fill="#334155">선택 대상</text>
+<path d="M910 310 L910 340.0 L910 340.0 L910 370" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="331.0" font-size="14" text-anchor="start" fill="#334155">정책</text>
+<path d="M540 455 L660 455" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="442" font-size="14" text-anchor="middle" fill="#334155">생성</text>
+<path d="M290 540 L290 570.0 L290 570.0 L290 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="302.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">Template 참조</text>
+<path d="M910 540 L910 570.0 L910 570.0 L910 600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="922.0" y="561.0" font-size="14" text-anchor="start" fill="#334155">할당 결과</text>
+<path d="M540 685 L660 685" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="600.0" y="672" font-size="14" text-anchor="middle" fill="#334155">지역 이름</text>
+<text x="40" y="815" font-size="16" fill="#475569">ResourceSlice는 장치 목록, DeviceClass는 규칙, ResourceClaim은 요청과 결과다. 같은 객체가 아니다.</text>
+<text x="40" y="838" font-size="16" fill="#475569">Attribute와 capacity의 domain/key는 해당 driver가 공개한다. 임의 GPU 속성을 표준 필드로 만들지 않는다.</text>
+</g>
+</svg>
