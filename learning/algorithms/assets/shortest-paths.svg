@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" role="img" aria-labelledby="title desc">
+  <title id="title">Dijkstra relaxation</title>
+  <desc id="desc">A에서 C를 거쳐 B와 D로 가는 비용 4의 최단 경로</desc>
+  <rect width="960" height="320" fill="#f5f3ff"/>
+  <g stroke="#6d28d9" stroke-width="3" fill="none"><path d="M120 160L360 70"/><path d="M120 160L360 250"/><path d="M360 250L600 70"/><path d="M360 70L820 160"/><path d="M360 250L820 160"/></g>
+  <g font-family="sans-serif" font-size="17" fill="#4c1d95"><text x="230" y="93">4</text><text x="230" y="235">1</text><text x="470" y="155">2</text><text x="610" y="95">1</text><text x="610" y="245">5</text></g>
+  <g fill="#ede9fe" stroke="#6d28d9" stroke-width="2" font-family="sans-serif" font-size="20" text-anchor="middle"><circle cx="120" cy="160" r="34"/><circle cx="360" cy="70" r="34"/><circle cx="360" cy="250" r="34"/><circle cx="820" cy="160" r="34"/><text x="120" y="167">A:0</text><text x="360" y="77">B:3</text><text x="360" y="257">C:1</text><text x="820" y="167">D:4</text></g>
+  <text x="480" y="305" text-anchor="middle" font-family="sans-serif" font-size="17" fill="#312e81">A→C→B→D = 1+2+1 = 4</text>
+</svg>

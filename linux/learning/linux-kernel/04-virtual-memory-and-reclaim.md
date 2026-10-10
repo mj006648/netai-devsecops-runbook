@@ -85,6 +85,49 @@ virtual address bits:
 
 실제 단계 수와 bit 배치는 architecture, page size, 5-level paging 여부에 따라 다르다. 원리는 “큰 sparse 주소 공간을 계층형 표로 압축한다”이다.
 
+### 주소 하나가 TLB miss와 page fault를 거쳐 RAM에 닿는 과정
+
+가상 주소 `0x12345`를 읽는다고 하자. 4KiB page에서 virtual page number는 `0x12`, page offset은 `0x345`다. offset은 page 안의 위치이므로 주소 변환 뒤에도 그대로 붙는다.
+
+먼저 page가 이미 RAM에 있고 page table entry(PTE)도 present인 경우다.
+
+```text
+1. CPU가 TLB에서 virtual page 0x12를 찾는다.
+2. miss이면 page-table root부터 entry를 단계별로 읽는다.
+3. leaf PTE가 physical frame 0x9ab, present/readable이라고 알려 준다.
+4. CPU가 TLB에 0x12 → 0x9ab 변환을 cache한다.
+5. physical address = frame base 0x9ab000 + offset 0x345 = 0x9ab345
+6. CPU cache/RAM 계층에서 실제 data를 읽는다.
+```
+
+이 경로의 TLB miss는 page fault가 아니다. hardware page-table walk가 성공하면 현재 process의 kernel fault handler에 들어가지 않고 instruction을 계속할 수 있다. 다만 page-table entry 자체를 읽는 동안 cache miss가 나면 여러 번의 memory access가 필요해져 느려질 수 있다.
+
+이번에는 PTE가 non-present이고 해당 주소가 합법적인 anonymous mapping 안에 있다고 하자.
+
+```mermaid
+flowchart TD
+    A[CPU가 가상 주소 load] --> T{TLB hit?}
+    T -->|예| M[물리 주소로 cache/RAM 접근]
+    T -->|아니오| W[page table walk]
+    W --> P{PTE present이고 권한 맞음?}
+    P -->|예| F[TLB 채움] --> M
+    P -->|아니오| X[page-fault exception으로 kernel 진입]
+    X --> V{VMA 안의 합법 접근?}
+    V -->|아니오| S[SIGSEGV 등 오류]
+    V -->|예| Z[zero page 할당 또는 file/swap에서 가져오기]
+    Z --> U[PTE 갱신, 필요 시 TLB 처리]
+    U --> R[중단한 instruction 재시도]
+    R --> M
+```
+
+여기서 같은 load instruction이 fault 처리 뒤 재시도될 수 있다. 사용자 코드는 “load를 두 번 호출”하지 않았지만 CPU 실행 관점에서는 처음 시도가 완료되지 못했고 kernel이 조건을 만든 뒤 다시 수행한다.
+
+작은 계산으로 page-table walk 비용을 감각화하자. 교육용 4단계 walk에서 각 단계 entry가 모두 cache miss이고 memory 접근이 각각 80ns, 마지막 data 접근도 80ns라고 단순화하면 `4 × 80ns + 80ns = 400ns`다. 실제 CPU는 page-walk cache, 여러 cache level, 병렬 실행을 사용하므로 이 수치를 성능 예측값으로 쓰면 안 된다. 목적은 TLB가 최근 변환을 보관하는 이유를 보는 것이다.
+
+page fault도 비용이 하나가 아니다. demand-zero minor fault는 새 frame과 page table을 준비하면 되지만, file data나 swap을 storage에서 기다리는 major fault는 훨씬 오래 걸릴 수 있다. Linux 통계에서 minor/major의 정확한 분류와 storage I/O 관계는 kernel 버전과 경로를 함께 해석한다.
+
+조건이 바뀌는 반례도 있다. huge page를 쓰면 offset bit가 늘고 같은 주소 범위를 덮는 TLB entry 수가 줄 수 있다. 반대로 권한 위반은 PTE가 존재해도 page fault를 일으킨다. Copy-on-write write fault는 “page가 RAM에 없음”이 아니라 공유 read-only mapping을 private writable page로 바꾸기 위한 정상 fault다.
+
 ## 3. TLB miss와 page fault는 다르다
 
 **TLB(Translation Lookaside Buffer)**는 최근 virtual→physical 변환을 cache하는 CPU 내부 구조다. TLB hit이면 page table walk 없이 빠르게 주소 변환을 한다.
@@ -156,6 +199,41 @@ RAM 압박이 생기면 kernel은 page를 회수하려 한다. **reclaimable pag
 | kernel slab 일부 | shrinker로 회수 가능 |
 
 kernel.org memory allocation guide는 allocation이 direct reclaim 또는 kswapd 같은 background reclaim을 유발할 수 있음을 설명한다. 즉 메모리 할당이 단순히 “빈 page 하나 가져오기”가 아니라, 다른 cache를 줄이고 writeback을 기다리는 비싼 경로가 될 수 있다.
+
+### direct reclaim과 background reclaim을 시간축으로 나누기
+
+reclaim을 “메모리를 비운다”로만 설명하면 어떤 application이 지연을 직접 맞는지 알기 어렵다. 새 64KiB buffer를 할당하려는 task T가 있는데 적합한 free page가 부족하다고 하자.
+
+```text
+t0: T가 allocation 요청
+t1: allocator가 즉시 쓸 free page를 찾지 못함
+t2: watermark와 allocation 조건에 따라 kswapd를 깨우거나 T가 direct reclaim 진입
+t3: reclaim이 후보 page를 검사
+    - clean file page: 버리고 free 가능
+    - dirty file page: writeback 필요
+    - anonymous page: swap 가능 여부 확인
+    - unevictable page: 건너뜀
+t4: 필요한 수의 page를 확보하면 T의 allocation 재시도
+t5: 계속 실패하면 compaction, 재시도, OOM 판단 같은 다른 경로가 이어질 수 있음
+```
+
+**kswapd**는 zone의 free memory가 낮아질 때 미리 움직이는 background kernel thread다. **direct reclaim**은 allocation을 요청한 task가 자기 실행 시간으로 reclaim 일을 하는 경로다. 따라서 CPU 사용률이 낮아 보여도 request latency가 튈 수 있다. 요청 thread가 dirty writeback이나 swap I/O 진행을 기다리면 응답 시간이 storage 상태와 연결된다.
+
+4KiB base page에서 64KiB를 위해 단순히 16개 page가 필요하다고 계산할 수 있다. 하지만 물리적으로 연속된 고차(order) allocation이면 “free page 총합이 16개 이상”만으로 충분하지 않을 수 있다. fragmentation과 compaction이 추가된다. 일반 user-space 64KiB anonymous allocation이 반드시 연속 16 page를 요구한다는 뜻은 아니다. 이 반례는 allocation order를 함께 봐야 하는 이유다.
+
+reclaim과 swap의 관계도 조건문으로 읽는다.
+
+| 압박 상황 | 먼저 가능한 선택 | 선택이 막히는 조건 |
+|---|---|---|
+| clean file cache가 많음 | 원본이 storage에 있으므로 drop | 다시 읽을 때 cache miss/I/O 발생 |
+| dirty file cache가 많음 | writeback 뒤 회수 | storage가 느리거나 writeback 제한에 걸림 |
+| cold anonymous가 많고 swap 있음 | swap out 뒤 frame 회수 | swap 공간·I/O가 병목 |
+| anonymous가 많고 swap 없음 | file cache/slab 등 다른 대상에 더 의존 | reclaim 가능한 대상이 부족해 OOM 위험 증가 |
+| cgroup limit 도달 | 해당 cgroup 범위에서 reclaim | host 전체 free memory가 남아도 cgroup OOM 가능 |
+
+예상 결과는 swap 사용량이 0이라고 해서 reclaim이 없었다는 뜻이 아니라는 것이다. clean page cache만 버렸을 수도 있다. 반대로 swap 사용량이 남아 있어도 지금 계속 swap I/O 중이라는 뜻은 아니다. 오래전에 밀려난 cold page가 swap slot에 머물 수 있다.
+
+`MemAvailable`이 남는데 지연이 생기는 반례도 있다. 특정 NUMA node나 memory cgroup에서만 압박이 있거나, 필요한 allocation order를 만족하는 연속 공간이 없거나, dirty page 비율 때문에 task가 throttle될 수 있다. 그래서 “free MB 한 숫자”보다 allocation 주체, cgroup, NUMA node, page 종류, PSI와 I/O를 같은 시간축에서 본다.
 
 ## 8. swap은 느린 RAM이 아니라 anonymous page의 대피소다
 

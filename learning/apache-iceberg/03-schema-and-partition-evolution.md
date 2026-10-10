@@ -102,6 +102,50 @@ WHERE ordered_at >= TIMESTAMP '2026-10-02 00:00:00'
 
 ## 5. 파티션 명세를 바꿔도 과거 파일이 남는다
 
+### Rename과 partition evolution을 동시에 읽는다
+
+초기 schema에서 `customer_name`의 field ID가 7이고 `ordered_at`의 field ID가 9라고 하자. Schema 변경으로 `customer_name`을 `buyer_name`으로 rename해도 ID 7은 유지한다. 새 이름으로 쓴 B 파일과 옛 이름 시절의 A 파일을 reader는 같은 ID 7 컬럼으로 연결한다.
+
+| 파일 | 작성 당시 컬럼 이름 | field ID | 현재 query 이름 | 읽은 값 |
+| --- | --- | ---: | --- | --- |
+| A.parquet | `customer_name` | 7 | `buyer_name` | Kim |
+| B.parquet | `buyer_name` | 7 | `buyer_name` | Lee |
+
+이름 문자열만 맞추는 reader라면 A의 값을 잃거나, 삭제 후 같은 이름으로 새 컬럼을 만든 경우 다른 의미를 섞을 수 있다. Iceberg schema evolution에서 field ID가 의미의 연속성을 지키는 이유다.
+
+이제 partition spec도 바꿔 보자. Spec 0은 `days(ordered_at)`, spec 1은 `hours(ordered_at)`이다. A는 spec 0에서 `2026-10-10`, B와 C는 spec 1에서 `2026-10-10-09`, `2026-10-10-10`에 쓰였다.
+
+```text
+A.parquet: spec_id=0, partition={day=2026-10-10}
+B.parquet: spec_id=1, partition={hour=2026-10-10-09}
+C.parquet: spec_id=1, partition={hour=2026-10-10-10}
+```
+
+09:30~10:15 조회는 A의 day partition을 후보로 남긴 뒤 행 조건을 적용해야 한다. B와 C도 각각 hour 후보지만 B 전체가 정답은 아니다. B의 09:00~09:29 행과 C의 10:16 이후 행은 residual predicate에서 제외한다.
+
+```mermaid
+flowchart LR
+    Q["09:30 ≤ ordered_at < 10:15"] --> S0["spec 0: day(ordered_at)"]
+    Q --> S1["spec 1: hour(ordered_at)"]
+    S0 --> A["A: day 10일 후보"]
+    S1 --> B["B: hour 09 후보"]
+    S1 --> C["C: hour 10 후보"]
+    A --> R["원래 timestamp 조건 재평가"]
+    B --> R
+    C --> R
+```
+
+Partition evolution 때 누가 무엇을 바꾸는지도 구분한다. Metadata commit은 새 spec을 추가하고 `default-spec-id`를 spec 1로 바꾼다. 새 writer는 spec 1로 partition tuple을 만든다. 과거 A의 bytes와 spec ID 0은 그대로다. Reader가 각 manifest entry의 spec ID에 맞는 transform으로 함께 계획한다.
+
+| 시점 | 주체 | 변화 |
+| --- | --- | --- |
+| 진화 commit | Table metadata writer | spec 1 추가, 기본 spec 변경 |
+| 다음 write | Data writer | B·C에 spec 1 partition 값 기록 |
+| 혼합 read | Scan planner | spec 0과 spec 1을 각각 projection |
+| 행 읽기 | Reader | 원래 timestamp residual 적용 |
+
+**반례.** Default spec이 hour로 바뀌었다고 A를 hour directory로 즉시 옮기거나 다시 쓰지 않는다. 물리 rewrite는 별도 maintenance 작업이다. 또 hour가 day보다 세밀하므로 모든 query가 빨라진다고 단정할 수 없다. 파일 수와 쓰기 분포 비용이 늘 수 있다.
+
 처음에는 월별로 묶고 나중에는 일별로 묶는다고 하자. **Partition spec**은 어떤 source field를 어떤 transform으로 묶는지 설명하는 명세이고, **spec ID**는 이 명세를 구별한다.
 
 ```text

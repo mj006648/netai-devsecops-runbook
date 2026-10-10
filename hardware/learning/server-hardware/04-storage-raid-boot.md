@@ -422,6 +422,40 @@ RAID6은 두 개의 독립적인 패리티 정보를 둔다.
 RAID6의 Q 패리티 계산은 처음 배우는 장에서 유한체 수학까지 들어갈 필요는 없다.
 핵심은 "두 번째 패리티는 단순 복사본이 아니라 서로 다른 복구 방정식 하나를 더 두는 것"이다.
 
+#### 작은 RAID5 쓰기를 시간순으로 추적하기
+
+정의만으로는 전원 장애가 왜 까다로운지 보이지 않는다. `A=10110010`, `B=01100110`, `P=A XOR B=11010100`인 stripe에서 A를 `A'=11110010`으로 바꾼다고 하자.
+
+```text
+변경분 delta = A XOR A'
+               10110010 XOR 11110010
+             = 01000000
+
+새 패리티 P' = P XOR delta
+               11010100 XOR 01000000
+             = 10010100
+
+검산: A' XOR B
+      11110010 XOR 01100110
+    = 10010100
+```
+
+누가 언제 무엇을 하는지 나누면 다음과 같다.
+
+| 순서 | 컨트롤러/소프트웨어 RAID | 디스크 | 아직 남은 위험 |
+|---:|---|---|---|
+| 1 | 논리 쓰기가 속한 stripe와 data chunk를 찾음 | 기존 A와 P를 읽음 | 읽기 실패면 쓰기를 진행하지 못할 수 있음 |
+| 2 | A', delta, P'를 메모리에서 계산 | 아직 기존 값 유지 | controller cache가 휘발성이면 전원 장애에 취약 |
+| 3 | 새 data A' 쓰기 제출 | D0가 A' 기록 | 이때 멈추면 P는 옛 값일 수 있음 |
+| 4 | 새 parity P' 쓰기 제출 | D2가 P' 기록 | 두 쓰기의 완료·순서를 관리해야 함 |
+| 5 | 필요한 flush와 metadata 처리를 마침 | 안정 매체에 반영 | 그 뒤에야 상위 계층 완료 의미를 판단 |
+
+3단계와 4단계 사이에 전원이 끊기면 data와 parity가 서로 다른 세대를 가리키는 **write hole**이 생길 수 있다. 보호된 write-back cache, journal/bitmap, full-stripe write 같은 기법은 이 위험이나 복구 비용을 줄이지만 제품과 구성마다 보장이 다르다. RAID5에 패리티가 있다는 사실만으로 모든 중간 상태를 자동 복구하지는 않는다.
+
+큰 순차 쓰기가 stripe의 모든 data chunk를 새로 제공하면 이전 data와 이전 parity를 읽지 않고 새 data들로 parity를 계산하는 **reconstruct write/full-stripe write**가 가능하다. 위 예에서 A'와 B'가 모두 준비됐다면 `P'=A' XOR B'`를 바로 계산한다. 쓰기가 stripe 경계와 맞지 않거나 일부 chunk만 바꾸면 이전 값이 다시 필요할 수 있다.
+
+작은 랜덤 쓰기에서는 호스트가 4KiB를 바꿨는데 배열 내부 I/O는 old data read, old parity read, new data write, new parity write로 늘 수 있다. 흔히 “RAID5 write penalty 4”라고 요약하지만 이는 이 단순 read-modify-write 모델의 I/O 횟수다. cache, queue 병합, full-stripe 최적화, SSD 내부 쓰기 증폭까지 합친 보편적인 4배 latency 식은 아니다.
+
 ### Rebuild와 URE의 한계
 
 rebuild는 고장 난 디스크를 교체한 뒤 남은 디스크들의 데이터와 패리티로 새 디스크 내용을 다시 만드는 과정이다.
@@ -446,6 +480,36 @@ URE 사양을 1 per 10^14 bits로 단순 모델링하면
 이 계산은 실제 제품의 보증 실패율이 아니고, 컨트롤러의 재시도·섹터 재배치·작업 부하도 생략했다.
 운영 판단에서 얻는 결론은 명확하다.
 큰 디스크 여러 개의 RAID5를 "한 개 고장 허용이니까 충분"이라고만 보지 말고, rebuild 시간, URE 사양, 백업, 스크럽, 핫스페어, RAID6/RAID10 대안을 함께 검토한다.
+
+#### degraded read와 rebuild는 무엇이 다른가
+
+3디스크 RAID5에서 data A를 담은 D0가 고장 났다고 하자. 서비스가 A를 읽을 때마다 컨트롤러는 `A=B XOR P`를 계산한다. 이것이 degraded read다. 아직 교체 디스크가 없다면 계산한 A는 요청에 답하는 데 쓰일 뿐 배열 전체가 복구된 것은 아니다.
+
+```mermaid
+flowchart LR
+    R[호스트가 A 읽기] --> M{D0 사용 가능?}
+    M -->|정상| D0[D0에서 A 읽기]
+    M -->|고장| B[D1에서 B 읽기]
+    M -->|고장| P[D2에서 P 읽기]
+    B --> X[A = B XOR P 계산]
+    P --> X
+    X --> H[호스트에 A 반환]
+    X -. 교체 디스크가 있을 때 .-> N[새 D0에 A 기록]
+```
+
+rebuild는 모든 stripe를 순회하며 이 복구를 반복해 새 디스크를 채운다. 복구해야 할 유효 data가 8TB이고 배열이 지속적으로 200MB/s를 rebuild에 쓸 수 있다고 단순화하면 `8,000,000MB / 200MB/s = 40,000초`, 약 11.1시간이다. 실제 시간은 서비스 I/O 경쟁, 느린 구간, 오류 재시도, controller throttle, TB/TiB 차이 때문에 더 길 수 있다.
+
+```text
+t0: D0 고장 → 배열 degraded, 보호 여유 감소
+t1: 호스트 읽기/쓰기는 남은 D1·D2로 계속될 수 있음
+t2: 새 D0 장착 → stripe별로 B와 P를 읽고 A를 계산
+t3: 계산한 A를 새 D0에 기록; 서비스 I/O와 rebuild I/O가 경쟁
+t4: 모든 stripe와 metadata 처리가 끝나야 다시 정상 보호 상태
+```
+
+degraded 상태에서 파일이 읽힌다고 해서 복구가 끝난 것이 아니다. rebuild 진행률 99%도 99%의 파일이 안전하다는 뜻은 아니다. 남은 1%에 아직 복구하지 않은 stripe가 있고, 그동안 다른 멤버가 실패하면 데이터 손실 범위가 생길 수 있다.
+
+RAID1의 degraded read는 살아 있는 미러 한쪽에서 그대로 읽으므로 XOR 재구성이 없다. RAID6는 한 디스크 고장 뒤에도 두 번째 패리티 보호가 남지만 어떤 추가 오류든 무조건 견디지는 않는다. hot spare는 rebuild 시작을 앞당길 수 있지만 백업을 만들지 않으며, silent corruption을 알아채려면 checksum·scrub 같은 별도 검출 기작이 필요하다.
 
 ### A7의 RAID1 계산
 

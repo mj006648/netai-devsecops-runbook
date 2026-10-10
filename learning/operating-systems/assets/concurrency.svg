@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="360" viewBox="0 0 940 360" role="img">
+  <title>lost update와 lock</title><desc>두 스레드가 같은 counter를 읽고 덮어써 증가 하나가 사라지는 과정</desc>
+  <style>.h{fill:#234f7d}.c{fill:#edf5ff;stroke:#234f7d;stroke-width:2}.w{font:18px sans-serif;fill:white}.t{font:17px sans-serif}</style>
+  <rect class="h" x="60" y="25" width="250" height="55"/><rect class="h" x="345" y="25" width="250" height="55"/><rect class="h" x="630" y="25" width="250" height="55"/>
+  <text class="w" x="185" y="60" text-anchor="middle">Thread A</text><text class="w" x="470" y="60" text-anchor="middle">shared counter</text><text class="w" x="755" y="60" text-anchor="middle">Thread B</text>
+  <rect class="c" x="60" y="110" width="250" height="55"/><text class="t" x="185" y="143" text-anchor="middle">read 0</text>
+  <rect class="c" x="630" y="110" width="250" height="55"/><text class="t" x="755" y="143" text-anchor="middle">read 0</text>
+  <rect class="c" x="60" y="200" width="250" height="55"/><text class="t" x="185" y="233" text-anchor="middle">write 1</text>
+  <rect class="c" x="630" y="200" width="250" height="55"/><text class="t" x="755" y="233" text-anchor="middle">write 1</text>
+  <text class="t" x="470" y="305" text-anchor="middle">두 번 증가했지만 최종값 1 · lock은 read-modify-write 전체를 보호</text>
+</svg>

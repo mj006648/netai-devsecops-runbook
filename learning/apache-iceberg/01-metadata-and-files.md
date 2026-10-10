@@ -126,6 +126,57 @@ flowchart TD
 
 ## 8. 전체를 손으로 추적한다
 
+### 실제 주소를 가진 두 snapshot 추적
+
+교육용 warehouse가 `s3://lake/warehouse/lab/orders`이고 카탈로그가 현재 metadata 위치로 `metadata/00002.metadata.json`을 반환한다고 하자. 이름은 단순화했지만 참조 방향은 실제 구조와 같다.
+
+```text
+catalog: lab.orders
+  → s3://lake/warehouse/lab/orders/metadata/00002.metadata.json
+      current-snapshot-id = 9002
+      snapshot 9002 manifest-list = metadata/snap-9002.avro
+        → metadata/m0.avro
+            → data/orders-A.parquet  status=EXISTING, records=3
+        → metadata/m1.avro
+            → data/orders-B.parquet  status=ADDED, records=1
+```
+
+이 경로에서 카탈로그가 바꾸는 것은 `lab.orders`의 현재 metadata 위치다. Metadata JSON은 현재 snapshot ID와 snapshot별 manifest-list 주소를 보유한다. Manifest list는 manifest 주소와 요약을, manifest는 data/delete file 단위 엔트리를 보유한다. Parquet 파일은 업무 행을 보유한다.
+
+| 조회 | 선택한 metadata | snapshot | 읽을 data file |
+| --- | --- | ---: | --- |
+| S1 time travel | `00001.metadata.json`의 기록 | 9001 | A |
+| 현재 조회 | `00002.metadata.json` | 9002 | A, B |
+
+현재 metadata가 `00002`로 바뀌어도 `00001`, `snap-9001`, A가 즉시 삭제되는 것은 아니다. 보존 중인 snapshot이나 tag가 참조할 수 있기 때문이다. 반대로 B가 object store에 존재해도 snapshot 9002로 이어지는 manifest에 없으면 현재 테이블 행이 아니다.
+
+```mermaid
+flowchart TD
+    C["catalog: lab.orders"] --> J2["00002.metadata.json"]
+    J2 --> S2["snapshot 9002"]
+    S2 --> L2["snap-9002.avro"]
+    L2 --> M0["m0.avro"]
+    L2 --> M1["m1.avro"]
+    M0 --> A["orders-A.parquet"]
+    M1 --> B["orders-B.parquet"]
+    J1["00001.metadata.json"] -. history .-> S1["snapshot 9001"]
+    S1 -.-> A
+```
+
+Manifest list가 “A와 B의 행을 직접 가진다”고 말하면 계층을 한 단계 건너뛴 설명이다. Manifest list는 manifest를 찾고 pruning할 요약을 가진다. 개별 data file의 path·record count·컬럼 통계는 manifest entry에서 찾는다.
+
+**반례.** `data/` 아래 Parquet 두 개를 직접 읽어 현재 snapshot을 재현할 수 있다고 가정하면, 제거된 옛 파일·커밋 실패 파일·delete file을 놓칠 수 있다. 현재 pointer에서 아래로 참조를 따라가야 한다.
+
+### Reader가 주소를 고정하는 시점
+
+Reader R1이 09:00에 snapshot 9001을 계획했고 writer가 09:01에 snapshot 9002를 커밋했다고 하자. R1은 계획한 9001의 A를 계속 읽는다. 09:02에 시작한 R2는 기본 조회에서 9002의 A+B를 선택한다. 한 query가 A를 읽는 도중 B를 즉석에서 끼워 넣는 방식이 아니다.
+
+| 시각 | 현재 pointer | R1 | R2 |
+| --- | --- | --- | --- |
+| 09:00 | 00001 / S9001 | S9001 선택 | 아직 없음 |
+| 09:01 | 00002 / S9002 | S9001의 A 읽기 | 아직 없음 |
+| 09:02 | 00002 / S9002 | A 기준 결과 | S9002의 A+B 계획 |
+
 `SELECT * FROM orders`를 실행하는 독자가 있다고 하자.
 
 1. 카탈로그에서 orders의 현재 metadata를 찾는다.

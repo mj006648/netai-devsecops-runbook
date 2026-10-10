@@ -167,6 +167,60 @@ Decode는 보통 token 하나씩 진행한다.
 서빙 시스템은 두 구간의 SLO를 따로 봐야 한다.
 TTFT만 좋아지고 ITL이 나빠질 수도 있고, throughput을 올리다 tail latency가 나빠질 수도 있다.
 
+### 네 prompt token과 세 생성 token의 KV 시간표
+
+“Prefill은 한 번, decode는 반복”이라는 말을 실제 cache 변화로 펼쳐 보자. 설명을 단순화하려고 layer 1개, KV head 1개, head dimension 2, FP16을 가정한다. Token 하나가 추가할 KV payload는 다음과 같다.
+
+```text
+K: 1 head × 2 values × 2 bytes = 4 bytes
+V: 1 head × 2 values × 2 bytes = 4 bytes
+token당 KV = 8 bytes
+```
+
+Prompt가 `[나는, 작은, 모델을, 본다]` 네 token이고, 모델이 `[오늘, 직접, 끝]` 세 token을 생성한다고 하자. 실제 token ID와 벡터값은 tokenizer와 model이 정하지만, cache의 수명은 다음처럼 읽는다.
+
+| 시점 | 이번 계산의 query | attention이 읽는 K/V 위치 | 계산 뒤 cache | payload |
+|---|---|---|---:|---:|
+| prefill | prompt 4개 | causal mask 아래 prompt 1~4 | 4 token | 32 B |
+| decode 1 | 마지막 prompt 위치에서 다음 token 예측 | prompt 4개 | 생성 token `오늘`의 KV를 추가해 5 | 40 B |
+| decode 2 | `오늘` | prompt 4 + `오늘` | `직접`의 KV를 추가해 6 | 48 B |
+| decode 3 | `직접` | prompt 4 + 생성 2 | `끝`의 KV를 추가해 7 | 56 B |
+
+표에서 “이번 token의 KV를 언제 넣는가”는 구현 표현에 따라 한 칸 다르게 설명될 수 있다. 불변인 사실은 다음 token을 계산할 때 지금까지 처리한 모든 위치의 K/V가 필요하고, sequence가 한 token 늘 때마다 layer별 cache도 한 위치씩 자란다는 점이다.
+
+```mermaid
+sequenceDiagram
+    participant S as Scheduler
+    participant G as GPU model
+    participant K as KV cache
+    S->>G: prompt 4 token prefill
+    G->>K: 4개 위치 K/V 기록
+    G-->>S: first token 오늘
+    S->>G: 오늘 1 token decode
+    K-->>G: 과거 4개 위치 K/V
+    G->>K: 오늘 위치 K/V 추가
+    G-->>S: 직접
+    S->>G: 직접 1 token decode
+    K-->>G: 과거 5개 위치 K/V
+    G->>K: 직접 위치 K/V 추가
+    G-->>S: 끝
+```
+
+Prefill에서는 네 query 위치를 한 번에 계산하지만 causal mask 때문에 첫 위치는 자기까지 1개, 넷째 위치는 4개 key만 볼 수 있다. Decode에서는 새 query가 하나뿐이어도 과거 K/V 읽기 범위는 4개, 5개, 6개로 늘어난다. 그래서 decode step의 새 계산량은 작아 보여도 context가 길어질수록 cache read traffic은 커진다.
+
+실제 모델 크기로 환산해 보자. Layer 32, KV head 8, head dimension 128, FP16이면 token당 KV는 다음과 같다.
+
+```text
+2(K,V) × 32 layers × 8 KV heads × 128 × 2 bytes
+= 131,072 bytes = 128 KiB/token
+```
+
+Prompt 4,096 token의 prefill이 끝나면 단일 요청의 논리적 payload는 `4,096 × 128 KiB = 512 MiB`다. 여기서 100 token을 더 생성하면 `12.5 MiB`가 추가된다. Block allocator라면 마지막 block의 빈칸과 metadata 때문에 실제 예약량은 더 클 수 있다.
+
+요청이 취소되면 scheduler는 더 이상 decode batch에 넣지 않고, 해당 요청만 참조하는 KV block을 반환해야 한다. Prefix block을 다른 요청과 공유한다면 reference count만 줄이고 마지막 사용자가 끝날 때 반환한다. “HTTP 연결이 끊겼다”와 “GPU kernel이 끝났다”, “KV block이 재사용 가능해졌다”는 서로 다른 시각이다.
+
+반례로, KV cache가 있으면 이전 token 계산이 완전히 사라지는 것은 아니다. 이전 위치의 K/V projection 재계산은 피하지만, 새 query가 과거 K와 점수를 만들고 과거 V를 가중합하는 읽기는 계속 필요하다. Cache는 모든 attention 비용을 O(1)로 만드는 장치가 아니라 중복 projection을 줄이고 상태를 메모리로 보존하는 trade-off다.
+
 ## 6. Static batching, continuous batching
 
 **Static batching**은 같은 시점에 들어온 요청들을 묶고, batch 전체가 끝날 때까지 같이 움직이는 단순 방식이다.

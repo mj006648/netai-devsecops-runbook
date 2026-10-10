@@ -143,6 +143,53 @@ PyTorch autograd 문서는 forward pass 때 연산 그래프를 만들고, backw
 gradient가 매우 작거나 커지는 문제, 불연속 연산, dtype overflow, custom kernel의 잘못된 backward는 여전히 사람이 확인해야 한다.
 autograd가 계산해준다는 것은 “정의된 그래프에 대해 미분 규칙을 적용했다”는 뜻이지 “학습이 성공한다”는 뜻이 아니다.
 
+### 갈라지는 계산 그래프를 실제 숫자로 역전파하기
+
+연산이 일렬로만 이어지면 자동미분을 “식을 뒤에서부터 미분한다” 정도로 오해하기 쉽다.
+실제 그래프에서는 같은 tensor가 여러 경로에 쓰이고, backward는 그 경로에서 온 gradient를 **더해** 원래 tensor의 gradient를 만든다.
+
+다음 한 변수 그래프를 보자.
+
+```text
+w = 2
+a = w × 3       = 6
+b = w × w       = 4
+loss = a + b    = 10
+```
+
+`loss`에서 시작하는 gradient는 1이다. `a`와 `b`는 덧셈의 두 입력이므로 둘 다 upstream gradient 1을 받는다.
+
+```text
+a 경로: d loss / d a × d a / d w = 1 × 3 = 3
+b 경로: d loss / d b × d b / d w = 1 × 2w = 1 × 4 = 4
+
+d loss / d w = 3 + 4 = 7
+```
+
+여기서 `w.grad=7`은 어느 한 경로의 결과가 아니다. `w`를 사용한 두 경로의 기여가 누적된 값이다. 그래서 같은 parameter로 여러 microbatch를 backward하면 framework가 gradient buffer를 누적할 수 있고, 새 optimizer step을 시작하기 전에 gradient를 비우는 시점이 중요하다.
+
+```mermaid
+flowchart LR
+    W["w=2"] -->|"×3"| A["a=6"]
+    W -->|"w×w"| B["b=4"]
+    A --> L["loss=10"]
+    B --> L
+    L -. "backward: 1" .-> A
+    L -. "backward: 1" .-> B
+    A -. "+3" .-> G["w.grad=7"]
+    B -. "+4" .-> G
+```
+
+Forward에서 무엇을 보관해야 하는지도 이 그래프에서 드러난다. `a=w×3`의 backward는 상수 3만 알면 되지만, `b=w×w`의 backward는 forward 당시 `w=2`를 알아야 `2w=4`를 계산할 수 있다. 자동미분 엔진은 이런 backward 입력을 saved tensor 또는 연산 문맥에 보관할 수 있다. Parameter를 forward와 backward 사이에 제자리 수정하면 “현재 값”과 “미분에 필요한 당시 값”이 달라져 오류나 잘못된 gradient가 생길 수 있는 이유다.
+
+`backward()`가 끝나면 모든 중간값이 영구 보존되는 것도 아니다. 다음 backward에 그래프가 필요하지 않으면 그래프와 saved tensor를 해제할 수 있다. 반대로 같은 그래프에서 다시 backward하도록 보존하면 메모리 수명이 길어진다. 메모리 표를 읽을 때는 다음 셋을 구별한다.
+
+1. Parameter `w`: 여러 step에 걸쳐 살아 있고 optimizer가 바꾼다.
+2. Gradient buffer `w.grad`: backward가 쓰고 optimizer가 읽으며, 누적 정책에 따라 다음 backward 전 비운다.
+3. Saved tensor: 특정 forward와 그 backward 사이만 필요하고, 해당 backward가 지나가면 보통 해제 가능하다.
+
+반례로, `w.grad`가 7이라는 사실만 보고 parameter가 반드시 7만큼 변한다고 결론 내릴 수 없다. SGD도 learning rate를 곱하고, Adam은 moment와 epsilon을 사용하며, gradient clipping이나 mixed-precision loss scaling이 중간에 값을 바꿀 수 있다. 자동미분의 종료점은 gradient 계산이지 optimizer update가 아니다.
+
 ## Batch, sequence, embedding
 
 언어 모델에서 입력은 보통 token id 배열로 시작한다.

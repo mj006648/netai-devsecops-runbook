@@ -78,4 +78,6 @@ flowchart LR
 3. A7의 RAM 구성을 읽었다. A7을 모든 서버의 메모리 표준으로 이해해도 되는가? **답:** 특정 서버의 내부 이름이다. 관측 날짜와 제품 조건을 가진 사례로 읽는다.
 4. GPU의 공유 메모리 bank를 공부했다. DRAM의 행 여는 시간을 그대로 적용할 수 있는가? **답:** 대상 구조가 다르다. 이름의 뜻과 장치 내부 위치를 다시 확인한다.
 
-다음으로 [전기·비트·논리회로](../hardware/learning/server-hardware/00-physical-bits-to-computer.md)를 읽고 [서버 전체 지도](../hardware/learning/server-hardware/01-system-map.md), [프로그램과 운영체제](../linux/learning/linux-kernel/00-why-operating-systems.md)로 이어간다. 단어를 다시 찾으려면 [공통 용어사전](GLOSSARY.md), 전체 경로는 [통합 목차](README.md)를 사용한다.
+다음으로 [전기·비트·논리회로](../hardware/learning/server-hardware/00-physical-bits-to-computer.md)를 읽고 [서버 전체 지도](../hardware/learning/server-hardware/01-system-map.md), [운영체제의 공통 원리](operating-systems/README.md), [Linux의 구현](../linux/learning/linux-kernel/00-why-operating-systems.md)로 이어간다. 원하는 답을 찾는 계산 절차와 자료구조를 배우려면 [알고리즘 교재](algorithms/README.md)를 연다. 예를 들어 같은 숫자 목록에서 답을 찾는 절차는 알고리즘의 질문이고, 그 절차를 실행하는 프로그램에 CPU와 메모리를 배정하는 일은 운영체제의 질문이다. 두 관점은 같은 실행을 서로 다른 위치에서 설명한다.
+
+단어를 다시 찾으려면 [공통 용어사전](GLOSSARY.md), 전체 경로는 [통합 목차](README.md)를 사용한다.

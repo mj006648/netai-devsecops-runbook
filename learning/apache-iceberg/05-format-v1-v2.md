@@ -154,6 +154,49 @@ sequenceDiagram
 
 ## 5. delete 적용 조건을 정확히 읽는다
 
+### Position delete와 equality delete를 같은 파일에 적용한다
+
+A.parquet가 partition `day=2026-10-10`, `data_seq=5`이고 다음 네 행을 가진다고 하자.
+
+| position | id | status |
+| ---: | ---: | --- |
+| 0 | 10 | new |
+| 1 | 11 | new |
+| 2 | 12 | cancelled |
+| 3 | 13 | new |
+
+Sequence 8에서 position delete P가 `(A.parquet, position=1)`을 기록한다. 같은 partition이고 A의 data sequence 5가 `5 ≤ 8`이므로 id 11을 지운다. Sequence 9에서 equality delete E가 field ID 기준 `status='cancelled'`를 기록한다. `5 < 9`이고 partition 조건도 맞으므로 id 12를 지운다. 현재 결과는 id 10과 13이다.
+
+```text
+A: positions 0,1,2,3
+P(seq 8): remove A position 1
+E(seq 9): remove rows where status(field-id)=cancelled
+result: positions 0,3 → id 10,13
+```
+
+| 판단 순서 | Position delete P | Equality delete E |
+| --- | --- | --- |
+| Partition 범위 | A와 같은 partition인지 | 같은 spec·partition인지 |
+| Sequence | `A.data_seq ≤ P.data_seq` | `A.data_seq < E.data_seq` |
+| 대상 식별 | A path와 row position | equality field IDs와 값 |
+| 제외 행 | position 1 | status=cancelled인 position 2 |
+
+```mermaid
+flowchart TD
+    A["A data_seq=5"] --> P{"P seq=8<br/>5 ≤ 8?"}
+    A --> E{"E seq=9<br/>5 < 9?"}
+    P -->|예| R1["position 1 제외"]
+    E -->|예| R2["status=cancelled 제외"]
+    R1 --> O["id 10,13"]
+    R2 --> O
+```
+
+Equality delete가 컬럼 이름이 아니라 field ID 집합을 기록한다는 점도 중요하다. `status`를 `order_state`로 rename해도 같은 field ID라면 옛 equality delete의 의미가 이어진다. 컬럼을 삭제한 뒤 같은 이름으로 새 field ID를 만들었다면 옛 delete를 새 컬럼에 임의로 적용하면 안 된다.
+
+**동일 sequence 반례.** Sequence 10에서 `status='cancelled'` equality delete와 새 cancelled 행을 함께 commit하면 새 행의 data sequence도 10이다. `10 < 10`은 거짓이므로 새 행은 그 delete로 지워지지 않는다. 부등호가 `<`인 이유를 실제 upsert 결과로 확인할 수 있다.
+
+**Partition 반례.** 다른 day partition에 id 11이 있어도 partitioned position delete P는 그 행을 지우지 않는다. Path와 position이 우연히 같은 숫자라는 이유만으로 다른 파일에 적용하지 않는다.
+
 [scan planning 규칙](https://iceberg.apache.org/spec/#scan-planning)을 초보자 관점으로 정리하면 다음과 같다.
 
 | delete 종류 | data sequence 조건 | 추가 범위 조건 |
@@ -183,6 +226,42 @@ equality delete 적용 조건은 `target data_seq < delete data_seq`다. 새 행
 partitioned equality delete는 같은 partition의 data file에 적용한다. partition spec이 진화했을 때는 spec이 정의한 matching 규칙을 엔진이 정확히 구현해야 한다. unpartitioned equality delete는 table 전체에 적용할 수 있다. “키 값이 같으니 모든 partition에서 지우겠지”라고 가정하지 말고 delete file의 partition과 spec ID를 확인한다.
 
 ## 6. Copy-on-write와 merge-on-read를 선택한다
+
+### 같은 DELETE를 두 writer가 어떻게 다르게 게시하는가
+
+A.parquet에 `(position 0,id=10)`, `(position 1,id=11)`, `(position 2,id=12)` 세 행이 있고 `id=11`을 삭제한다고 하자.
+
+Copy-on-write writer는 A를 읽어 position 1을 제외한 새 B.parquet를 쓴다. 새 snapshot은 A를 제거하고 B를 추가한다. 현재 reader는 B만 읽으면 된다. 과거 snapshot이 A를 참조하면 A bytes는 보존된다.
+
+Merge-on-read writer는 A를 그대로 두고 position delete P를 쓴다. P에는 A의 path와 position 1이 들어간다. 새 snapshot은 A와 P를 함께 참조한다. Reader는 A를 읽은 뒤 P를 적용해 id 11을 숨긴다.
+
+| 방식 | Writer가 새로 쓰는 파일 | Manifest 변화 | Reader 책임 |
+| --- | --- | --- | --- |
+| COW | B data file | A 제거, B 추가 | B 읽기 |
+| MOR position delete | P delete file | A 유지, P 추가 | A에서 position 1 제외 |
+
+```mermaid
+flowchart LR
+    X["DELETE id=11"] --> C["COW writer"]
+    X --> M["MOR writer"]
+    C --> B["B.parquet: id 10,12"]
+    C --> CM["snapshot: remove A, add B"]
+    M --> P["P-delete: A position 1"]
+    M --> MM["snapshot: keep A, add P"]
+    MM --> R["reader merges A + P"]
+```
+
+COW와 MOR는 저장 장식이 아니라 writer와 reader의 책임 배분이다. COW writer가 쓰기 시점에 기존 행을 병합하므로 읽기가 단순해진다. MOR writer는 삭제 표현을 빠르게 게시할 수 있지만 reader와 후속 maintenance가 병합 비용을 진다.
+
+Sequence를 붙이면 적용 경계가 선명해진다. A의 `data_seq=5`, P의 `data_seq=8`이면 position delete는 `5 ≤ 8`을 만족하고 같은 partition·A path·position 1에 적용된다. 나중에 compaction이 A와 P를 반영해 B를 만들 때, 삭제된 id 11을 B에 다시 넣으면 안 된다.
+
+| 단계 | A data_seq | Delete data_seq | 논리 결과 |
+| --- | ---: | ---: | --- |
+| 삭제 전 | 5 | 없음 | 10,11,12 |
+| MOR 삭제 commit | 5 | 8 | 10,12 |
+| Rewrite 후 | 내용의 논리 나이 보존 규칙 적용 | 삭제가 materialize됨 | 10,12 |
+
+**반례.** MOR가 data file rewrite를 피했다고 저장 공간과 읽기 비용이 항상 작아지는 것은 아니다. 수천 개 delete file이 쌓이면 planning과 적용 비용이 커진다. 반대로 한 행 삭제 때문에 1 GiB data file을 매번 COW로 다시 쓰면 write amplification이 커질 수 있다.
 
 v2는 저장 표현을 제공하지만, 엔진이 행 변경을 어떻게 계획할지는 별도 선택이다.
 

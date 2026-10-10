@@ -336,7 +336,66 @@ reverse path가 같은 NAT 장비를 지나지 않으면 상태를 찾을 수 �
 | IPv4 header checksum | 유지 | TTL 변경에 맞춰 갱신. IPv6에는 header checksum 없음 |
 | FCS | 유지 | router가 새 링크로 내보내는 frame에 맞게 재계산 |
 
-## 19. 자주 틀리는 오개념
+## 19. Route table과 ARP cache는 서로 다른 질문에 답한다
+
+초보자는 `ip route`에 gateway가 보이면 곧바로 frame을 보낼 수 있다고 생각하기 쉽다. Route table은 **어느 next hop과 interface를 선택할지** 답한다. ARP cache는 **그 next hop을 현재 Ethernet frame의 어느 MAC으로 부를지** 답한다. 하나가 다른 하나를 포함하지 않는다.
+
+다음은 교육용 상태다.
+
+~~~text
+Host A: 10.0.1.10/24, MAC aa
+route: 10.0.9.0/24 via 10.0.1.1 dev eth0
+neighbor cache: 비어 있음
+destination: 10.0.9.20
+~~~
+
+```mermaid
+stateDiagram-v2
+    [*] --> RouteLookup
+    RouteLookup --> NeedNeighbor: next hop 10.0.1.1 선택
+    NeedNeighbor --> ArpPending: cache miss, ARP request
+    ArpPending --> FrameReady: ARP reply gives MAC gg
+    FrameReady --> Sent: Ethernet dst=gg
+    ArpPending --> Failed: timeout/retry 소진
+    Failed --> [*]
+    Sent --> [*]
+```
+
+| 시점 | route 상태 | neighbor 상태 | 보낼 수 있는 것 |
+| --- | --- | --- | --- |
+| T0 | `10.0.9.0/24 via 10.0.1.1` 존재 | entry 없음 | 최종 next hop은 알지만 unicast Ethernet frame은 아직 완성 못 함 |
+| T1 | 그대로 | `INCOMPLETE`에 해당하는 해석 진행 | broadcast ARP request 전송 |
+| T2 | 그대로 | `10.0.1.1 → gg` 확인 | dst MAC `gg`, dst IP `10.0.9.20`인 frame 생성 |
+| T3 | 그대로 | 시간이 지나 stale일 수 있음 | stale entry로 먼저 보내고 reachability를 재확인할 수 있음 |
+| T4 | 그대로 | 반복 실패 | route가 있어도 packet 전달 실패 |
+
+여기서 ARP request의 대상 protocol address는 `10.0.9.20`이 아니라 `10.0.1.1`이다. A의 subnet mask로 보았을 때 서버는 on-link가 아니기 때문이다. 반대로 목적지가 `10.0.1.20`이고 더 구체적인 route나 policy가 없다면 A는 gateway가 아니라 목적지 자체의 MAC을 묻는다.
+
+### 같은 목적지인데 route가 바뀌는 작은 예
+
+route가 다음과 같다고 하자.
+
+~~~text
+10.0.0.0/8       via 10.0.1.1 dev eth0
+10.0.9.0/24      via 10.0.1.2 dev eth0
+10.0.9.20/32     dev tun0
+~~~
+
+`10.0.9.20`에는 `/8`, `/24`, `/32`가 모두 맞지만 `/32`가 이긴다. 이 경우 `tun0`가 point-to-point tunnel이면 Ethernet MAC이나 ARP가 아예 필요 없을 수 있다. “IPv4 packet을 보내려면 항상 ARP한다”는 문장이 틀리는 반례다. 필요한 neighbor resolution 방식은 선택된 egress link 종류에 달려 있다.
+
+### Router를 두 대 지날 때의 불변식
+
+NAT 없는 일반 forwarding에서 source/destination IP는 종단을 유지하고, TTL은 router마다 하나씩 줄며, 링크 header는 매 hop 새로 생긴다.
+
+~~~text
+출발:  IP A→B, TTL 64, Ethernet A→R1
+R1 후: IP A→B, TTL 63, Ethernet R1→R2
+R2 후: IP A→B, TTL 62, Ethernet R2→B
+~~~
+
+R1이 목적지 route를 알아도 R2의 링크 주소를 확인하지 못하면 두 번째 frame을 만들 수 없다. R2가 B의 MAC을 알아도 B로 가는 route를 선택하지 못하면 역시 전달할 수 없다. Route와 neighbor는 순서대로 결합되지만 서로 다른 상태다.
+
+## 20. 자주 틀리는 오개념
 
 | 오개념 | 바로잡기 |
 | --- | --- |
@@ -348,7 +407,7 @@ reverse path가 같은 NAT 장비를 지나지 않으면 상태를 찾을 수 �
 | NAT는 주소만 바꾸고 끝이다 | port와 상태, reverse path가 중요하다 |
 | default route가 있으면 최적 경로다 | 더 구체적인 route가 있으면 LPM으로 그쪽이 선택된다 |
 
-## 20. 해설 문제
+## 21. 해설 문제
 
 ### 문제 1
 
@@ -394,7 +453,7 @@ NAT 장비가 나가는 packet의 source를 `10.0.1.10:50000`에서 `198.51.100.
 
 NAT state table에 외부 tuple과 내부 tuple의 매핑이 있어야 하고, 돌아오는 packet이 그 NAT 장비를 지나야 한다.
 
-## 21. 1차 출처와 더 읽기
+## 22. 1차 출처와 더 읽기
 
 - IPv4 datagram, TTL, routing, checksum, IP의 비신뢰성: [RFC 791](https://www.rfc-editor.org/rfc/rfc791.html)
 - CIDR prefix notation과 등장 배경: [RFC 4632](https://www.rfc-editor.org/rfc/rfc4632.html)

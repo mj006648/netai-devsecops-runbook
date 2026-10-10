@@ -161,6 +161,51 @@ GPU 노드가 4대이고 각 노드에 GPU가 8개라고 하자.
 
 따라서 “GPU가 32개 있다”는 자산 정보와 “현재 32개를 할당할 수 있다”는 운영 상태는 다르다.
 
+### 3.5.1 선언 한 줄이 노드 상태가 되기까지
+
+Operator의 핵심은 설치 명령 한 번이 아니라 반복되는 **reconciliation(조정)**이다. 사용자가 정책 객체의 `spec`을 바꾸면 API 서버의 desired state가 먼저 바뀌고, controller가 이를 읽어 하위 리소스를 생성·수정한다. DaemonSet controller와 kubelet이 Pod를 노드에 만들고, 각 구성요소가 준비된 뒤에야 actual state가 따라온다.
+
+```mermaid
+sequenceDiagram
+    participant U as 관리자/GitOps
+    participant A as API server
+    participant O as GPU Operator controller
+    participant D as DaemonSet controller
+    participant K as node kubelet
+    participant S as 상태/conditions
+    U->>A: spec 변경, metadata.generation 증가
+    O->>A: 새 generation 관찰
+    O->>D: 하위 DaemonSet/ConfigMap 조정
+    D->>K: 새 Pod가 필요한 노드 결정
+    K-->>D: Pod Ready 또는 실패
+    D-->>O: desired/updated/available 상태
+    O-->>S: 지원되는 status/condition 갱신
+```
+
+GPU 노드 3대에 Toolkit Pod를 하나씩 두는 단순 예를 보자.
+
+| 시각 | 정책 generation | DaemonSet desired | updated | available | 해석 |
+|---|---:|---:|---:|---:|---|
+| t0 | 7 | 3 | 3 | 3 | 이전 선언이 세 노드에서 준비됨 |
+| t1 | 8 | 3 | 0 | 3 | 새 선언 저장, rollout은 아직 시작 전 |
+| t2 | 8 | 3 | 1 | 2 | 한 노드 교체 중, old/new Pod 혼재 |
+| t3 | 8 | 3 | 3 | 2 | 새 Pod는 모두 생성됐지만 한 Pod 미준비 |
+| t4 | 8 | 3 | 3 | 3 | 하위 리소스 관점 rollout 완료 |
+
+`generation=8`이라는 숫자만으로 t4라고 말할 수 없다. 이는 spec이 여덟 번째 세대라는 뜻이다. Controller가 제공하는 `observedGeneration`이나 condition이 있다면 어느 세대를 처리했는지 확인하고, 실제 하위 DaemonSet의 desired/updated/available과 노드 Pod 상태를 함께 본다. 정확한 status 필드 이름은 사용 중인 CRD 버전이 제공하는 스키마를 따른다.
+
+노드 한 대가 cordon되어 있어 desired가 3이 아니라 2가 되는지, selector에서 빠졌는지, Pod가 생성됐지만 driver mount 때문에 Ready가 아닌지도 구별한다. “Operator Ready”는 controller process가 살아 있다는 신호일 수 있고, 모든 구성요소가 모든 GPU 노드에서 준비됐다는 증명과는 다르다.
+
+각 단계의 작성 주체도 다르다.
+
+- 관리자 또는 GitOps는 `ClusterPolicy`나 `GPUCluster`의 spec을 바꾼다.
+- GPU Operator controller는 선택한 관리 모델에 맞는 하위 객체를 조정한다.
+- DaemonSet controller는 노드별 Pod 수를 맞춘다.
+- kubelet은 자기 노드에서 image, mount, device 접근을 준비하고 Pod status를 갱신한다.
+- Validator와 각 operand는 기능 확인 결과와 로그를 남긴다.
+
+반례로, DaemonSet `available=3`이어도 새 커널로 재부팅한 뒤 host driver가 로드되지 않으면 CUDA 경로는 실패할 수 있다. 반대로 한 validator가 실패했다고 물리 GPU 세 장이 모두 고장 난 것도 아니다. Desired/actual 차이가 어느 객체와 어느 노드에서 생겼는지 좁혀야 한다.
+
 ## 3.6 흔한 오해
 
 **오해 1: Operator 하나가 CUDA 애플리케이션까지 설치한다.**

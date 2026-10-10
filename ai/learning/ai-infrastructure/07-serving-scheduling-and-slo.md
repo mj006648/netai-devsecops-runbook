@@ -183,6 +183,50 @@ capacity 숫자는 “이보다 많이 받을 수 있다”가 아니라 “이 
 
 이미 제출한 GPU kernel 중간에서 요청 하나만 즉시 빼는 것은 일반적으로 어렵다. Scheduler는 iteration 경계에서 다음 batch에 그 요청을 넣지 않는 방식으로 반응할 수 있다. 따라서 preemption latency는 정책 결정 시각과 실제 GPU 자원 해제 시각을 따로 잰다.
 
+### Admission부터 퇴장까지: token budget 8의 작은 스케줄
+
+이제 요청 수가 아니라 **iteration당 token 예산**으로 continuous batching을 따라가 보자. GPU가 한 iteration에 최대 8 token position을 처리하고, KV block 여유는 16 token slot이라고 가정한다. 요청은 다음과 같다.
+
+```text
+A: t=0 도착, prompt 4, max output 3
+B: t=0 도착, prompt 2, max output 1
+C: t=1 도착, prompt 6, max output 2
+```
+
+예시 정책은 `decode를 먼저 넣고 남은 token budget으로 prefill`한다. 긴 prefill은 쪼개지 않으며, admission은 현재 KV 여유와 예약 상한을 함께 본다. 정책이 달라지면 결과도 달라진다.
+
+| iteration | 시작 시 실행 집합 | 선택한 일 | token budget | cache 변화 | 관찰 결과 |
+|---:|---|---|---:|---:|---|
+| 0 | A, B 대기 | A prefill 4 + B prefill 2 | 6/8 | 0→6 | A와 B의 first token 계산 가능 |
+| 1 | A decode, B decode, C 대기 | A 1 + B 1 | 2/8 | 6→8 | B가 끝나 3 slots 반환 예정 |
+| 2 | A decode, C 대기 | A 1 | 1/8 | B 반환 후 5, A 추가 후 6 | C의 prompt 6은 예산에는 맞지만 예약 상한 때문에 대기 |
+| 3 | A decode | A 1, A 종료 | 1/8 | 6→7→0 | A cache 반환 |
+| 4 | C 대기 | C prefill 6 | 6/8 | 0→6 | C의 first token 계산 가능 |
+| 5 | C decode | C 1 | 1/8 | 6→7 | stream token 전달 |
+| 6 | C decode | C 1, C 종료 | 1/8 | 7→8→0 | 모든 cache 반환 |
+
+`iteration 2`에서 GPU token budget 7이 남는데도 C가 들어오지 못하는 점이 핵심이다. C의 최악 예약은 prompt 6 + output 2 = 8 slots다. 그때 A가 이미 6 slots를 점유한다고 보면 둘을 합쳐 14로 물리 여유 16 안에는 들어간다. 그러나 A의 남은 출력 상한까지 1 slot, allocator block 반올림이나 안전 여유 2 slots를 정책이 요구한다고 가정하면 `14 + 1 + 2 > 16`이 되어 C를 미룬다. Admission 판단은 compute token budget과 KV capacity라는 서로 다른 제약을 동시에 통과해야 한다.
+
+이 시간표를 요청별로 다시 읽으면 다음과 같다.
+
+```text
+A: 도착 t0 → prefill t0 → first token 경계 t0/t1 → decode t1~t3 → 종료
+B: 도착 t0 → prefill t0 → decode t1 → 종료, cache 반환
+C: 도착 t1 → admission 대기 t1~t3 → prefill t4 → decode t5~t6 → 종료
+```
+
+C의 모델 실행 시간만 보면 짧지만 queue/admission 대기가 길어 TTFT가 나쁘다. GPU utilization만 보면 iteration 2와 3에 빈 token budget이 많다. 그렇다고 C를 무조건 끼우면 cache headroom이나 기존 stream의 ITL 약속을 깰 수 있다. Scheduler 평가는 다음을 함께 봐야 한다.
+
+- iteration별 사용 token budget과 빈 budget
+- waiting request 수가 아니라 waiting prompt/output token
+- active KV slots, reserved upper bound, block 반올림 낭비
+- 요청별 queue time, TTFT, ITL, deadline miss
+- 거절, 선점, recompute가 만든 추가 작업
+
+긴 prefill을 chunk 3+3으로 나눌 수 있는 정책이면 C의 첫 chunk를 iteration 2의 남은 budget에 넣을 수 있다. TTFT는 좋아질 수 있지만 A decode와 같은 iteration에서 큰 prefill kernel이 실행되어 A의 ITL이 늘 수 있다. Chunked prefill은 빈칸을 없애는 무료 최적화가 아니라 서로 다른 SLO 사이의 선택이다.
+
+또 다른 반례는 max output을 모두 선예약하지 않는 낙관적 정책이다. 평균적으로 더 많은 요청을 받을 수 있지만 여러 요청이 동시에 상한까지 생성하면 KV 부족이 실행 중에 나타난다. 그때 사용할 preemption, offload, recompute, 실패 정책이 없다면 admission에서 미룬 비용을 더 비싼 장애로 바꾼 셈이다.
+
 ## Worked calculation: goodput
 
 1분 동안 요청 1,200개를 받았다고 하자.

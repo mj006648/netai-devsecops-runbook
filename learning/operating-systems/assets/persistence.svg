@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="380" viewBox="0 0 960 380" role="img">
+  <title>파일 지속성 경로</title><desc>응용 프로그램 write에서 page cache, filesystem, block layer, device와 crash recovery까지의 경로</desc>
+  <defs><style>.b{fill:#f5f9ff;stroke:#315b8a;stroke-width:2}.t{font:17px sans-serif}.a{stroke:#555;stroke-width:3;fill:none;marker-end:url(#m)}</style><marker id="m" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#555"/></marker></defs>
+  <rect class="b" x="20" y="90" width="160" height="70"/><rect class="b" x="210" y="90" width="160" height="70"/><rect class="b" x="400" y="90" width="160" height="70"/><rect class="b" x="590" y="90" width="160" height="70"/><rect class="b" x="780" y="90" width="160" height="70"/>
+  <text class="t" x="100" y="132" text-anchor="middle">application</text><text class="t" x="290" y="132" text-anchor="middle">page cache</text><text class="t" x="480" y="132" text-anchor="middle">filesystem log</text><text class="t" x="670" y="132" text-anchor="middle">block queue</text><text class="t" x="860" y="132" text-anchor="middle">device</text>
+  <path class="a" d="M180 125H205"/><path class="a" d="M370 125H395"/><path class="a" d="M560 125H585"/><path class="a" d="M750 125H775"/>
+  <text class="t" x="480" y="245" text-anchor="middle">write return ≠ fsync return ≠ directory entry durable ≠ application commit</text>
+  <text class="t" x="480" y="295" text-anchor="middle">WAL: record → durable commit marker → home location 반영 → recovery replay</text>
+</svg>

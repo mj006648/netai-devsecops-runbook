@@ -131,11 +131,104 @@ CALL local.system.remove_orphan_files(
 
 ## 8. 객체 저장소 lifecycle을 테이블 정책과 맞춘다
 
+### Compaction·expiration·orphan cleanup의 파일 변화를 한 표로 본다
+
+현재 snapshot S3가 A·B와 delete P를 참조하고, 과거 S2가 A만 참조한다고 하자. 실패한 writer가 만든 Z는 어떤 metadata에서도 참조하지 않는다.
+
+```text
+S2 → A
+S3 → A + B + P
+unreferenced → Z
+```
+
+먼저 compaction을 실행해 A+B+P의 현재 논리 결과를 C에 쓴다. 새 snapshot S4는 C를 참조한다. 그러나 S2·S3를 보존하는 동안 A·B·P도 필요하므로 저장소에는 C가 추가되어 순간적으로 더 많은 bytes가 존재할 수 있다.
+
+그다음 정책에 따라 S2·S3를 expire하면 남은 reference가 S4뿐인지 계산한다. 그때 A·B·P가 어느 branch·tag에서도 필요하지 않다면 제거 후보가 된다. Expiration은 snapshot 보존 그래프에서 도달 가능성을 바꾸는 작업이다.
+
+마지막으로 orphan cleanup은 Z처럼 정해진 table metadata 어디에서도 참조되지 않고 안전 유예 기간을 지난 파일을 찾는다. S3가 만료되기 전 A·B·P는 현재 S4에서 안 보이더라도 orphan이 아니다.
+
+| 작업 | 새로 만드는 것 | 참조에서 제거하는 것 | 즉시 지워도 된다고 단정할 수 없는 것 |
+| --- | --- | --- | --- |
+| Compaction | C, S4 metadata | S4에서 A·B·P | 과거 S2·S3가 쓰는 A·B·P |
+| Snapshot expiration | 보존 정책에 따른 metadata 변화 | S2·S3 history | 남은 branch/tag/reader가 쓰는 파일 |
+| Orphan cleanup | 없음 | metadata reference를 바꾸지 않음 | 진행 중 writer의 미커밋 파일 |
+
+```mermaid
+flowchart TD
+    S2["S2"] --> A["A"]
+    S3["S3"] --> A
+    S3 --> B["B"]
+    S3 --> P["delete P"]
+    RW["compaction"] --> C["C = A+B-P"]
+    S4["S4"] --> C
+    Z["Z: failed write"]
+    EX["expire S2,S3"] -. 참조 해제 뒤 후보 .-> A
+    EX -.-> B
+    EX -.-> P
+    OR["orphan cleanup + 유예"] -. 삭제 후보 .-> Z
+```
+
+| 시각 | 사건 | 안전 판단 |
+| --- | --- | --- |
+| 12:00 | 정상 writer W가 D 업로드 시작 | 아직 미참조지만 orphan 아님 |
+| 12:10 | Cleanup scan이 D 발견 | W의 최대 실행·retry보다 짧으면 보류 |
+| 12:20 | W가 D를 snapshot S5에 commit | D는 유효 data file |
+| 다음 날 | 오래된 Z가 계속 미참조 | table 경계·경로 확인 뒤 후보 |
+
+**왜 순서가 중요한가.** Compaction이 만든 S4를 확인하기 전에 S3 파일을 직접 지우면 rewrite 실패 시 복구와 현재 reader를 깨뜨릴 수 있다. Snapshot expiration 없이 “현재 snapshot에 없다”만 보고 지우면 time travel을 깨뜨린다. Orphan cleanup을 유예 없이 실행하면 정상 writer의 준비 파일을 지울 수 있다.
+
+**반례.** Snapshot을 expire했다고 반드시 큰 저장 공간이 즉시 회수되는 것은 아니다. 다른 branch/tag가 파일을 참조하거나 object-store versioning이 이전 객체 버전을 보존할 수 있다. Table-level reference와 storage-level retention을 따로 확인한다.
+
 버킷의 자동 lifecycle이 “30일 지난 모든 객체 삭제”라면 1년 전 데이터 파일을 현재 snapshot이 참조해도 지울 수 있다. 객체 나이와 테이블 참조 필요성은 다르다.
 
 객체 versioning·백업은 논리 삭제 뒤 실제 바이트를 남길 수 있다. 비용과 개인정보 삭제 요구를 함께 조정한다. Iceberg table snapshot 만료와 저장소의 모든 버전·복제본 삭제를 동일한 작업으로 보지 않는다.
 
 ## 9. 성능 실험은 같은 의미의 상태를 비교한다
+
+### Maintenance가 concurrent writer를 만났을 때
+
+Compaction M과 append writer W가 모두 snapshot S3에서 시작한다고 하자. M은 A·B·P를 읽어 C를 만들고, W는 새 주문을 D에 쓴다. W가 먼저 S4=A+B+P+D를 commit하면 M이 S3 기준으로 만든 metadata를 그대로 현재 pointer로 바꿀 수 없다.
+
+| 시각 | Compaction M | Append W | 현재 snapshot |
+| --- | --- | --- | --- |
+| 13:00 | S3의 A·B·P 선택 | S3 읽기 | S3 |
+| 13:05 | C 작성 중 | D 작성 | S3 |
+| 13:07 | C 준비 | D를 S4에 commit | S4: A+B+P+D |
+| 13:08 | S3 기준 commit 시도 | 완료 | S4 |
+| 13:09 | 충돌 검증·재계획 | 완료 | 성공 전까지 S4 |
+
+M이 D까지 C에 병합해야 하는지는 rewrite 범위와 validation에 달려 있다. Append D가 rewrite 대상과 독립이면 최신 snapshot에 C와 D가 함께 남도록 재시도할 수 있다. W가 A를 수정한 overwrite라면 M의 결과 C가 그 변경을 덮어쓰지 않도록 충돌해야 한다.
+
+```mermaid
+sequenceDiagram
+    participant M as Compaction
+    participant W as Append writer
+    participant O as Object store
+    participant C as Catalog
+    M->>O: S3 입력으로 C 준비
+    W->>O: D 준비
+    W->>C: S3 → S4(A,B,P,D)
+    C-->>W: 성공
+    M->>C: S3 → M4(C) 시도
+    C-->>M: 기준 snapshot 변경, 거절
+    M->>M: S4 기준 충돌 검증
+```
+
+C가 object store에 생겼지만 M commit이 최종 실패하면 C는 현재 snapshot에 없다. 즉시 삭제하지 않고 commit 결과 불확실성, retry, orphan 유예 정책에 맡긴다. 정상 재시도 중인 M이 같은 C를 재사용할 수 있기 때문이다.
+
+Maintenance 전후 검증은 파일 수만 세지 않는다.
+
+| 검증 값 | S3 전 | 성공 snapshot 후 | 목적 |
+| --- | ---: | ---: | --- |
+| 논리 행 수 | 100 | 100 + W의 append 수 | 행 손실·중복 확인 |
+| 취소 주문 수 | 7 | 7 | Delete 반영 유지 |
+| 현재 data file 수 | 2 | 목표상 1 + D | Compaction 효과 |
+| 현재 delete file 수 | 1 | 목표상 0 | Delete materialize 확인 |
+| 과거 snapshot 조회 | S3 가능 | retention 기간 동안 가능 | 보존 계약 확인 |
+
+**결과가 왜 빨라질 수 있는가.** Reader가 A·B와 P를 따로 열고 병합하던 경로가 C 한 파일 읽기로 줄어든다. 그러나 query가 D partition만 읽거나 metadata planning이 병목이면 이 rewrite가 해당 query를 거의 개선하지 않을 수 있다.
+
+**반례.** Compaction 성공 직후 storage bytes가 늘었다고 실패로 판정하면 안 된다. C와 D가 추가되고 과거 snapshot 때문에 A·B·P도 남을 수 있다. Expiration이 보존 정책을 적용한 뒤에야 일부 옛 파일이 삭제 가능해진다.
 
 Compaction 전후 snapshot ID는 달라질 수 있지만 행 값은 같아야 한다. 비교할 쿼리, 입력 조건, 캐시 상태, 엔진 자원, 카탈로그, 동시 작업을 기록한다.
 

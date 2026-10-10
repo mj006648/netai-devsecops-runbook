@@ -141,6 +141,37 @@ Thread B: store 1
 
 futex는 “빠른 userspace mutex”에서 온 이름이지만, 직접 쓰는 저수준 syscall이다. man-pages는 futex를 higher-level lock을 만들기 위한 building block으로 설명한다. 일반 개발자는 보통 pthread mutex나 runtime lock을 사용하고, container runtime이나 libc 구현처럼 낮은 층에서 futex를 직접 다룬다.
 
+### futex 기반 mutex의 빠른 길과 느린 길을 추적하기
+
+futex를 “빠른 user space mutex”라고만 외우면 언제 syscall이 필요한지 알 수 없다. 교육용 mutex word를 `0=unlocked`, `1=locked/no known waiter`, `2=locked/possibly waiting`으로 단순화하자. 실제 pthread 구현의 bit 배치와 상태는 libc와 mutex 종류에 따라 다르다.
+
+경쟁이 없을 때 thread A는 atomic compare-and-swap(CAS)으로 `0 → 1`을 시도한다.
+
+```text
+초기 word = 0
+A: CAS(0, 1) 성공 → critical section 진입
+A: atomic store/release로 word = 0 → 종료
+```
+
+이 경로에는 futex syscall이 없다. lock의 공유 상태는 user memory에 있고 CPU atomic instruction만으로 소유권을 얻고 놓는다. “futex mutex를 쓸 때마다 kernel이 lock을 관리한다”는 설명은 틀리다.
+
+이제 A가 lock을 잡은 동안 B가 온다.
+
+| 순서 | thread A | thread B | kernel/wait queue |
+|---:|---|---|---|
+| 1 | word를 1로 바꾸고 critical section 실행 | 아직 실행 전 | 관여 없음 |
+| 2 | 계속 공유 data 수정 | CAS 실패, word가 0이 아님을 확인 | 관여 없음 |
+| 3 | 계속 실행 | waiter 상태를 표시하고 `futex_wait(addr, expected)` 진입 | 값이 expected인지 다시 확인 |
+| 4 | 실행 완료 | 값이 그대로면 sleep | B를 해당 futex key의 wait queue에 둠 |
+| 5 | unlock하며 waiter 가능성을 봄 | sleeping | A의 `futex_wake`가 waiter를 깨움 |
+| 6 | 다른 일을 진행 | runnable이 된 뒤 다시 lock 획득을 경쟁 | wake는 lock 소유권 자체를 주지 않음 |
+
+kernel이 3단계에서 값을 다시 확인하는 이유가 중요하다. B가 user space에서 locked를 확인한 직후, syscall에 들어가기 전에 A가 unlock할 수 있다. 커널이 expected 값 검사를 하지 않고 B를 재우면 이미 끝난 wake를 놓치는 lost wakeup이 된다. 값이 달라졌다면 wait는 잠들지 않고 돌아가며 B는 조건을 다시 검사한다.
+
+작은 비용 비교를 하자. 한 thread가 100만 번 mutex를 얻는데 99.9%가 uncontended라면 fast path는 약 999,000번이고 경쟁 때문에 kernel wait 후보가 되는 횟수는 약 1,000번이다. 실제 syscall 수는 spin, adaptive mutex, wake 결합에 따라 달라지지만 왜 user-space fast path가 중요한지는 보인다.
+
+예상 결과는 경쟁이 거의 없을 때 mutex 사용량이 많아도 futex syscall 수가 낮을 수 있다는 것이다. 반례로 process-shared mutex는 서로 다른 프로세스의 같은 shared mapping을 futex key로 연결할 수 있지만, private anonymous 주소가 우연히 같은 숫자라는 이유로 프로세스 사이에 같은 futex가 되지는 않는다. priority inheritance mutex, robust mutex는 상태와 kernel 관여가 더 복잡하므로 이 toy state를 그대로 적용하지 않는다.
+
 ## 7. lost wakeup은 lock보다 condition이 중요하다는 교훈이다
 
 잘못된 대기 패턴은 다음과 같다.
@@ -216,6 +247,39 @@ Updater:
 ~~~
 
 RCU의 핵심은 “reader와 updater가 같은 lock을 오래 잡고 싸우지 않게 한다”는 점이다. 하지만 RCU가 모든 race를 해결하지 않는다. 여러 updater끼리는 여전히 lock이나 다른 조정이 필요하다. kernel.org RCU 문서는 `rcu_assign_pointer()`가 reader를 보호하지 concurrent updater끼리의 충돌을 자동으로 막지 않는다고 강조한다.
+
+### RCU 삭제에서 reader가 이전 객체를 잡고 있을 때
+
+RCU 예제의 핵심은 pointer 교체보다 “이전 객체를 언제 free할 수 있는가”다. 현재 `global → old(version=7)`이고 reader R1이 old를 읽는 순간 updater가 version 8을 게시한다고 하자.
+
+```mermaid
+sequenceDiagram
+    participant R1 as 기존 reader R1
+    participant U as updater
+    participant R2 as 새 reader R2
+    R1->>R1: rcu_read_lock; p=old(v7)
+    U->>U: new(v8) 복사·수정
+    U->>U: global을 new(v8)로 교체
+    R2->>R2: rcu_read_lock; p=new(v8)
+    U->>U: synchronize_rcu에서 대기
+    R1->>R1: old(v7) 읽기 완료; unlock
+    U->>U: grace period 뒤 old(v7) free
+```
+
+pointer 교체 직후의 허용된 상태는 `R1은 old`, `R2는 new`다. RCU는 모든 reader가 같은 순간 같은 version을 보게 하지 않는다. 대신 R1이 이미 얻은 old가 읽는 도중 해제되지 않게 한다. 이 중첩 기간 때문에 update 직후 메모리에 old와 new가 함께 존재할 수 있다.
+
+객체가 2MiB이고 초당 100번 갱신되며 가장 긴 pre-existing reader가 20ms 걸린다고 단순화하면, 한 grace period 동안 여러 retired version이 대기할 수 있다. 정확한 상한은 update batching과 callback 처리에 따라 달라지지만 “reader가 lock을 거의 잡지 않으니 메모리도 즉시 회수된다”는 결론은 나오지 않는다.
+
+누가 무엇을 보장하는지 구분한다.
+
+| 기작 | 보장하는 것 | 자동으로 보장하지 않는 것 |
+|---|---|---|
+| `rcu_dereference` | 게시된 pointer를 reader가 적절한 ordering으로 얻음 | 객체 필드의 임의 concurrent mutation 직렬화 |
+| `rcu_assign_pointer` | 초기화된 새 객체를 적절한 ordering으로 게시 | 여러 updater 사이의 충돌 해결 |
+| grace period | 기존 read-side critical section이 끝날 시간 제공 | 새 reader가 없다는 뜻 |
+| `kfree_rcu`/callback | grace period 뒤 해제하도록 미룸 | 무제한 callback backlog 방지 |
+
+반례로 객체 내부 counter를 여러 CPU가 동시에 증가시키는 문제는 pointer 수명 보호만으로 해결되지 않는다. atomic, lock, per-CPU data 같은 별도 규칙이 필요하다. 또 reader가 RCU critical section 밖으로 pointer를 저장해 두고 나중에 사용하면 grace period 뒤 use-after-free가 날 수 있다. RCU가 보호하는 범위는 해당 API가 정한 read-side lifetime 안이다.
 
 ## 10. memory ordering은 CPU와 compiler가 순서를 바꿀 수 있다는 사실에서 시작한다
 

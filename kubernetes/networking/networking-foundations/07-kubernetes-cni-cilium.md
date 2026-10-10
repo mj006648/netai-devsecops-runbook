@@ -202,6 +202,63 @@ Cilium masquerading 문서는 Pod IPv4 주소가 보통 RFC1918 private range라
 
 NetworkPolicy에서 reply traffic은 구현의 statefulness와 policy 방향 해석이 중요하다. 일반적으로 허용된 connection의 reply는 conntrack/stateful datapath로 허용될 수 있지만, CNI와 policy 종류에 따라 L7 policy, DNS policy, egress policy가 별도 영향을 준다. "ingress만 열었으니 reply도 항상 된다" 또는 "egress가 없으니 reply도 항상 막힌다" 같은 단순화는 피한다.
 
+### Service와 DNS의 control plane·data plane을 한 요청으로 나눈다
+
+다음 교육용 상태를 사용한다.
+
+~~~text
+Service: api.default.svc.cluster.local
+ClusterIP: 10.96.0.80:80
+EndpointSlice backend:
+  10.244.1.20:8080 ready
+  10.244.2.30:8080 ready
+Client Pod: 10.244.1.10
+~~~
+
+CoreDNS가 Service 이름에 ClusterIP를 답하는 일과, datapath가 ClusterIP packet을 backend로 바꾸는 일은 서로 다르다.
+
+```mermaid
+sequenceDiagram
+    participant K as Kubernetes API
+    participant D as CoreDNS
+    participant A as CNI agent
+    participant C as Client Pod
+    participant B as Backend Pod
+    K-->>D: Service api → ClusterIP 10.96.0.80
+    K-->>A: Service + EndpointSlice backend 목록
+    A->>A: service/backend map 또는 rule 갱신
+    C->>D: api.default.svc 이름 조회
+    D-->>C: 10.96.0.80
+    C->>A: packet dst 10.96.0.80:80
+    A->>B: translate/redirect dst 10.244.2.30:8080
+    B-->>C: reverse translation을 거친 reply
+```
+
+| 상태 | owner | packet마다 하는가 | 잘못됐을 때의 결과 |
+| --- | --- | --- | --- |
+| 이름 → ClusterIP record | CoreDNS와 Kubernetes Service watch | 보통 DNS cache miss 때 조회 | NXDOMAIN, stale/wrong ClusterIP |
+| Service → backend 목록 | EndpointSlice와 agent | control plane update 때 반영 | 존재하지 않거나 준비 안 된 backend 선택 |
+| backend 선택·NAT/redirect | node datapath | 새 flow 또는 packet 경로에서 실행 | timeout, reset, 잘못된 destination |
+| Pod IP route/overlay | CNI/route/underlay | 실제 packet 전달 때 사용 | cross-node에서만 실패 가능 |
+| application readiness | kubelet/controller와 app | probe와 endpoint 상태로 반영 | TCP 연결 뒤 5xx 또는 연결 실패 |
+
+DNS 응답이 `10.96.0.80`으로 정확해도 EndpointSlice가 비어 있으면 Service data path는 보낼 backend가 없다. 반대로 backend map이 정확해도 CoreDNS가 NXDOMAIN을 반환하면 이름을 쓰는 client는 ClusterIP에 연결을 시작하지 못한다. Client가 ClusterIP를 직접 알고 있으면 DNS를 건너뛰므로 같은 Service가 동작할 수도 있다.
+
+### Endpoint 변경 중 생기는 짧은 불일치
+
+시간순으로 backend `10.244.2.30`이 종료되고 `10.244.3.40`이 추가된다고 하자.
+
+| 시점 | Kubernetes desired state | node datapath state | 새 연결의 위험 |
+| --- | --- | --- | --- |
+| T0 | old backend 두 개 | old backend 두 개 | 정상 |
+| T1 | old backend 제거 시작 | 일부 node는 아직 old map | 종료 중 Pod 선택 가능 |
+| T2 | new backend 추가·ready | agent watch/update 진행 | node마다 순간적으로 목록 차이 가능 |
+| T3 | 모든 node가 new state 반영 | old conntrack flow는 남을 수 있음 | 새 flow는 new backend, 기존 flow는 old state를 계속 참조 가능 |
+
+이 표는 Kubernetes가 항상 특정 시간 동안 불일치한다는 보장이 아니라, 독립된 control-plane 전달과 datapath 갱신 사이에 관측 시점 차이가 있을 수 있음을 보여주는 교육 모델이다. 실제 원인을 확인하려면 API object resource version, agent가 인식한 revision, kernel map/rule, flow event의 시간을 같은 clock 기준으로 맞춘다.
+
+조건이 다르면 반례가 생긴다. Headless Service는 ClusterIP 대신 Pod 주소들을 DNS로 돌려줄 수 있어 client가 backend를 직접 선택한다. ExternalName Service는 DNS CNAME 성격이 강하고 cluster datapath의 ClusterIP translation을 쓰지 않는다. Cilium socket-LB가 켜져 있으면 connect hook에서 destination이 backend로 바뀌어 packet capture에서 ClusterIP packet을 못 볼 수 있다. 따라서 “Service packet은 반드시 host의 한 지점에서 DNAT된다”라고 일반화하지 않는다.
+
 ## 9. Hubble이 보여주는 범위
 
 ### 먼저 Cilium의 객체를 나눈다

@@ -132,7 +132,121 @@ kubectl get events -n storage-lab --sort-by=.metadata.creationTimestamp
 
 위 명령은 `lab13/storage-lab` 관찰 예시이며 실행하지 않았다. Pending PVC에서는 class 존재, access mode, capacity, topology, provisioner event를 확인한다.
 
-## 9. 문제와 해설
+## 9. PVC가 Pending에서 Pod mount까지 가는 상태 전이
+
+PVC를 만들었다고 kubelet이 즉시 disk를 mount하는 것은 아니다. 여러 controller와 CSI component가 서로 다른 object와 backend 상태를 바꾼다.
+
+```mermaid
+sequenceDiagram
+    participant U as "사용자"
+    participant A as "API server"
+    participant P as "external-provisioner"
+    participant B as "PV binder"
+    participant S as "scheduler"
+    participant C as "CSI controller"
+    participant K as "kubelet + CSI node"
+    U->>A: "PVC 20Gi, class fast-block 생성"
+    P-->>A: "Pending PVC watch"
+    P->>P: "StorageClass의 provisioner·parameter 확인"
+    P->>A: "PV 생성, backend volume handle 기록"
+    B->>A: "PVC ↔ PV bind"
+    S->>A: "Pod를 volume topology에 맞는 node에 bind"
+    C->>C: "필요하면 volume을 node에 attach"
+    K->>K: "stage/publish, filesystem mount"
+    K->>A: "Pod container 시작 상태 보고"
+```
+
+각 화살표가 바꾸는 대상이 다르다.
+
+| 단계 | 주체 | 바뀌는 object·resource | 멈췄을 때 먼저 볼 것 |
+| --- | --- | --- | --- |
+| Provision | CSI external-provisioner와 backend | backing volume, PV | StorageClass provisioner 이름, provisioner log·event, quota |
+| Bind | persistent volume controller | PV `claimRef`, PVC `volumeName`, phase | size, access mode, class, selector |
+| Schedule | scheduler | Pod `spec.nodeName` | volume topology, node affinity, request·taint |
+| Attach | attach/detach controller와 CSI controller | VolumeAttachment, backend attachment | zone 일치, attach limit, credential |
+| Mount | kubelet과 CSI node plugin | node mount와 container mount namespace | device, filesystem, node plugin event |
+
+PVC phase가 `Bound`여도 Pod가 `Running`이라는 뜻은 아니다. PV와 claim의 API binding만 끝났고 attach 또는 mount가 실패할 수 있다. 반대로 Pod가 Pending일 때 scheduler 문제만 찾으면, 실제 원인이 unbound PVC일 수 있다.
+
+## 10. `Immediate`와 `WaitForFirstConsumer`
+
+Zone에 묶인 block volume에서는 PV를 어느 zone에 만들지와 Pod를 어느 zone에 놓을지를 함께 결정해야 한다. StorageClass의 `volumeBindingMode`가 이 순서를 바꾼다.
+
+```text
+Immediate
+PVC 생성 → volume을 zone-a에 먼저 생성 → Pod는 zone-a 후보만 사용
+
+WaitForFirstConsumer
+PVC는 잠시 Pending → scheduler가 Pod 요구와 후보 zone 계산
+→ 선택 topology에 volume provision → Pod와 volume을 같은 zone에 배치
+```
+
+다음 StorageClass는 구조를 보여 주는 교육용 예시이며 실제 provisioner와 parameter가 없는 상태로 적용하지 않는다.
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: zonal-block
+provisioner: csi.example.invalid
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+```
+
+`WaitForFirstConsumer`에서 PVC가 Pending인 것은 항상 장애가 아니다. 그 claim을 쓰는 Pod가 생겨 scheduler가 topology를 선택할 때까지 의도적으로 기다릴 수 있다. 다만 Pod가 이미 있는데도 계속 Pending이면 Pod affinity, available zone, storage capacity와 provisioner event를 같이 본다.
+
+예를 들어 Pod가 `zone-b` required affinity를 갖고 StorageClass backend가 `zone-a`만 지원하면 후보 교집합이 없다. Claim size를 줄여도 zone 모순은 해결되지 않는다. 반대로 `Immediate`로 zone-a PV를 먼저 만들고 나중에 Pod를 zone-b에 고정하면 volume node affinity conflict가 생길 수 있다.
+
+## 11. RWO와 RWOP는 같은 뜻이 아니다
+
+Access mode는 storage가 허용하는 mount 방식이며 application 수준 동시 쓰기 안전성을 보장하지 않는다.
+
+| Mode | 의미 | 흔한 오해 |
+| --- | --- | --- |
+| `ReadWriteOnce` (RWO) | 한 node에서 read-write로 mount 가능 | Pod가 정확히 하나만 쓸 수 있다는 뜻은 아님 |
+| `ReadOnlyMany` (ROX) | 여러 node에서 read-only mount 가능 | Application cache가 자동 일관된다는 뜻 아님 |
+| `ReadWriteMany` (RWX) | 여러 node에서 read-write mount 가능 | 여러 writer의 file locking·transaction을 자동 보장하지 않음 |
+| `ReadWriteOncePod` (RWOP) | cluster에서 단일 Pod의 read-write 사용을 강하게 제한하도록 설계 | 모든 driver·기존 volume에서 자동 지원되는 것은 아님 |
+
+RWO volume을 mount한 node 한 대에 같은 claim을 참조하는 Pod 두 개가 함께 배치되면 둘 다 접근 가능한 storage 구현이 있을 수 있다. “replica 2개지만 RWO니까 writer는 하나”라는 설계는 안전하지 않다. 단일 Pod 접근이 Kubernetes storage 계층의 요구라면 CSI 지원 조건을 확인하고 RWOP를 검토한다. 그래도 process가 두 개이거나 application이 잘못된 lock을 쓰는 문제까지 해결하지 않는다.
+
+다음은 RWOP claim 형태를 보여 주는 교육용 manifest다. 실제 적용 전 cluster의 CSI driver가 이 mode를 지원하는지 확인해야 하며 여기서는 적용하지 않는다.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: single-writer-data
+  namespace: storage-lab
+spec:
+  accessModes:
+    - ReadWriteOncePod
+  storageClassName: fast-block
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+RWOP claim을 쓰는 기존 Pod가 정상 종료되지 않았거나 attachment·mount 정리가 끝나지 않으면 새 Pod가 바로 시작하지 못할 수 있다. 이는 단일 사용 제약이 작동한 결과일 수 있다. 가용성이 더 중요하다고 같은 disk를 강제 detach하기 전에 node가 실제로 죽었는지, 기존 writer가 남아 있는지와 backend fencing을 확인한다.
+
+## 12. 완전한 진단 사례: Pending PVC에서 mount 실패까지
+
+다음은 실제 실행 기록이 아닌 예상 관찰이다.
+
+```text
+09:00 PVC research-data 생성 → phase Pending
+09:01 Event: storageclass.storage.k8s.io "fast-block" not found
+09:05 StorageClass 생성 → provisioner가 PV pv-42와 backend vol-42 생성
+09:06 PVC Bound, Pod는 worker-b에 schedule
+09:07 Event: FailedAttachVolume, volume은 zone-a이고 worker-b는 zone-b
+09:10 node affinity를 zone-a로 수정한 새 Pod가 worker-a에 schedule
+09:11 attach 성공, kubelet mount, container 시작
+```
+
+첫 번째 원인은 class 부재라서 claim이 없었고, 두 번째 원인은 topology라서 claim은 이미 Bound였다. 같은 `Pending` 또는 `ContainerCreating` 화면이라도 object phase와 event 시각을 연결해야 원인이 달라진다. 최종적으로 Pod가 시작해도 filesystem 권한, fsGroup, application path 오류가 남을 수 있으므로 container log와 mount path도 확인한다.
+
+## 13. 문제와 해설
 
 1. Container 재시작과 Pod 삭제 중 emptyDir가 사라지는 경계는? **Pod 삭제**다.
 2. PVC와 PV의 차이는? **PVC는 namespace의 요청, PV는 제공되는 storage 표현**이다.

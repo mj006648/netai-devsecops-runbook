@@ -93,6 +93,23 @@ Executor 3개에 각각 4코어를 배정하고 task마다 1 CPU를 요구한다
 
 ## 7. 실패하면 무엇을 다시 실행하는가
 
+### 실패를 task 재시도와 application 재시작으로 나눈다
+
+Stage 0에 P0·P1·P2 세 task가 있고 P1만 executor 종료로 실패했다고 하자. 필요한 shuffle output이 남아 있고 retry 한도 안이면 scheduler는 P1 task만 다른 executor에서 다시 실행할 수 있다. P0와 P2의 유효한 결과까지 업무 코드가 직접 다시 호출하는 것은 아니다.
+
+그러나 P0의 shuffle 파일을 가진 executor가 나중에 사라져 그 output을 읽을 수 없다면 downstream task만 재시도해서는 복구되지 않는다. Scheduler는 잃어버린 shuffle output을 만드는 이전 stage task를 다시 실행할 수 있다. Lineage가 복구에 쓰인다는 말은 이런 의존 관계를 가리킨다.
+
+| 사건 | 판단 주체 | 다시 할 수 있는 범위 |
+| --- | --- | --- |
+| Task 예외 | Driver의 scheduler | 해당 task attempt |
+| Shuffle output 유실 | Driver의 scheduler | 필요한 이전 stage partition |
+| Executor process 종료 | Cluster manager와 driver | 새 executor 배정, 잃은 task 재실행 |
+| Driver 종료 | 배포 시스템 | application 자체 재시작 필요 |
+
+Task attempt가 다시 실행될 수 있으므로 task 안에서 외부 API에 “결제 요청”을 직접 보내는 부수 효과는 위험하다. 첫 attempt가 API 호출 뒤 응답 전에 실패하면 두 번째 attempt가 같은 호출을 반복할 수 있다. Spark의 결과 계산 재시도와 외부 시스템의 멱등성은 별도 문제다.
+
+**반례.** Executor를 하나 더 띄운다고 driver가 잃어버린 in-memory 상태가 복구되는 것은 아니다. Driver 고가용성, application 제출 재시작, streaming checkpoint는 서로 다른 계층의 복구 수단이다.
+
 Task가 실패하면 엔진은 지원되는 재시도 규칙으로 task를 다시 실행할 수 있다. Executor가 사라지면 해당 executor에만 있던 cache나 shuffle 데이터를 다시 계산해야 할 수 있다.
 
 재시도 가능한 계산이라는 이유만으로 외부 API 호출·메시지 전송·DB insert가 한 번만 수행되는 것은 아니다. Task 내부의 외부 부작용은 중복될 수 있다. 외부 시스템에는 멱등성·트랜잭션·커밋 경로를 마련한다.

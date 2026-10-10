@@ -141,6 +141,46 @@ A7의 DCMI 조회는 약 17:03 KST에 **798W 순간값**이었다.
 GPU·NPU를 전부 최대 부하로 동시에 돌려서 검증한 기록도 없다.
 전원 계획은 각 부품의 입력 사양, 실제 제한값, 동시 부하 가능성, OEM 지원 구성, 예비량을 하나의 시트에서 대조해야 한다.
 
+### 평균 전력 예산과 순간 부하를 같은 것으로 보지 않기
+
+서버의 평균 소비전력이 PSU 정격 합계보다 낮다는 계산만으로 운용 가능을 판정할 수 없다. CPU·가속기는 짧은 시간에 전력이 올라갈 수 있고, PSU·배전·냉각은 서로 다른 시간 상수로 반응한다.
+
+가속기 4개가 각각 평균 500W, CPU와 나머지 장치가 평균 800W인 toy 서버를 생각하자.
+
+```text
+평균 DC 부하 = 4 × 500W + 800W = 2,800W
+PSU 효율을 이 부하에서 94%라고 가정하면
+예상 AC real power ≈ 2,800W / 0.94 ≈ 2,979W
+```
+
+여기서 효율 94%는 power factor 0.94라는 뜻이 아니다. 효율은 AC 입력 중 DC 출력으로 전달된 비율이고, PF는 real power와 apparent power 관계다. PF를 0.95라고 별도로 가정하면 apparent power는 `2,979W / 0.95 ≈ 3,136VA`다. rack PDU와 회로를 검토할 때 W와 VA를 섞으면 안 된다.
+
+이제 네 가속기가 짧은 구간에 각각 700W까지 올라가고 다른 부하가 900W가 된다고 하자.
+
+```text
+순간 DC 요구 = 4 × 700W + 900W = 3,700W
+```
+
+평균 2.8kW만 보고 3.2kW의 유효 DC 용량을 잡았다면 평균에는 여유가 있지만 이 순간에는 500W가 부족하다. 실제 장비는 전력 제한, capacitor hold-up, PSU overload curve, 장치별 power smoothing으로 반응할 수 있다. 이 toy 계산만으로 즉시 꺼진다고 단정할 수는 없지만, 평균값 하나로 transient를 지웠다는 문제를 찾을 수 있다.
+
+```mermaid
+sequenceDiagram
+    participant W as 워크로드
+    participant A as 가속기/CPU
+    participant P as PSU·배전
+    participant B as BMC/firmware
+    W->>A: 병렬 계산 구간 시작
+    A->>P: DC 전력 요구 상승
+    P-->>A: 정격·overload curve 안이면 공급
+    B->>A: 필요 시 power cap/throttle 적용
+    A-->>W: clock 저하 또는 정상 지속
+    P-->>B: 전압·전류·fault telemetry
+```
+
+예상 결과는 성능 저하가 반드시 온도 때문만은 아니라는 것이다. 전력 제한에 먼저 걸리면 온도 여유가 있어도 clock이 내려갈 수 있다. 반대로 PSU 입력 여유가 있어도 heatsink와 airflow가 부족하면 thermal throttle이 걸린다. BMC의 PSU input/output, 장치 power cap, 온도, clock을 같은 시간축으로 보아야 한다.
+
+조건이 바뀌는 반례로 모든 장치가 동시에 peak에 도달하지 않는 workload라면 단순 peak 합은 지나치게 보수적일 수 있다. 하지만 그 동시성 가정은 측정이나 vendor power guidance로 입증해야 한다. redundancy도 별도다. 정상 시 총 정격이 충분해도 PSU 한 개나 한쪽 feed가 사라진 뒤 남은 용량으로 순간 부하를 견디지 못하면 요구한 장애 모델을 만족하지 않는다.
+
 ## 4. PSU가 여덟 개면 무엇을 알 수 있나
 
 A7 BMC는 PSU 8개 모두 `Presence detected`, 상태 `ok`로 보고했고, FRU는 `PAC3K2S12-TG`였다.
@@ -200,6 +240,37 @@ N+N 4+4라면 한 feed 장애 시 4개만 남는 모델을 봐야 하므로 같�
 전원 중복은 장애 도메인을 그려야 한다.
 PSU 하나 고장, PSU 입력 케이블 하나 빠짐, PDU A 장애, UPS A 장애, 상위 차단기 장애는 서로 다른 사건이다.
 PSU가 많아도 모든 입력이 같은 PDU에 꽂혀 있으면 PDU 장애에는 함께 쓰러질 수 있다.
+
+### PSU 개수보다 먼저 failure domain을 그리는 연습
+
+8개 PSU를 4개씩 feed A와 B에 연결한 N+N 모델을 구체적으로 추적해 보자. 각 PSU가 현재 조건에서 3.2kW를 낼 수 있다고 가정하면 각 그룹 정격 합은 12.8kW다. 실제 server DC 부하가 10kW라면 정상 시 두 그룹이 절반씩 나눠 약 5kW를 공급할 수 있다.
+
+```text
+정상:
+feed A → PSU A1..A4 → 약 5kW ┐
+                               ├→ server DC bus 10kW
+feed B → PSU B1..B4 → 약 5kW ┘
+
+feed A 장애:
+feed A → 0kW
+feed B → PSU B1..B4 → 10kW → server DC bus
+```
+
+장애 순간에는 B 그룹 부담이 약 5kW에서 10kW로 이동한다. B 그룹의 단순 정격 여유는 `12.8 - 10 = 2.8kW`다. 하지만 이 계산만으로 성공을 확정하지 않는다. 입력 전압과 온도에서의 derating, server power cap, PSU load-sharing 제어, transfer transient, PDU·차단기 정격을 모두 통과해야 한다.
+
+시간순으로 보면 확인점이 달라진다.
+
+| 시점 | 사건 | 기대 상태 | 틀릴 수 있는 전제 |
+|---:|---|---|---|
+| t0 | 두 feed 정상 | A/B가 부하 공유 | 실제 배선이 4+4로 분리되지 않았을 수 있음 |
+| t1 | feed A 상실 | DC bus가 짧은 변화를 견딤 | hold-up과 제어 전환이 부족할 수 있음 |
+| t2 | B 그룹이 부하 인수 | B의 전류와 온도 상승 | PDU/케이블이 10kW를 못 견딜 수 있음 |
+| t3 | BMC가 fault 기록 | PSU/feed fault 식별 가능 | sensor 이름만으로 상위 차단기 위치는 모름 |
+| t4 | 워크로드 계속 | power cap 또는 throttle 가능 | 서비스는 살아도 성능 SLO가 깨질 수 있음 |
+
+예상 결과는 “서버가 꺼지지 않음”과 “성능 저하 없이 계속됨”이 다른 합격 조건이라는 것이다. 한 feed 상실 뒤 firmware가 장치 전력을 제한해 생존할 수 있으므로, 장애 시험에서는 전원 상태와 함께 clock·throughput·온도를 기록한다.
+
+반례로 PSU 하나만 고장 난 경우에는 feed A 전체 장애보다 작은 failure domain일 수 있다. 반대로 A와 B가 이름만 다르고 같은 UPS나 차단기를 공유하면 4+4 배선이어도 상위 공통 장애에는 N+N이 아니다. 또한 10kW라는 안정 부하가 허용돼도 workload transient가 13kW로 오르면 단일 feed 상태의 12.8kW 단순 정격을 넘는다. 정상 상태와 장애 상태 각각에서 steady와 transient를 따로 계산한다.
 
 ## 5. 팬과 공기 흐름은 한 시스템이다
 

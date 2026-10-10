@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img">
+  <title>프로세스 상태 전이</title><desc>ready, running, blocked 상태와 scheduler, wait, wakeup 전이</desc>
+  <defs><style>.n{fill:#f4f8ff;stroke:#275b96;stroke-width:3}.t{font:20px sans-serif;fill:#17202a}.e{stroke:#555;stroke-width:3;fill:none;marker-end:url(#m)}.l{font:16px sans-serif}</style><marker id="m" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#555"/></marker></defs>
+  <rect class="n" x="60" y="130" width="180" height="75" rx="20"/><text class="t" x="150" y="175" text-anchor="middle">Ready</text>
+  <rect class="n" x="360" y="130" width="180" height="75" rx="20"/><text class="t" x="450" y="175" text-anchor="middle">Running</text>
+  <rect class="n" x="660" y="130" width="180" height="75" rx="20"/><text class="t" x="750" y="175" text-anchor="middle">Blocked</text>
+  <path class="e" d="M240 150H355"/><text class="l" x="298" y="140" text-anchor="middle">dispatch</text>
+  <path class="e" d="M360 190H245"/><text class="l" x="302" y="220" text-anchor="middle">preempt</text>
+  <path class="e" d="M540 150H655"/><text class="l" x="598" y="140" text-anchor="middle">wait I/O</text>
+  <path class="e" d="M750 205C750 300 150 300 150 210"/><text class="l" x="450" y="325" text-anchor="middle">completion / wakeup</text>
+</svg>

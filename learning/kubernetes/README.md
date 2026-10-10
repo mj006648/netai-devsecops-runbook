@@ -2,7 +2,7 @@
 
 **서버가 여러 대이고 프로그램이 계속 바뀌거나 실패할 때, 원하는 실행 상태를 어떻게 유지하는가?** 이 책은 프로그램·프로세스·컨테이너부터 시작해서 Pod·Deployment·Service·저장소·자원·권한·관측으로 연결한다. Kubernetes를 처음 보는 독자도 YAML의 각 줄이 무엇을 요청하고 어떤 구성요소가 처리하는지 따라갈 수 있게 구성했다.
 
-자료 확인 기준일은 **2026-10-09**다. 최신 지원 버전과 기능의 stable/beta/alpha 상태는 [15장](15-versions-and-extensions.md)에서 구분한다. 로컬 실습의 준비 도구·버전·실행 여부는 [13장](13-local-labs.md)에 따로 명시한다. 문서의 예제는 현재 연구실 클러스터에 적용한 운영 설정이 아니다.
+기초 교재의 자료 확인 기준일은 **2026-10-09**, Gateway API 심화와 설명 보강은 **2026-10-10**이다. 최신 지원 버전과 기능의 stable/beta/alpha 상태는 [15장](15-versions-and-extensions.md)에서 구분한다. 로컬 실습의 준비 도구·버전·실행 여부는 [13장](13-local-labs.md)에 따로 명시한다. 문서의 예제는 현재 연구실 클러스터에 적용한 운영 설정이 아니다.
 
 ![사용자 요청을 API server와 제어 루프가 받아 노드의 Pod 실행으로 연결하는 Kubernetes 구조](assets/architecture.svg)
 
@@ -22,6 +22,7 @@ Kubernetes를 사용한다는 사실만으로 SQL 결과·Iceberg 커밋·업무
 | [03. Pod와 Namespace](03-pods-and-namespaces.md) | Kubernetes가 배치하는 가장 작은 단위는 무엇일까? | Pod·container·IP·volume·namespace·labels·spec/status |
 | [04. Workload 종류](04-workloads.md) | 항상 켜진 서버와 끝나는 작업을 어떻게 다룰까? | Deployment·ReplicaSet·StatefulSet·DaemonSet·Job·CronJob |
 | [05. Service와 네트워크](05-networking-services.md) | Pod IP가 바뀌어도 어떻게 접속할까? | Service·DNS·EndpointSlice·CNI·Ingress·Gateway·NetworkPolicy |
+| [05A. Gateway API 심화](05a-gateway-api.md) | 외부 HTTP 요청을 어떤 규칙으로 어느 backend에 보낼까? | 전체 YAML·controller와 proxy·객체 연결·port·namespace 권한·TLS·routing·status·진단 |
 | [06. 저장소](06-storage.md) | Pod가 사라져도 데이터를 남기려면? | Volume·PV·PVC·StorageClass·CSI·reclaim policy |
 | [07. 설정과 Secret](07-config-secrets.md) | 설정·비밀번호·인증서를 어떻게 전달할까? | ConfigMap·Secret·env·mount·갱신·암호화 경계 |
 | [08. 자원과 스케줄링](08-resources-scheduling.md) | CPU·RAM 숫자는 실제로 무엇을 약속할까? | requests·limits·QoS·throttling·OOM·affinity·taints |
@@ -38,6 +39,8 @@ Kubernetes를 사용한다는 사실만으로 SQL 결과·Iceberg 커밋·업무
 
 처음이라면 **00 → 01 → 02 → 03 → 04 → 05**를 읽는다. 프로그램이 Pod로 실행되고 Service로 연결되는 한 경로를 먼저 그린다. 그다음 **13장**의 작은 로컬 앱으로 상태를 관찰한다.
 
+외부 HTTP 요청은 **05 → 05A**로 이어 읽는다. GatewayClass·Gateway·HTTPRoute·Service·Pod를 한 예제로 연결해 어떤 설정을 누가 읽고 실제 요청은 어디로 흐르는지 배운다. **09장**에서는 앱이 구현한 health endpoint에 kubelet이 무엇을 요청하는지, readiness 실패와 liveness 실패가 어떤 다른 조치를 일으키는지 시간 순서로 따라간다.
+
 저장·설정·자원은 06~08, 실행 안정성과 권한은 09~10, 지속적인 배포와 진단은 11~12로 이어진다. Spark 연구는 14와 [Spark 교재](../apache-spark/README.md), 테이블 저장은 [Iceberg 교재](../apache-iceberg/README.md)로 연결한다.
 
 ```mermaid
@@ -51,7 +54,7 @@ flowchart LR
 
 ## 그림·YAML·실습을 읽는 법
 
-YAML 예제는 Kubernetes API에 원하는 상태를 전달하는 manifest다. 파일을 쓰는 것과 클러스터에 적용하는 것은 다른 작업이다. `kubectl apply`를 실행하기 전 선택한 context와 namespace를 확인하고, 이 책의 쓰기 예제는 13장의 격리된 실습 클러스터에서 사용한다.
+YAML 예제는 Kubernetes API에 원하는 상태를 전달하는 manifest다. 파일을 쓰는 것과 클러스터에 적용하는 것은 다른 작업이다. `kubectl apply`를 실행하기 전 선택한 context와 namespace를 확인하고, 기본 쓰기 예제는 13장의 격리된 실습 클러스터에서 사용한다. 05A의 Gateway 예제는 호환되는 Gateway API CRD와 controller가 설치된 별도 학습 환경을 전제로 하므로 기본 kind 실습만 준비한 상태에서 그대로 동작하지 않는다.
 
 단어가 처음 나오면 한국어 뜻과 실제 역할을 함께 설명한다. 그림의 화살표는 API 요청·데이터 이동·제어 관계 중 무엇인지 본문에서 구분한다. [SVG 그림 목록](assets/README.md)에서 크게 볼 수 있다. 예상 Pod 이름·IP·노드 이름·시각은 실제 실행에서 달라진다.
 

@@ -178,6 +178,63 @@ optimizer는 각 rank에서 같은 평균 gradient로 같은 update를 한다.
 그래서 별도의 parameter broadcast를 매 step마다 하지 않아도 복제본이 대체로 같은 값으로 유지된다.
 부동소수점 비결정성과 unused parameter, skipped step 같은 예외는 별도 관리가 필요하다.
 
+### 두 rank, 두 원소로 all-reduce의 중간값 보기
+
+결과만 `10.0`이라고 쓰면 “통신 라이브러리가 평균을 만들어 준다”로 뭉뚱그리기 쉽다. 두 rank가 길이 2 gradient를 가진 최소 예로 reduce-scatter와 all-gather를 분리해 보자.
+
+```text
+rank 0 local gradient = [2, 10]
+rank 1 local gradient = [6, 30]
+목표 sum             = [8, 40]
+목표 average         = [4, 20]
+```
+
+두 원소를 chunk 0과 chunk 1로 나누었다고 가정한다.
+
+```text
+초기 소유값
+  rank 0: chunk0=2, chunk1=10
+  rank 1: chunk0=6, chunk1=30
+
+reduce-scatter 뒤
+  rank 0: reduced chunk0=2+6=8
+  rank 1: reduced chunk1=10+30=40
+
+all-gather 뒤
+  rank 0: [8, 40]
+  rank 1: [8, 40]
+
+world_size로 나눈 뒤
+  rank 0: [4, 20]
+  rank 1: [4, 20]
+```
+
+Reduce-scatter가 끝난 시점에는 두 rank 모두 완전한 결과를 가진 것이 아니다. 각 rank가 축약 완료된 일부 chunk만 가진다. All-gather가 그 조각을 교환해야 각 rank의 full gradient buffer가 같아진다. ZeRO/FSDP 계열은 목적에 따라 이 “shard 상태”를 유지해 복제 메모리를 줄일 수 있지만, DDP는 optimizer가 같은 전체 gradient를 보도록 full 결과를 구성하는 모델로 이해할 수 있다.
+
+이제 두 rank의 parameter가 처음에 모두 `[1.0, 1.0]`이고 SGD learning rate가 `0.1`이라고 하자.
+
+```text
+올바른 평균 gradient [4, 20]
+new parameter = [1, 1] - 0.1 × [4, 20]
+              = [0.6, -1.0]
+```
+
+rank 1이 collective를 건너뛰고 local gradient `[6, 30]`으로 update하면 `[0.4, -2.0]`이 된다. 다음 step부터 replica가 달라진다. Collective hang만 장애가 아니라, 조건 분기 때문에 일부 rank가 다른 optimizer step을 수행하는 것도 correctness 장애다.
+
+Bucket overlap을 이 예에 붙이면 시간 순서가 더 분명해진다.
+
+```text
+t0  마지막 layer backward 완료 → bucket A ready → all-reduce A 시작
+t1  앞 layer backward 계속 계산
+t2  앞 layer gradient 완료      → bucket B ready → all-reduce B 시작
+t3  A와 B의 동기화 완료 확인
+t4  optimizer.step()이 평균 gradient를 읽음
+```
+
+겹치기의 목적은 `t0~t2` 통신을 계산 뒤에 숨기는 것이다. 그러나 optimizer가 `t3` 전에 buffer를 읽으면 아직 local 값이나 부분 축약값을 볼 수 있다. Framework가 이 의존성을 event와 stream으로 관리하더라도 profiler에서는 compute와 communication의 겹침, 마지막 bucket 뒤의 노출된 tail을 따로 읽어야 한다.
+
+반례로, 두 rank가 같은 평균 gradient를 얻었다고 학습이 완전히 동일해지는 것은 아니다. 각 rank의 optimizer state가 이전 checkpoint에서 다르게 복구되었거나 한 rank만 loss scale을 건너뛰었다면 같은 gradient에도 다른 update가 가능하다. 분산 checkpoint는 parameter뿐 아니라 optimizer와 scaler 상태의 rank 정합성도 보존해야 한다.
+
 ## 6. Ring all-reduce의 트래픽 모델
 
 Ring all-reduce는 데이터를 조각으로 나눠 ring을 따라 reduce-scatter와 all-gather를 수행하는 모델로 설명할 수 있다.

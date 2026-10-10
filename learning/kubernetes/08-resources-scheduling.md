@@ -114,7 +114,125 @@ kubectl top pods -n resource-lab
 
 위 명령은 `lab13/resource-lab` 예시이며 실행하지 않았다. `kubectl top`은 metrics API가 있어야 한다. Pending event에서 `Insufficient cpu`, affinity, taint 이유를 확인하고 limit만 임의로 올리지 않는다.
 
-## 10. 문제와 해설
+## 10. 두 node에서 scheduler 후보가 줄어드는 계산
+
+다음 cluster는 두 node가 모두 capacity 4 CPU, 8Gi지만 system 예약 때문에 allocatable이 다르다. Scheduler는 allocatable에서 이미 배치된 Pod의 request 합을 빼고 새 Pod가 fit하는지 본다.
+
+| 값 | worker-a | worker-b |
+| --- | ---: | ---: |
+| Capacity | 4000m, 8Gi | 4000m, 8Gi |
+| Allocatable | 3500m, 7Gi | 3200m, 6.5Gi |
+| 기존 request 합 | 2400m, 4Gi | 1600m, 5.5Gi |
+| 남은 request 공간 | 1100m, 3Gi | 1600m, 1Gi |
+
+새 Pod가 `requests: {cpu: 1200m, memory: 1536Mi}`라면 worker-a는 CPU가 100m 부족하고 worker-b는 memory가 약 512Mi 부족하다. 각 node에 한 자원씩 남아 있어도 두 자원을 동시에 만족하는 node가 없으므로 Pending이다.
+
+```text
+worker-a: 2400m + 1200m = 3600m > 3500m  → CPU 불충족
+worker-b: 5.5Gi + 1.5Gi = 7Gi > 6.5Gi    → memory 불충족
+결론: cluster 전체 합산 여유가 아니라 node별 교집합을 본다.
+```
+
+Pod의 CPU request를 1000m로 낮추면 worker-a에 fit할 수 있지만 실제 사용이 1200m 이상 지속된다면 node overcommit과 latency가 나빠질 수 있다. “schedule되게 만들기”와 “안정적으로 실행하기”는 같은 최적화가 아니다. 더 작은 request를 정당화하려면 사용량 분포와 SLO를 측정한다.
+
+Limit은 위 fit 계산에 기본 예약량으로 더하지 않는다. 새 Pod limit이 CPU 4, memory 4Gi여도 request가 fit하면 배치될 수 있다. 여러 container가 동시에 limit까지 사용하면 node pressure가 생길 수 있으므로 limit 합이 allocatable을 넘는 overcommit 위험을 별도로 본다.
+
+## 11. Hard constraint와 soft preference
+
+Scheduler는 먼저 반드시 지켜야 할 filter 조건으로 후보를 제거하고, 남은 후보에 선호 점수를 매긴다.
+
+```mermaid
+flowchart LR
+    N["worker-a, worker-b, worker-c"] --> H1{"required nodeAffinity"}
+    H1 --> H2{"taint를 toleration?"}
+    H2 --> H3{"requests fit?"}
+    H3 --> C["후보 worker-a, worker-c"]
+    C --> S1["preferred nodeAffinity 점수"]
+    S1 --> S2["podAntiAffinity·균형 점수"]
+    S2 --> B["최고 점수 node binding"]
+```
+
+| 규칙 | hard/soft | 만족하지 않으면 |
+| --- | --- | --- |
+| `nodeSelector` | hard | 후보에서 제외 |
+| `requiredDuringSchedulingIgnoredDuringExecution` | hard | 후보에서 제외, 없으면 Pending |
+| `preferredDuringSchedulingIgnoredDuringExecution` | soft | 다른 node에도 배치 가능 |
+| `NoSchedule` taint without toleration | hard filter | 새 Pod가 그 node 후보에서 제외 |
+| `PreferNoSchedule` | soft | 가능하면 피하지만 배치될 수 있음 |
+| `NoExecute` without toleration | 실행 중에도 영향 | 기존 Pod eviction 가능 |
+
+이름의 `IgnoredDuringExecution`은 node label이 나중에 바뀌었을 때 이미 실행 중인 Pod를 자동 eviction하지 않는다는 뜻이다. Required affinity가 실행 중에도 계속 강제되는 것으로 읽지 않는다.
+
+## 12. 전용 GPU node: toleration만으로 부족한 이유
+
+GPU node에 다음 taint와 label이 있다고 하자.
+
+```text
+label: accelerator=nvidia
+taint: accelerator=nvidia:NoSchedule
+```
+
+다음 Pod spec 일부는 교육용이며 단독 manifest로 적용하지 않는다.
+
+```yaml
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: accelerator
+              operator: In
+              values: ["nvidia"]
+tolerations:
+  - key: accelerator
+    operator: Equal
+    value: nvidia
+    effect: NoSchedule
+```
+
+Toleration만 넣으면 GPU node의 taint를 견디지만 일반 node로도 갈 수 있다. Required node affinity만 넣으면 GPU node를 요구하지만 taint 때문에 배치되지 않는다. 전용 node 정책은 보통 두 조건을 함께 써서 “그 workload만 들어오고, 그 workload는 그곳으로 간다”는 교집합을 만든다.
+
+반례로 모든 Pod에 넓은 `operator: Exists` toleration을 넣으면 전용 taint의 격리 의미가 약해진다. 또 label은 사람이 잘못 붙일 수 있으므로 Node Feature Discovery나 관리 자동화의 label provenance를 확인한다. Affinity는 실제 hardware 검증 장치가 아니다.
+
+## 13. Pod affinity와 topology의 함정
+
+Pod anti-affinity로 같은 application replica를 서로 다른 zone에 퍼뜨릴 수 있다. 하지만 required 규칙이 너무 강하고 zone이 두 개인데 replica를 세 개 두면서 topology domain마다 하나만 허용하면 세 번째 Pod는 영원히 Pending일 수 있다.
+
+Preferred anti-affinity는 가용 node가 부족하면 같은 zone 배치를 허용한다. Required anti-affinity는 failure domain 분리를 강제하지만 용량 부족 때 availability를 낮출 수 있다. Topology spread constraint의 `maxSkew`와 `whenUnsatisfiable`도 같은 hard/soft 결정을 담으므로, 장애 격리 목표와 scale-out 가능성을 함께 계산한다.
+
+## 14. QoS를 얻기 위한 정확한 제약
+
+Guaranteed가 되려면 Pod의 모든 container에 CPU와 memory request·limit이 있어야 하며, 각 resource에서 request와 limit이 같아야 한다. App container만 같고 sidecar에 request가 없으면 Pod 전체는 Guaranteed가 아니다.
+
+```yaml
+containers:
+  - name: api
+    resources:
+      requests: {cpu: 500m, memory: 512Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  - name: metrics-sidecar
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 100m, memory: 128Mi}
+```
+
+이 조각은 Pod spec의 교육용 예시이며 적용하지 않는다. 이렇게 설정하면 Guaranteed 조건을 충족할 수 있지만 CPU burst 여유가 제한되어 throttling이 늘 수 있다. QoS class를 얻는 것 자체가 성능 목표는 아니다.
+
+Burstable Pod도 request 이하로만 사용한다는 뜻이 아니다. 여유가 있으면 CPU·memory를 더 사용할 수 있지만 node pressure 때 request 대비 초과 사용과 priority 등이 eviction 판단에 영향을 준다. Guaranteed도 memory limit을 넘으면 OOM kill될 수 있고 disk pressure나 node failure에서 불사신이 아니다.
+
+## 15. `kubectl top` 수치와 scheduler 수치가 다른 이유
+
+`kubectl top`은 metrics pipeline이 수집한 최근 실제 사용량이고 scheduler가 이미 예약한 request 합이 아니다. 다음 상황은 모순이 아니다.
+
+```text
+worker-a CPU actual usage: 18%
+worker-a allocated requests: 96%
+새 Pod event: Insufficient cpu
+```
+
+실제 사용이 낮아도 기존 Pod가 높은 request를 예약했다면 새 Pod는 fit하지 않는다. 반대로 request 합이 낮아 schedule은 되지만 실제 사용이 치솟아 CPU throttling이나 memory pressure가 생길 수 있다. Capacity planning에서는 request, limit, actual percentile, throttled seconds, OOM·eviction을 같은 기간에 본다.
+
+## 16. 문제와 해설
 
 1. `250m` CPU는 몇 core인가? **0.25 core**다.
 2. Scheduler는 보통 순간 CPU usage와 request 중 무엇을 fit에 쓰는가? **Request**다.

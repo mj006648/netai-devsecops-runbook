@@ -9,6 +9,9 @@
 | [Pod: 같이 배치되는 container의 실행 단위](pod.svg) | Pod: 같이 배치되는 container의 실행 단위 |
 | [Workload: 프로그램의 수명과 배치 의도](workloads.svg) | Workload: 프로그램의 수명과 배치 의도 |
 | [Service: 바뀌는 Pod 앞의 안정적인 이름](networking.svg) | Service: 바뀌는 Pod 앞의 안정적인 이름 |
+| [Gateway 설정과 실제 HTTP 요청](gateway-control-data.svg) | API 객체를 읽는 controller와 요청을 처리하는 proxy의 역할 |
+| [Gateway의 namespace 간 연결 권한](gateway-cross-namespace.svg) | allowedRoutes와 ReferenceGrant가 허용하는 서로 다른 연결 |
+| [Gateway·Service·Pod의 port](gateway-ports.svg) | listener port, backendRefs의 Service port, 실제 앱 port의 연결 |
 | [Volume·PVC·PV: 실행 수명과 저장 수명](storage.svg) | Volume·PVC·PV: 실행 수명과 저장 수명 |
 | [Requests·limits: 배치 판단과 실행 제한](resources.svg) | Requests·limits: 배치 판단과 실행 제한 |
 | [Probe와 rollout: 시작·준비·건강을 구분](rollout-probes.svg) | Probe와 rollout: 시작·준비·건강을 구분 |

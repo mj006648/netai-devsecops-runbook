@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="670" viewBox="0 0 1200 670" role="img" aria-labelledby="title desc">
+<title id="title">Port 네 개의 의미: 같은 80도 다른 설정</title>
+<desc id="desc">이 그림은 설정 값의 연결 관계다. 실제 packet hop을 네 개로 고정하는 네트워크 도식이 아니다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="670" fill="#f8fafc" rx="18"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="52" font-size="30" font-weight="700" fill="#0f172a">Port 네 개의 의미: 같은 80도 다른 설정</text>
+<text x="40" y="91" font-size="17" fill="#475569">이 그림은 설정 값의 연결 관계다. 실제 packet hop을 네 개로 고정하는 네트워크 도식이 아니다.</text>
+<rect x="40" y="175" width="235" height="180" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="175" width="235" height="45" rx="14" fill="#dbeafe"/>
+<rect x="40" y="199" width="235" height="21" fill="#dbeafe"/>
+<text x="56" y="205" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Client URL</text>
+<text x="56" y="248" font-size="16" fill="#334155" text-anchor="start" font-weight="400">http://api.example.test</text>
+<text x="56" y="273" font-size="16" fill="#334155" text-anchor="start" font-weight="400">:80 /v1/books</text>
+<text x="56" y="298" font-size="16" fill="#334155" text-anchor="start" font-weight="400">연결할 진입점 port</text>
+<rect x="335" y="175" width="235" height="180" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="335" y="175" width="235" height="45" rx="14" fill="#dbeafe"/>
+<rect x="335" y="199" width="235" height="21" fill="#dbeafe"/>
+<text x="351" y="205" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Gateway listener</text>
+<text x="351" y="248" font-size="16" fill="#334155" text-anchor="start" font-weight="400">protocol: HTTP</text>
+<text x="351" y="273" font-size="16" fill="#334155" text-anchor="start" font-weight="400">port: 80</text>
+<text x="351" y="298" font-size="16" fill="#334155" text-anchor="start" font-weight="400">외부 요청을 받는 port</text>
+<rect x="630" y="175" width="235" height="180" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="630" y="175" width="235" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="630" y="199" width="235" height="21" fill="#ccfbf1"/>
+<text x="646" y="205" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Service 설정</text>
+<text x="646" y="248" font-size="16" fill="#334155" text-anchor="start" font-weight="400">port: 80</text>
+<text x="646" y="273" font-size="16" fill="#334155" text-anchor="start" font-weight="400">targetPort: http</text>
+<text x="646" y="298" font-size="16" fill="#334155" text-anchor="start" font-weight="400">Route가 참조하는 port</text>
+<rect x="925" y="175" width="235" height="180" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="925" y="175" width="235" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="925" y="199" width="235" height="21" fill="#ccfbf1"/>
+<text x="941" y="205" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">앱 container</text>
+<text x="941" y="248" font-size="16" fill="#334155" text-anchor="start" font-weight="400">named port http:5678</text>
+<text x="941" y="273" font-size="16" fill="#334155" text-anchor="start" font-weight="400">실제 프로그램도</text>
+<text x="941" y="298" font-size="16" fill="#334155" text-anchor="start" font-weight="400">5678에서 listen</text>
+<path d="M275 265 H335" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M570 265 H630" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M865 265 H925" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="600" y="409" font-size="21" fill="#1e40af" text-anchor="middle" font-weight="700">HTTPRoute backendRefs.port = Service port 80</text>
+<text x="600" y="452" font-size="20" fill="#115e59" text-anchor="middle" font-weight="700">Service targetPort = 이름 http → container port 5678</text>
+<text x="40" y="521" font-size="16" fill="#334155" text-anchor="start" font-weight="400">5678를 backendRefs.port에 쓰면 Service에 그 port가 없을 수 있다. backend Service의 port를 참조한다.</text>
+<text x="40" y="565" font-size="16" fill="#334155" text-anchor="start" font-weight="400">Gateway port를 8080으로 바꿔도 backend Service port 80과 앱 listen 5678이 자동으로 바뀌지는 않는다.</text>
+<text x="40" y="609" font-size="16" fill="#334155" text-anchor="start" font-weight="400">containerPort 선언 자체는 서버를 시작하지 않는다. 프로그램 listen 설정과 실제 응답을 확인한다.</text>
+</g>
+</svg>

@@ -113,6 +113,65 @@ PAR1
 
 가상 Parquet file에 10개 row group이 있고 각 row group은 100만 행을 담는다고 하자. 쿼리가 `temperature_c` 한 column만 읽으면 projection은 다른 column chunks를 건너뛴다. 쿼리 조건이 `event_time BETWEEN 09:00 AND 10:00`이면 row group statistics가 시간 범위를 보고 일부 row group을 건너뛸 수 있다. Projection은 “어떤 column bytes를 읽을까”의 문제다. Predicate pushdown 또는 pruning은 “어떤 row group/page/file을 열 필요가 없을까”의 문제다. 둘 다 성공하면 I/O가 줄지만, 하나가 성공했다고 다른 하나도 자동 성공하는 것은 아니다.
 
+### Row group에서 Arrow batch가 나오는 실제 읽기 순서
+
+가상 Parquet file은 2개 row group, 각 1,000,000행, 4개 column을 가진다고 하자.
+
+~~~text
+columns:
+  event_time  8 bytes/value로 단순화
+  device_id   평균 encoded 2 bytes/value로 단순화
+  temp_c      4 bytes/value로 단순화
+  payload     평균 encoded 100 bytes/value로 단순화
+
+query:
+  SELECT event_time, temp_c
+  WHERE event_time BETWEEN 09:00 AND 09:10
+~~~
+
+Footer statistics가 row group 0은 08:00–08:59, row group 1은 09:00–09:59라고 알려 준다면 row group 0을 제외할 수 있다. Projection은 row group 1에서도 `device_id`와 `payload` column chunk를 제외한다.
+
+```mermaid
+sequenceDiagram
+    participant E as Query engine
+    participant O as Object/file reader
+    participant P as Parquet decoder
+    participant A as Arrow memory
+    E->>O: footer range read
+    O-->>E: row group stats + chunk offsets
+    E->>E: RG0 prune, RG1 선택<br/>event_time,temp_c projection
+    E->>O: RG1의 두 column chunk range read
+    O-->>P: compressed page bytes
+    P->>P: decompress·decode·null level 적용
+    P->>A: value buffers + validity bitmap
+    A-->>E: Arrow record batches
+```
+
+압축 전 논리값만 단순 계산하면 선택한 두 column은 행당 12 byte, 100만 행에서 약 12 MB다. 네 column 전체는 행당 114 byte, 약 114 MB다.
+
+~~~text
+전체 논리값 규모: 1,000,000 × (8 + 2 + 4 + 100) = 114,000,000 bytes
+projection 논리값: 1,000,000 × (8 + 4) = 12,000,000 bytes
+단순 차이: 102,000,000 bytes
+~~~
+
+이 숫자는 실제 file read bytes가 아니다. Encoding, compression, page header, definition level, footer, object range 최소 단위가 있기 때문이다. 그러나 왜 넓은 `payload` column을 읽지 않는 것이 큰 차이를 만들 수 있는지는 보여 준다.
+
+### Parquet bytes와 Arrow buffers는 같은 배치가 아니다
+
+Parquet page는 저장 효율을 위해 압축·dictionary·RLE 같은 표현을 쓸 수 있다. Arrow array는 compute가 값에 빠르게 접근하도록 values, offsets, validity bitmap을 배치한다. Reader는 보통 다음 상태 변환을 한다.
+
+| 순서 | 입력 | 누가 바꾸는가 | 출력 |
+| --- | --- | --- | --- |
+| 1 | compressed Parquet page bytes | codec | encoded page payload |
+| 2 | dictionary/RLE/levels | Parquet decoder | logical values와 null 상태 |
+| 3 | logical values | Arrow builder/engine | contiguous value buffer·bitmap |
+| 4 | Arrow batch | compute kernel | filter·aggregate 결과 |
+
+따라서 Parquet file을 Arrow로 읽었다는 말에는 decode와 메모리 materialization 비용이 숨어 있다. Dictionary id buffer를 그대로 Arrow dictionary array로 재사용할 수 있는 최적화도 있지만, type 변환·filter·nested layout·allocator가 copy를 만들 수 있다.
+
+조건이 달라지면 반례가 생긴다. Predicate가 두 row group 모두와 겹치면 row group pruning은 0개다. Reader가 footer statistics를 신뢰하지 않거나 encrypted metadata를 열 수 없으면 더 많이 읽을 수 있다. Query가 최종적으로 `payload`까지 반환하면 projection 이득은 줄어든다. Arrow batch가 GPU와 다른 memory domain에 있으면 추가 전송이 필요할 수 있다.
+
 ## 3. Encoding과 compression은 page 안의 다른 층이다
 
 Parquet encoding 문서는 plain, dictionary, RLE/bit-packing, delta, byte-stream split 등 여러 encoding을 정의한다. [Parquet Encodings](https://parquet.apache.org/docs/file-format/data-pages/encodings/) Dictionary encoding은 column chunk의 dictionary page에 값 사전을 저장하고 data page에는 dictionary id를 저장할 수 있지만, 사전이 너무 커지면 plain encoding으로 fallback할 수 있다. [Parquet Encodings](https://parquet.apache.org/docs/file-format/data-pages/encodings/) Parquet compression 문서는 data page와 dictionary page의 data block이 codec으로 압축될 수 있다고 설명하며, Snappy, GZIP, Brotli, ZSTD, LZ4_RAW 등을 정의한다. [Parquet Compression](https://parquet.apache.org/docs/file-format/data-pages/compression/) Encoding은 값을 더 표현하기 좋은 byte sequence로 바꾸는 단계다. Compression은 그 byte sequence를 codec으로 더 작게 만드는 단계다. 높은 압축률이 항상 빠른 쿼리를 뜻하지 않는다. CPU decode 비용, column selectivity, storage bandwidth, vectorization, codec 지원이 함께 영향을 준다.

@@ -285,6 +285,47 @@ completion은 "내 work request를 RNIC 관점에서 처리했다"는 신호다.
 RDMA Write는 원격 CPU의 `recv()` 호출 없이 원격 registered memory를 바꿀 수 있지만, 원격 프로그램은 어떤 버퍼가 언제 유효해졌는지 별도의 동기화 규칙을 가져야 한다.
 잘못된 rkey 관리, 오래된 주소 공유, 버퍼 재사용 순서 오류는 데이터 손상으로 이어질 수 있다.
 
+#### RDMA Write 뒤에 원격 reader가 새 데이터를 확인하는 순서
+
+문제 상황을 구체화하자. 송신자는 원격 메모리의 4KiB `payload`를 RDMA Write로 덮어쓰고, 원격 CPU는 `ready == 1`이면 payload를 읽는다. payload와 ready를 아무 순서로 쓰면 원격 CPU가 새 ready와 이전 payload를 섞어 볼 수 있다. 어느 ordering과 notification이 보장되는지는 transport, verb, RNIC, API 계약을 확인해야 한다.
+
+교육용 protocol은 data와 게시 표식을 분리한다.
+
+```text
+초기 상태: slot.generation = 41, slot.payload = 이전 데이터
+
+1. 수신 측 CPU: slot을 MR로 등록하고 주소·rkey를 인증된 제어 채널로 전달
+2. 송신 측 CPU: 로컬 payload를 채우고 work request 준비
+3. 송신 RNIC: 원격 slot.payload에 RDMA Write
+4. 송신 측: CQ completion을 확인
+5. 송신 측: 합의한 ordering을 만족하는 방식으로 generation=42를 게시하거나 알림 전송
+6. 수신 측 CPU: 알림/표식을 확인한 뒤 generation과 payload를 읽음
+7. 수신 측 CPU: checksum·길이·generation을 검증하고 처리 완료 ACK
+8. 송신 측: ACK 뒤에야 해당 slot과 rkey 수명 종료 또는 재사용
+```
+
+```mermaid
+sequenceDiagram
+    participant SA as 송신 앱
+    participant SR as 송신 RNIC
+    participant RR as 수신 RNIC
+    participant RA as 수신 앱
+    SA->>SR: payload WR 게시
+    SR->>RR: RDMA Write(payload)
+    RR-->>SR: transport 처리
+    SR-->>SA: local CQ completion
+    SA->>RR: generation/notification 게시
+    RR-->>RA: 원격 알림 또는 shared flag
+    RA->>RA: generation·길이·checksum 검증
+    RA-->>SA: application ACK
+```
+
+4KiB slot을 1,000개 순환 사용하면 등록 영역은 약 4MiB다. 그러나 1,000번 completion을 받았다는 사실만으로 수신 앱이 1,000개를 소비했다고 계산하면 안 된다. CQ completion은 송신 버퍼를 언제 재사용할 수 있는지 판단하는 한 근거이고, 원격 소비 완료는 별도 ACK나 소유권 protocol이 말해야 한다.
+
+느린 수신자가 있을 때 송신 CQ는 잘 진행되어도 application queue가 덮어써질 수 있다. generation number를 두고 송신자가 `produced - acknowledged < slot_count`를 지키면 아직 소비하지 않은 slot 재사용을 막을 수 있다. 조건이 바뀌는 반례로 Send/Receive verb는 수신 측에 미리 receive work request가 필요하고 completion 의미도 One-sided RDMA Write와 다르다. RDMA Read는 요청한 RNIC가 원격 memory를 읽어 오므로 notification 설계가 달라진다.
+
+권한 수명도 data 수명과 묶인다. rkey가 노출된 동안 peer는 허용된 memory region에 접근할 수 있다. 요청이 끝났는데 같은 MR과 rkey를 오래 재사용하면 오래된 peer나 지연된 작업이 새 데이터에 닿을 위험이 커진다. 등록 해제, key 변경, queue drain의 정확한 순서는 사용하는 RDMA API와 provider 계약으로 검증해야 한다.
+
 ### 원격 메모리 도착과 영속성은 다르다
 
 RDMA로 원격 서버의 DRAM에 데이터가 도착했다고 해서 그 데이터가 디스크나 영구 저장장치에 안전하게 기록됐다는 뜻은 아니다.

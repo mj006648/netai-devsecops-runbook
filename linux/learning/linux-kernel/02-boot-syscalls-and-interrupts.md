@@ -108,6 +108,45 @@ user mode
 
 **privilege transition**과 **context switch**는 같은 말이 아니다. syscall은 같은 thread가 user mode에서 kernel mode로 들어갔다가 돌아올 수 있다. context switch는 CPU가 실행 중인 task 자체를 다른 task로 바꾸는 일이다. syscall 도중 blocking I/O를 만나면 scheduler가 다른 task로 context switch할 수 있지만, syscall이 곧 context switch라는 뜻은 아니다.
 
+### 같은 `read()` 안에서 syscall과 interrupt가 만나는 지점
+
+syscall과 interrupt를 표로만 나누면 둘이 실제 I/O에서 어떻게 이어지는지 놓치기 쉽다. NVMe에서 4KiB를 읽는 상황을 시간축에 놓아 보자. 숫자는 구조를 설명하기 위한 예이며 장치별 지연 보장은 아니다.
+
+```mermaid
+sequenceDiagram
+    participant U as 사용자 thread
+    participant K as 커널 syscall 경로
+    participant D as NVMe 장치
+    participant I as IRQ/completion 경로
+    U->>K: read(fd, buf, 4096)
+    K->>D: command 제출 + doorbell
+    K->>K: thread를 wait queue에 두고 schedule
+    Note over U,K: 다른 task가 CPU를 사용할 수 있음
+    D->>D: storage에서 data 읽고 DMA
+    D->>I: completion 기록 + interrupt
+    I->>K: request 완료, waiter wakeup
+    K-->>U: copy/완료 후 4096 반환
+```
+
+각 단계의 주체를 분리한다.
+
+| 시점 | 주체 | 사건 | syscall인가, interrupt인가 |
+|---:|---|---|---|
+| t0 | 사용자 thread | `read()` wrapper가 번호·인자를 register에 둠 | syscall 준비 |
+| t1 | 같은 thread | syscall instruction으로 kernel mode 진입 | 동기 syscall entry |
+| t2 | kernel/driver | queue에 command를 쓰고 MMIO doorbell | syscall을 처리하는 kernel code |
+| t3 | scheduler | 현재 thread가 data를 기다리며 sleep, 다른 task 실행 | 필요하면 context switch |
+| t4 | NVMe | DMA로 지정 RAM buffer에 4KiB 기록 | CPU instruction 흐름 밖의 장치 동작 |
+| t5 | 장치/CPU | 장치가 completion을 기록하고 IRQ 알림 | 비동기 interrupt entry |
+| t6 | kernel | 완료 처리 후 wait queue의 thread를 runnable로 바꿈 | interrupt/deferred work |
+| t7 | scheduler/thread | 다시 선택된 thread가 syscall의 남은 경로를 마치고 복귀 | syscall return |
+
+예를 들어 t0부터 t7까지 120µs가 걸렸고 CPU가 이 thread의 kernel code를 실제로 실행한 합계가 8µs라면, 나머지 약 112µs는 전부 “CPU가 read 코드를 실행한 시간”이 아니다. 장치, queue, sleep, scheduler 대기가 섞여 있다. 그래서 `strace`의 syscall 경과 시간만 보고 커널이 120µs 동안 CPU를 계속 썼다고 해석하면 안 된다.
+
+여기서 interrupt가 현재 `read()`를 호출한 바로 그 CPU에 들어온다고 보장되지 않는다. MSI-X affinity, queue 배치, polling 여부에 따라 다른 CPU가 completion을 처리하고 원래 thread를 깨울 수 있다. 또 빠른 장치와 polling 구성에서는 매 요청마다 interrupt를 받지 않을 수 있다. 반례로 page cache hit인 regular-file `read()`는 장치 command나 interrupt 없이 syscall 안에서 data를 복사해 바로 끝날 수 있다.
+
+“syscall이면 동기, interrupt이면 비동기”라는 문장도 API 의미와 진입 원인을 섞는다. blocking `read()` API는 호출자 관점에서 동기지만 내부 완료는 비동기 interrupt로 올 수 있다. 반대로 timer interrupt가 깨운 thread가 나중에 실행되는 시점은 scheduler가 정한다. 원인을 찾을 때는 **누가 커널에 들어왔는가 → 현재 thread가 계속 실행 가능한가 → 완료를 누가 알려 주는가 → 어느 thread를 깨우는가** 순서로 본다.
+
 ## 7. fault와 interrupt를 헷갈리면 page fault를 오해한다
 
 **page fault**는 이름에 fault가 들어가지만 항상 “오류”가 아니다. 사용자가 처음 만지는 anonymous page에 대해 커널이 demand-zero page를 할당하는 정상 경로일 수 있다. 파일을 `mmap()`한 뒤 처음 읽을 때 해당 file page를 page cache에서 가져오거나 디스크에서 읽는 경로일 수도 있다.

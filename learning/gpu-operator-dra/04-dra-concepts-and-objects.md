@@ -101,6 +101,67 @@ flowchart TD
 선택자는 후보를 고르는 필터다.
 선택자 자체가 장치를 예약하거나 성능 순위를 자동으로 계산하는 것은 아니다.
 
+### 5.1 장치 세 개가 CEL 필터를 통과하는 과정
+
+추상적인 “후보 장치” 대신 ResourceSlice가 다음 세 장치를 게시했다고 가정하자. 속성·용량 key는 교육용이며 실제 NVIDIA DRA 드라이버가 게시한 exact key와 schema를 먼저 확인해야 한다.
+
+| device name | node | model attribute | memory capacity | healthy attribute |
+|---|---|---|---:|---|
+| `gpu-a0` | `node-a` | `L40S` | 48 GiB | `true` |
+| `gpu-a1` | `node-a` | `A10` | 24 GiB | `true` |
+| `gpu-b0` | `node-b` | `L40S` | 48 GiB | `false` |
+
+관리자는 DeviceClass에서 healthy 장치만 허용하고, 사용자는 Claim에서 40 GiB 초과를 요구한다고 하자. 개념 조건은 다음 두 층이다.
+
+```text
+DeviceClass selector:
+  device.attributes["example.com"].healthy == true
+
+Claim selector:
+  device.capacity["example.com"].memory.isGreaterThan(quantity("40Gi"))
+```
+
+필터는 순서대로 후보 집합을 줄인다.
+
+```text
+ResourceSlice inventory
+  {gpu-a0, gpu-a1, gpu-b0}
+
+DeviceClass healthy filter
+  gpu-a0: true  → 유지
+  gpu-a1: true  → 유지
+  gpu-b0: false → 제외
+  결과 {gpu-a0, gpu-a1}
+
+Claim memory > 40Gi filter
+  gpu-a0: 48Gi → 유지
+  gpu-a1: 24Gi → 제외
+  결과 {gpu-a0}
+
+Pod node constraints와 교집합
+  node-a 허용 → gpu-a0 할당 후보
+  node-b만 허용 → 후보 0, Pending
+```
+
+```mermaid
+flowchart LR
+    I["inventory: a0, a1, b0"] --> H{"class: healthy?"}
+    H -->|"a0,a1"| M{"claim: memory > 40Gi?"}
+    H -->|"b0 제외"| X[후보 제외]
+    M -->|"a0"| N{"Pod가 node-a에 갈 수 있나?"}
+    M -->|"a1 제외"| X
+    N -->|예| A[할당 후보 gpu-a0]
+    N -->|아니오| P[Pending]
+```
+
+여기서 값을 바꾸는 주체를 구별한다. 드라이버는 발견한 장치와 게시 가능한 attribute/capacity를 ResourceSlice에 반영한다. 관리자는 DeviceClass 정책을 바꾼다. 워크로드 작성자는 Claim 조건을 바꾼다. 스케줄러는 이 입력을 읽어 allocation 결과를 쓰지만, GPU의 실제 메모리 용량을 수정하지 않는다.
+
+`count: 2`를 추가하면 최종 후보가 `gpu-a0` 하나뿐이므로 실패한다. 총 inventory가 세 개라는 사실이나 memory 합이 `48+24+48=120 GiB`라는 사실은 해결책이 아니다. 개별 장치 조건을 만족하는 후보 두 개가 필요하며, 함께 배치해야 한다면 node 조건도 동시에 만족해야 한다.
+
+`firstAvailable`로 `40Gi 초과 1개`, 그다음 `20Gi 초과 1개`를 두었다면 첫 대안은 `gpu-a0`, 두 번째 대안은 `gpu-a0`과 `gpu-a1`이 후보가 된다. 첫 대안이 만족 가능한 동안 두 번째 후보의 수가 더 많다는 이유로 A10을 고르지 않는다. 대안 순서는 성능 점수가 아니라 사용자가 표현한 선호다.
+
+반례로, `healthy=true`가 ResourceSlice에 남아 있다고 지금도 하드웨어가 정상이라고 영구 보장되지는 않는다. 게시 지연이나 노드 단절이 있을 수 있고, allocation 이후 Prepare에서 실패할 수도 있다. Inventory snapshot, Claim allocation, node prepare는 서로 다른 시점의 증거다.
+
 ## 6. ResourceClaim: 장치 사용 의사
 
 ResourceClaim의 `spec.devices.requests`에는 하나 이상의 요청을 넣을 수 있다.

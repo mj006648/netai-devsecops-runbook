@@ -116,6 +116,65 @@ Activation은 별도다.
 실제 training peak는 backward 순서와 activation checkpointing에 따라 달라진다.
 Checkpointing은 일부 activation 저장을 줄이고 backward 때 forward를 다시 계산한다.
 
+### 같은 1.49 GiB라도 수명이 다르다: 한 step의 메모리 시간표
+
+위 산술은 항목을 더했지만, peak를 이해하려면 **누가 언제 만들고 지우는지**까지 봐야 한다. 같은 100M parameter 예에 activation과 임시 buffer를 붙여 한 step을 단순화하자.
+
+```text
+장기 상태
+  FP16 weight                 0.19 GiB
+  FP32 master weight          0.37 GiB
+  Adam m + v                  0.75 GiB
+  합                          1.31 GiB
+
+step 중 생기는 상태
+  saved activation            최대 1.50 GiB
+  FP16 gradient               최대 0.19 GiB
+  한 연산의 workspace         최대 0.30 GiB
+```
+
+반올림 때문에 앞의 1.49 GiB와 표의 합이 조금 달라 보일 수 있다. 여기서는 수명 설명을 위해 장기 상태에서 gradient를 분리했다. 단순 시간표는 다음과 같다.
+
+| 시점 | 새로 생기거나 바뀌는 것 | 살아 있는 교육용 합계 |
+|---|---|---:|
+| step 시작 | weight, master weight, Adam 상태가 이미 존재 | 1.31 GiB |
+| forward 중 | layer별 saved activation이 쌓임 | 최대 2.81 GiB |
+| 큰 연산 실행 | allocator가 workspace를 잠시 제공 | 최대 3.11 GiB |
+| backward 시작 | activation을 읽어 gradient를 만들기 시작 | 약 3.00 GiB 전후 |
+| backward 진행 | 지난 layer activation은 해제 가능, gradient는 누적 | 순서에 따라 증감 |
+| optimizer step | gradient와 Adam 상태를 읽어 master/FP16 weight를 갱신 | 약 1.50 GiB + 임시값 |
+| gradient 정리 뒤 | 다음 step에 불필요한 gradient buffer는 재사용 가능 | 1.31 GiB + allocator 보유분 |
+
+이 표에서 optimizer state는 step 내내 남지만 activation은 forward에서 증가하고 backward에서 감소한다. Gradient는 반대로 backward 동안 증가한다. 두 곡선이 겹치는 구간이 있으므로 `장기 상태 + 최대 activation`이나 `장기 상태 + gradient` 중 하나만 계산하면 peak를 놓칠 수 있다.
+
+```mermaid
+sequenceDiagram
+    participant M as Model/optimizer state
+    participant F as Forward
+    participant B as Backward
+    participant O as Optimizer
+    M->>F: weight를 읽음
+    F->>F: saved activation 누적
+    F->>B: loss와 저장값 전달
+    B->>B: activation 소비, gradient 누적
+    B->>O: parameter gradient 전달
+    O->>M: master weight와 moment 갱신
+    M-->>F: 갱신한 weight로 다음 step
+```
+
+Activation checkpointing을 layer 24개 중 6개 경계만 저장하는 정책으로 바꿨다고 하자. “activation이 정확히 4분의 1”이라고 바로 결론 내리면 안 된다. 저장하지 않은 구간을 backward 중 다시 forward하므로 재계산 activation과 workspace가 순간적으로 함께 생긴다. 줄어드는 것은 주로 장기 보관 activation이고, weight·gradient·optimizer state는 그대로다.
+
+또 하나의 반례는 allocator의 `reserved`다. Backward가 activation tensor를 해제해도 framework allocator가 해당 block을 프로세스에 예약한 채 다음 연산에 재사용할 수 있다. 따라서 tensor 관점의 live bytes는 줄었는데 장치 도구의 프로세스 메모리는 그대로 보일 수 있다. 이때 바로 leak이라고 판단하지 말고 `allocated`, `reserved`, step별 peak를 함께 본다.
+
+용량 검토에서는 적어도 다음 네 숫자를 따로 기록한다.
+
+1. **Persistent bytes:** weight와 optimizer state처럼 step 경계를 넘어 사는 값.
+2. **Live tensor peak:** 그 순간 실제 tensor가 참조하는 값.
+3. **Workspace peak:** kernel이나 collective가 잠시 요구하는 값.
+4. **Reserved peak:** allocator가 재사용을 위해 잡아 둔 값.
+
+모델 설정 변경 전후에 이 네 숫자 중 무엇이 줄었는지를 말해야 “메모리 최적화”의 원인을 설명할 수 있다.
+
 ## Inference memory의 장난감 예
 
 13B parameters 모델을 FP16 weight로 추론한다고 하자.

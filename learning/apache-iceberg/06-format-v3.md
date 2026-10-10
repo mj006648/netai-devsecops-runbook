@@ -86,6 +86,43 @@ cardinality              = 4
 
 ### 1.3 DV도 sequence 적용 규칙을 따른다
 
+#### 한 data file에 DV가 적용되는 계산
+
+A.parquet의 행 위치가 0~7이고 현재 snapshot에서 position 1과 6을 삭제한다고 하자. DV blob은 Puffin 파일 안에 `{1,6}`의 압축 표현을 담고, manifest entry는 그 blob의 file path·offset·length와 대상 A를 연결한다.
+
+```text
+A positions: 0 1 2 3 4 5 6 7
+DV bits:     0 1 0 0 0 0 1 0
+reader:      0   2 3 4 5   7
+```
+
+다음 commit에서 position 3도 삭제한다면 같은 data file에 대해 새 snapshot이 볼 DV는 `{1,3,6}`을 표현해야 한다. “기존 DV와 새 DV 두 개를 독자가 임의로 합치면 된다”가 아니라, snapshot당 data file 하나에 대한 DV 수 제약을 지키는 writer가 새 표현을 준비하고 metadata로 게시한다.
+
+| 시점 | 주체 | metadata/file 변화 |
+| --- | --- | --- |
+| S20 | 기존 snapshot | A, DV20 `{1,6}` 참조 |
+| S21 준비 | DV writer | 새 Puffin blob DV21 `{1,3,6}` 작성 |
+| S21 commit | Metadata writer | A가 DV21을 사용하도록 새 snapshot 공개 |
+| S21 read | Reader | A를 읽으며 1·3·6 제외 |
+
+```mermaid
+sequenceDiagram
+    participant W as DV writer
+    participant P as Puffin file
+    participant C as Metadata commit
+    participant R as Reader
+    W->>P: A용 bitmap {1,3,6} 작성
+    W->>C: S21에서 A → DV21 참조
+    C-->>W: commit 성공
+    R->>C: S21 계획
+    C-->>R: A와 DV21 위치
+    R->>R: positions 1,3,6 제외
+```
+
+Sequence 조건도 사라지지 않는다. DV가 더 최신인 대상 content에 올바르게 적용되어야 하며, rewrite가 논리적으로 같은 행을 새 물리 파일에 옮길 때 row lineage와 data sequence 규칙을 보존해야 삭제된 행이 부활하지 않는다.
+
+**반례.** DV가 두 position만 가리키므로 A의 나머지 column bytes를 전혀 읽지 않아도 된다는 뜻은 아니다. DV는 제외할 위치를 알려 주지만 query에 필요한 살아 있는 행의 컬럼은 여전히 data file에서 읽는다.
+
 DV는 position 기반 삭제이므로 대상 data file의 data sequence가 DV delete sequence보다 작거나 같아야 한다. 참조 data file도 일치해야 한다. [scan planning](https://iceberg.apache.org/spec/#scan-planning)의 position delete 조건을 따른다.
 
 ```text

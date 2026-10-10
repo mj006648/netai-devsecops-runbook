@@ -287,7 +287,64 @@ VLAN, VXLAN, IPsec, tunnel, proxy는 계층 그림을 더 복잡하게 만든다
 여기서 IP destination은 최종 목적지를 가리키지만, Ethernet destination MAC은 현재 링크의 다음 수신자를 가리킨다.
 router를 넘을 때 MAC 주소가 바뀌는 이유가 이것이다.
 
-## 14. 자주 틀리는 오개념
+## 14. 한 packet을 두 링크에서 추적한다
+
+앞의 계층 설명을 실제 주소 변화와 연결해 보자. 다음 값은 모두 교육용이다.
+
+~~~text
+Client A
+  IP 192.0.2.10/24
+  MAC aa:aa:aa:aa:aa:10
+  default gateway 192.0.2.1
+
+Router R
+  A쪽 IP/MAC 192.0.2.1 / rr:rr:rr:rr:rr:01
+  B쪽 IP/MAC 198.51.100.1 / rr:rr:rr:rr:rr:02
+
+Server B
+  IP 198.51.100.20/24
+  MAC bb:bb:bb:bb:bb:20
+~~~
+
+```mermaid
+sequenceDiagram
+    participant A as Client A
+    participant R as Router R
+    participant B as Server B
+    A->>R: Ethernet dst=R-A MAC<br/>IP dst=B, TCP dst=443
+    Note over R: 입력 FCS 검사<br/>Ethernet header 제거<br/>TTL 64→63, route lookup
+    R->>B: 새 Ethernet dst=B MAC<br/>IP dst=B, TCP dst=443
+    B-->>R: 응답 frame dst=R-B MAC
+    R-->>A: 새 응답 frame dst=A MAC
+```
+
+시간순으로 보면 다음과 같다.
+
+| 시점 | 누가 무엇을 정하는가 | 유지되는 값 | 바뀌는 값 |
+| --- | --- | --- | --- |
+| T0 | 애플리케이션이 server IP와 port 443을 선택 | 업무 payload 100 byte | socket 상태 생성 |
+| T1 | A의 route lookup이 next hop R을 선택 | IP dst `198.51.100.20` | egress와 next-hop IP 결정 |
+| T2 | A가 ARP cache 또는 ARP 응답으로 R의 MAC 확인 | IP/TCP header | 첫 링크 dst MAC 결정 |
+| T3 | A의 NIC가 frame을 symbol로 인코딩 | frame의 논리적 byte열 | 선로에서는 물리 신호가 됨 |
+| T4 | R이 frame을 받고 IP packet을 꺼냄 | source/destination IP와 TCP port | 입력 Ethernet header와 FCS는 끝남 |
+| T5 | R이 TTL을 64에서 63으로 줄이고 route lookup | TCP payload 100 byte | IPv4 header checksum 갱신 |
+| T6 | R이 B의 MAC을 확인해 새 frame 생성 | IP dst와 TCP dst 443 | source/destination MAC, FCS 변경 |
+| T7 | B가 역순으로 decapsulation | 원래 application bytes | 각 계층 header 제거·검증 |
+
+100 byte가 wire에서 100 byte만 차지하지도 않는다. 기본 IPv4 header 20 byte와 TCP header 20 byte라면 IP packet은 140 byte다. VLAN tag가 없는 Ethernet MAC frame은 `14 + 140 + 4 = 158 byte`다. 여기에 preamble/SFD 8 byte와 IFG 12 byte-times까지 세면 한 frame이 링크 시간을 차지하는 양은 178 byte-times다.
+
+~~~text
+교육용 wire-time:
+178 bytes × 8 = 1,424 bits
+1 Gb/s 링크에서 1,424 / 1,000,000,000 s
+  = 1.424 microseconds
+~~~
+
+이 계산은 TCP ACK, TLS record, 재전송, switch queue를 제외한다. 따라서 “payload 100 byte의 왕복 시간은 1.424 μs”라고 결론 내리면 안 된다. 1.424 μs는 한 방향에서 이 frame 하나를 1 Gb/s 링크에 직렬화하는 시간일 뿐이다.
+
+조건이 달라지면 경로도 달라진다. A와 B가 같은 subnet이면 첫 destination MAC은 router가 아니라 B의 MAC이다. VXLAN을 쓰면 기존 Ethernet/IP packet 바깥에 outer UDP/IP/Ethernet header가 더 붙는다. NAT이 있으면 MAC과 TTL뿐 아니라 IP나 port도 바뀔 수 있다. Wi-Fi 링크라면 Ethernet II frame과 같은 MAC header 구성을 그대로 가정할 수 없다.
+
+## 15. 자주 틀리는 오개념
 
 | 오개념 | 바로잡기 |
 | --- | --- |
@@ -299,7 +356,7 @@ router를 넘을 때 MAC 주소가 바뀌는 이유가 이것이다.
 | CRC가 있으니 보안상 안전하다 | CRC는 우발적 손상 검출용이지 인증이나 암호화가 아니다 |
 | OSI 7계층은 실제 커널 코드 구조와 같다 | 좋은 학습 모델이지만 구현은 더 섞여 있다 |
 
-## 15. 해설 문제
+## 16. 해설 문제
 
 ### 문제 1
 
@@ -343,7 +400,7 @@ IP source/destination은 일반 forwarding에서는 최종 통신 당사자를 �
 TTL 같은 IP header 일부는 바뀔 수 있다.
 Ethernet source/destination MAC은 링크마다 새로 붙으므로 hop마다 바뀐다.
 
-## 16. 1차 출처와 더 읽기
+## 17. 1차 출처와 더 읽기
 
 - IPv4 datagram, routing, TTL, checksum, IP의 비신뢰성: [RFC 791](https://www.rfc-editor.org/rfc/rfc791.html)
 - IP over Ethernet, Ethernet data field, padding, IPv4 EtherType, 1500 octet IP datagram: [RFC 894](https://www.rfc-editor.org/rfc/rfc894.html)

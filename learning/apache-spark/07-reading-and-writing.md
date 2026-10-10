@@ -81,6 +81,35 @@ Iceberg의 hidden partitioning과 파일 writer의 폴더 기반 `partitionBy`�
 
 ## 7. Append·overwrite·기존 경로 처리
 
+### 파일 작성 성공과 테이블 공개 성공은 다르다
+
+Executor task 세 개가 결과 파일 F0·F1·F2를 쓰는 job을 생각하자. F0와 F1을 쓴 뒤 F2 task가 실패하면 저장소에는 일부 파일이 보일 수 있다. 이 파일들이 보인다는 사실만으로 독자가 완성된 결과를 읽어도 된다는 뜻은 아니다. Data source의 commit protocol이나 table format의 metadata commit이 성공 경계를 정한다.
+
+| 시점 | 파일 저장소 | 독자가 믿을 수 있는 상태 |
+| --- | --- | --- |
+| Task 실행 중 | 임시·최종 형태의 일부 파일 가능 | 아직 완성된 dataset 아님 |
+| 모든 task 성공 | 결과 파일 준비 | job commit 전이면 공개 여부 미확정 |
+| Job/table commit 성공 | 유효 파일 목록 확정 | 새 결과를 읽을 수 있음 |
+| 응답 유실 | commit은 성공했을 수도 있음 | 상태를 조회한 뒤 재시도 판단 |
+
+일반 Parquet 경로를 glob으로 읽으면 폴더에 남은 일부 파일이나 과거 파일까지 섞을 위험이 있다. Iceberg 테이블 읽기는 현재 metadata pointer에서 snapshot·manifest를 따라 유효 파일을 선택한다. 이 차이가 파일 형식과 테이블 형식을 구분해야 하는 이유다.
+
+```mermaid
+sequenceDiagram
+    participant E as Executor tasks
+    participant O as Object store
+    participant C as Commit coordinator/catalog
+    participant R as Reader
+    E->>O: F0, F1, F2 작성
+    E-->>C: task 결과 보고
+    C->>C: 전체 성공과 기준 상태 검증
+    C-->>R: commit 뒤 새 파일 집합 공개
+```
+
+Overwrite는 특히 범위를 명시해야 한다. 전체 경로 overwrite, 동적 partition overwrite, 조건부 table overwrite는 같은 동작이 아니다. 실패 복구와 동시 writer가 있는 환경에서는 “먼저 폴더를 지우고 다시 쓴다”는 절차가 독자에게 빈 상태나 부분 상태를 보일 수 있다.
+
+**반례.** Output 파일이 정확히 세 개 생겼다고 행이 세 partition으로 균등하게 배치되었다고 단정할 수 없다. 한 파일이 대부분의 행을 가질 수 있고, 재시도와 commit protocol에 따라 시도 파일과 최종 파일 이름의 관계도 달라질 수 있다.
+
 **Append**는 기존 대상에 결과를 추가하는 방식, **overwrite**는 정해진 범위를 새 결과로 교체하는 방식이다. 무엇을 교체하는지는 데이터 소스·API·설정에 따라 확인해야 한다.
 
 파일 경로를 직접 overwrite하는 것과 Iceberg 테이블의 snapshot commit으로 파일 집합을 교체하는 것은 다른 동작이다. Dynamic/static overwrite, partition overwrite의 범위를 혼동하면 정상 데이터를 제거할 수 있다.

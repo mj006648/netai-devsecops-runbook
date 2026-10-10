@@ -115,7 +115,115 @@ flowchart LR
     L["같은 request_id log"] --> API
 ```
 
-## 8. 문제와 해설
+## 8. OOMKilled와 CrashLoopBackOff를 한 사건으로 진단하기
+
+다음 사례는 실제 cluster 실행 기록이 아니라 각 관찰이 어떻게 연결되는지를 보여 주는 완전한 예상 진단 이야기다. 교육용 Pod `api-7d9f`의 memory request는 256Mi, limit은 512Mi라고 가정한다.
+
+```text
+09:14:00 새 image rollout, Pod api-7d9f 시작
+09:16:21 traffic 증가, container RSS 505Mi
+09:16:24 kernel/cgroup이 process 종료
+09:16:25 kubelet status: lastState.terminated.reason=OOMKilled, exitCode=137
+09:16:26 restartCount=1, 새 container 시작
+09:16:40 같은 입력을 읽고 다시 memory 증가
+09:17:10 반복 실패 뒤 restart backoff 증가
+09:17:11 kubectl get 표시: Running, 0/1, CrashLoopBackOff
+```
+
+여기에는 서로 다른 상태 표현이 동시에 참일 수 있다.
+
+| 관찰 위치 | 값 | 뜻 |
+| --- | --- | --- |
+| Pod `status.phase` | `Running` | Pod가 node에 bind되어 container를 실행·재시작하는 큰 수명 단계 |
+| 현재 container state | `waiting.reason=CrashLoopBackOff` | 지금은 반복 실패 뒤 다음 재시작을 기다림 |
+| 직전 container state | `terminated.reason=OOMKilled` | 바로 전 process가 memory 관련 kill로 종료됨 |
+| `restartCount` | 증가 | 같은 Pod UID 안에서 container instance가 교체됨 |
+| kubectl `STATUS` 열 | `CrashLoopBackOff` | 사람이 보기 쉽게 고른 container 상태 요약이며 Pod phase가 아님 |
+
+따라서 `STATUS=CrashLoopBackOff`만 보고 application exception이라고 단정하지 않고 `lastState`의 reason·exitCode와 event를 확인한다. 반대로 `phase=Running`만 보고 건강하다고 결론 내리지 않는다.
+
+## 9. 같은 사례의 읽기 순서와 예상 증거
+
+다음 명령은 `lab13/observe-lab`의 읽기 전용 교육 절차이며 여기서는 실행하지 않았다.
+
+```text
+kubectl get pod api-7d9f -n observe-lab -o wide
+kubectl get pod api-7d9f -n observe-lab \
+  -o jsonpath='{.status.phase}{"\n"}{.status.containerStatuses[0].state}{"\n"}{.status.containerStatuses[0].lastState}{"\n"}'
+kubectl describe pod api-7d9f -n observe-lab
+kubectl logs api-7d9f -n observe-lab -c api --previous --timestamps --tail=200
+kubectl logs api-7d9f -n observe-lab -c api --timestamps --tail=200
+kubectl get events -n observe-lab --sort-by=.metadata.creationTimestamp
+```
+
+예상되는 핵심 증거는 다음과 같다.
+
+```text
+phase: Running
+state.waiting.reason: CrashLoopBackOff
+lastState.terminated.reason: OOMKilled
+lastState.terminated.exitCode: 137
+restartCount: 4
+event: Back-off restarting failed container api
+previous log: loading partition=2026-10-10, estimated rows=4800000
+```
+
+Event의 `BackOff`는 재시작을 늦추고 있다는 결과이지 memory 원인 자체가 아니다. `--previous` log는 죽은 instance가 마지막으로 무엇을 하던 중이었는지 보여 준다. 현재 log만 보면 막 시작한 process의 banner만 있어 원인을 놓칠 수 있다.
+
+## 10. OOM이라고 limit만 올리지 않는 이유
+
+`OOMKilled` 뒤에는 여러 다른 원인이 있다.
+
+- Container cgroup limit보다 heap+native+page cache 사용이 커졌다.
+- Application leak 때문에 시간에 따라 계속 증가한다.
+- 한 요청이나 partition 크기가 정상 범위를 벗어났다.
+- Sidecar와 app의 limit을 혼동해 다른 container를 보고 있다.
+- Node 전체 memory pressure에서 eviction과 kernel OOM이 관여했다.
+
+먼저 container 이름, limit, working set/RSS 추세, application heap, native allocation, input cardinality를 같은 시간축으로 본다. Limit을 512Mi에서 2Gi로 올려 잠시 정상화되더라도 leak이면 실패 시간만 늦춘다. 반대로 정상 peak가 700Mi이고 node에 충분한 여유가 있으며 application을 줄일 수 없다면 측정 근거로 request와 limit을 함께 조정할 수 있다.
+
+Memory request를 그대로 256Mi로 두고 limit만 2Gi로 올리면 scheduler는 여전히 256Mi만 예약한다. Replica 여러 개가 동시에 2Gi에 가까워지면 node pressure가 커진다. 안정적인 사용 percentile을 바탕으로 request도 다시 산정한다.
+
+## 11. Probe 실패가 CrashLoop을 만든 반례
+
+`lastState.terminated.reason=Error`, exit code가 애플리케이션의 자연 종료 값이 아니고 event에 `Liveness probe failed`와 `Killing`이 이어지면 memory가 아니라 kubelet이 container를 재시작했을 수 있다.
+
+```mermaid
+flowchart TD
+    C["CrashLoopBackOff 표시"] --> LS{"lastState reason"}
+    LS -->|"OOMKilled"| M["limit·heap·native·node pressure"]
+    LS -->|"Error/Completed"| E["exitCode와 previous log"]
+    E --> EV{"Event에 probe failed + Killing?"}
+    EV -->|"예"| P["probe path·timeout·dependency·startup"]
+    EV -->|"아니오"| A["application exit 또는 command 오류"]
+```
+
+Database가 잠깐 느려져 liveness endpoint가 timeout되고 kubelet이 정상 process를 죽이는 경우, heap을 늘려도 해결되지 않는다. `describe` event와 probe 설정, application access log를 같은 timestamp로 맞춰야 한다.
+
+## 12. 새 Pod와 같은 Pod의 재시작을 구분하기
+
+Deployment rollout이나 eviction으로 Pod가 교체되면 새 UID가 생긴다. 이때 새 Pod에서 `kubectl logs --previous`를 실행해도 옛 Pod의 container log를 얻지 못한다. 중앙 log에서 Pod UID, owner revision, container restart index를 함께 저장해야 한다.
+
+```text
+api-7d9f UID=aaa restartCount=4  ← 같은 Pod 안 재시작
+api-b62c UID=bbb restartCount=0  ← rollout로 생긴 새 Pod
+```
+
+Pod 이름 prefix가 같다고 동일 instance가 아니다. ReplicaSet hash가 다르면 image·config template revision도 다를 수 있다. 장애가 rollout 직후 시작했다면 두 ReplicaSet별 error rate와 image digest를 비교한다.
+
+## 13. 진단이 완료되는 조건
+
+원인을 찾았다는 말은 `CrashLoopBackOff` 표시가 사라졌다는 뜻만이 아니다. 이 사례의 완료 조건은 다음과 같다.
+
+1. 이전 container의 OOMKilled와 memory 증가가 timestamp로 연결된다.
+2. Leak, 정상 peak, 비정상 input 중 재현 가능한 원인이 좁혀진다.
+3. 격리 환경에서 수정 뒤 같은 input과 부하를 실행해 restart가 늘지 않는다.
+4. Request·limit과 node allocatable에서 replica 전체가 감당 가능한지 다시 계산한다.
+5. Ready replica, error rate, latency가 관찰 기간 동안 회복된다.
+
+단순히 Pod를 삭제하면 controller가 새 Pod를 만들고 잠시 초록색이 될 수 있지만 같은 input에서 다시 OOM이 난다. 재생성은 진단도 수정도 아니다.
+
+## 14. 문제와 해설
 
 1. Pod phase가 Running이면 Ready인가? **아니다.** Condition을 별도로 본다.
 2. CrashLoopBackOff는 Pod phase인가? **아니다.** 반복 실패와 backoff를 보여 주는 표시다.

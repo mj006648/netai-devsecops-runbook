@@ -118,6 +118,29 @@ write:
 
 `write()` return은 보통 data가 page cache에 복사되었음을 뜻한다. storage에 안전하게 기록되었다는 뜻은 아니다. `fsync()`는 file data와 필요한 metadata를 storage에 밀어 durability를 높이는 syscall이지만, device cache와 flush 동작, filesystem mode, 오류 처리까지 봐야 한다.
 
+### 4KiB `write()`가 page cache에서 장치까지 내려가는 시간순서
+
+프로세스가 열린 regular file의 현재 offset에 4KiB를 쓴다고 하자. 오류가 없고 buffered I/O인 단순 경로다.
+
+| 순서 | 주체 | 하는 일 | 이때 보장되는 것 |
+|---:|---|---|---|
+| 1 | 사용자 thread | `write(fd, buf, 4096)` 호출 | 아직 kernel이 data를 받지 않음 |
+| 2 | VFS/filesystem | fd에서 open file description과 inode를 찾고 권한·범위 검사 | 어느 file과 offset인지 결정 |
+| 3 | kernel | user buffer에서 page cache page로 4KiB copy | process가 buffer를 재사용할 수 있는 기반 |
+| 4 | filesystem | page와 관련 metadata를 dirty로 표시, file offset 갱신 | RAM에 새 내용이 있음 |
+| 5 | syscall | 성공하면 4096 반환 | 일반적으로 장치 영속화까지 뜻하지 않음 |
+| 6 | writeback 경로 | dirty page를 bio/request로 만들고 block layer에 제출 | storage I/O 시작 |
+| 7 | device | DMA로 data를 받고 command completion 기록 | 장치 protocol 수준 완료 |
+| 8 | kernel | page writeback 완료 처리 | 이후에도 device volatile cache가 남을 수 있음 |
+
+왜 5단계에서 빨리 돌아오는가? 매 작은 write마다 느린 storage 완료를 기다리면 처리량이 크게 떨어진다. page cache는 여러 write를 모으고 순서를 조정하며 같은 file data의 read hit에도 재사용한다. 대가로 application completion과 durability 사이에 시간 간격이 생긴다.
+
+초당 10,000번의 4KiB write가 들어오면 user data rate는 `10,000 × 4096 = 40,960,000B/s`, 약 41MB/s다. filesystem metadata, journal, block alignment, device write amplification은 이 숫자에 포함되지 않는다. 100ms 동안 writeback이 멈추면 단순히 약 4.1MB의 새 dirty user data가 RAM에 더 쌓일 수 있다. 실제 dirty limit와 writeback 정책은 시스템 설정과 전체 메모리에 따라 달라진다.
+
+조건이 바뀌면 경로도 달라진다. `O_SYNC`/`O_DSYNC`, `fsync()`, DAX, direct I/O, network filesystem은 return 의미와 통과 계층이 다르다. memory-mapped write는 CPU store가 page를 dirty하게 만드는 진입 경로이며 `write()` syscall 표를 그대로 적용하지 않는다. short write가 발생하면 return 값이 4096보다 작을 수 있으므로 caller가 남은 byte를 처리해야 한다.
+
+예상 결과는 application log에 “write 성공”이 찍힌 뒤 전원 장애에서 data가 사라질 수 있다는 것이다. 이는 반드시 kernel bug가 아니라 application이 요청한 보장 수준일 수 있다. 반대로 `fsync()`가 느릴 때 `write()` 자체가 언제나 빠르다는 보장도 없다. dirty throttling, memory pressure, filesystem lock, allocation 때문에 writer가 앞 단계에서 기다릴 수 있다.
+
 ## 6. direct I/O는 page cache 우회를 시도하지만 단순한 고속 버튼은 아니다
 
 `O_DIRECT`는 page cache를 우회해 user buffer와 storage 사이의 direct transfer를 시도한다. DB가 자체 buffer pool을 관리할 때 쓸 수 있다.
@@ -175,6 +198,42 @@ NVMe는 submission queue와 completion queue를 중심으로 동작한다.
 | blocking read/write | syscall 호출 | return | 단순함 | thread가 잠들 수 있음 |
 | POSIX AIO | API로 제출 | signal/callback/polling 등 | 일부 async | Linux regular file에서 제약 많음 |
 | io_uring | SQE 제출 | CQE 수거 | batching, async, 다양한 opcode | ring 설정과 lifetime 복잡 |
+
+### queue completion을 application commit으로 바꾸는 데 필요한 경계
+
+database가 “commit 성공”을 답하는 작은 예를 보자. WAL record 8KiB를 file에 append하고 durable commit을 요구한다.
+
+```mermaid
+sequenceDiagram
+    participant A as database thread
+    participant P as page cache/filesystem
+    participant B as block layer/driver
+    participant N as NVMe
+    A->>P: WAL 8KiB write
+    P-->>A: write return
+    A->>P: fsync 요청
+    P->>B: data/metadata write와 필요한 ordering
+    B->>N: NVMe command들
+    N-->>B: command completion
+    B-->>P: request 완료
+    P-->>A: fsync return
+    A-->>A: transaction commit ACK 가능
+```
+
+이 그림에서 NVMe completion 하나가 곧 transaction commit은 아니다. WAL data와 파일 길이 metadata가 서로 다른 request일 수 있고, filesystem journal과 flush/barrier가 추가될 수 있다. database가 어떤 순서로 record와 commit marker를 쓰는지도 중요하다.
+
+두 transaction의 WAL record를 한 번의 sync로 묶는 group commit을 생각해 보자. storage sync가 500µs라고 가정하면 각 transaction이 따로 기다릴 때 직렬 상한은 초당 약 `1 / 0.0005 = 2,000` sync다. 10개 transaction을 한 sync에 안전하게 묶으면 같은 단순 모델에서 transaction 처리량은 최대 약 20,000/s로 늘 수 있다. 실제 처리량은 CPU, queue, lock, WAL byte rate와 storage 특성에 제한된다. 이 계산은 batching이 왜 쓰이는지 보여 줄 뿐 성능 보장이 아니다.
+
+누가 언제 무엇을 확인하는지 나눈다.
+
+| 확인 지점 | 질문 | 실패를 누가 보나 |
+|---|---|---|
+| syscall return | kernel이 요청 byte를 받았는가 | 호출 thread |
+| writeback error | 뒤늦은 storage write가 실패했는가 | 이후 write/fsync/close 등에서 보고될 수 있음 |
+| flush/FUA 처리 | volatile cache와 ordering 계약을 지켰는가 | filesystem·driver·device 계층 |
+| application ACK | 복구 protocol이 요구하는 record가 durable한가 | database/client |
+
+전원 손실 보호 기능이 있는 장치는 completion과 durable media의 간격을 줄이는 계약을 제공할 수 있지만, 제품 설정과 flush semantics를 확인해야 한다. 반례로 remote filesystem의 `fsync()`는 원격 server와 protocol의 stable storage 의미를 따라가야 하며 로컬 NVMe 그림만으로 보장을 단정할 수 없다. device가 완료를 잘못 보고하거나 firmware 결함이 있으면 위 계층의 올바른 순서만으로 물리적 내구성을 만들 수 없다.
 
 ## 10. completion과 durability는 다르다
 

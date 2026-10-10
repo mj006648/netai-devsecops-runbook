@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="810" viewBox="0 0 1200 810" role="img" aria-labelledby="title desc">
+<title id="title">Namespace 간 두 가지 허가</title>
+<desc id="desc">Route가 listener에 붙는 허가와, Route가 다른 namespace의 backend를 참조하는 허가는 다르다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="810" fill="#f8fafc" rx="18"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="52" font-size="30" font-weight="700" fill="#0f172a">Namespace 간 두 가지 허가</text>
+<text x="40" y="91" font-size="17" fill="#475569">Route가 listener에 붙는 허가와, Route가 다른 namespace의 backend를 참조하는 허가는 다르다.</text>
+<rect x="35" y="140" width="350" height="500" rx="16" fill="#dbeafe" stroke="#94a3b8" stroke-dasharray="6 5"/>
+<text x="51" y="177" font-size="18" fill="#0f172a" text-anchor="start" font-weight="700">gateway-demo-edge</text>
+<rect x="425" y="140" width="350" height="500" rx="16" fill="#ccfbf1" stroke="#94a3b8" stroke-dasharray="6 5"/>
+<text x="441" y="177" font-size="18" fill="#0f172a" text-anchor="start" font-weight="700">gateway-demo-app</text>
+<rect x="815" y="140" width="350" height="500" rx="16" fill="#ede9fe" stroke="#94a3b8" stroke-dasharray="6 5"/>
+<text x="831" y="177" font-size="18" fill="#0f172a" text-anchor="start" font-weight="700">gateway-demo-shared</text>
+<rect x="60" y="210" width="300" height="140" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="60" y="210" width="300" height="45" rx="14" fill="#dbeafe"/>
+<rect x="60" y="234" width="300" height="21" fill="#dbeafe"/>
+<text x="76" y="240" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Gateway public</text>
+<text x="76" y="283" font-size="16" fill="#334155" text-anchor="start" font-weight="400">listener: http</text>
+<text x="76" y="308" font-size="16" fill="#334155" text-anchor="start" font-weight="400">소유자: 진입 인프라 담당</text>
+<rect x="450" y="210" width="300" height="140" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="450" y="210" width="300" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="450" y="234" width="300" height="21" fill="#ccfbf1"/>
+<text x="466" y="240" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">HTTPRoute billing</text>
+<text x="466" y="283" font-size="16" fill="#334155" text-anchor="start" font-weight="400">parentRef: edge/public</text>
+<text x="466" y="308" font-size="16" fill="#334155" text-anchor="start" font-weight="400">backend: shared/billing</text>
+<rect x="840" y="210" width="300" height="140" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="840" y="210" width="300" height="45" rx="14" fill="#ede9fe"/>
+<rect x="840" y="234" width="300" height="21" fill="#ede9fe"/>
+<text x="856" y="240" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Service billing</text>
+<text x="856" y="283" font-size="16" fill="#334155" text-anchor="start" font-weight="400">port: 8080</text>
+<text x="856" y="308" font-size="16" fill="#334155" text-anchor="start" font-weight="400">소유자: backend 담당</text>
+<path d="M450 260 H360" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="405" y="238" font-size="14" fill="#334155" text-anchor="middle" font-weight="400">parentRef</text>
+<path d="M750 290 H840" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="795" y="268" font-size="14" fill="#334155" text-anchor="middle" font-weight="400">backendRef</text>
+<path d="M210 350 V386 H600 V350" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="407" y="413" font-size="16" fill="#334155" text-anchor="middle" font-weight="400">allowedRoutes: Route attach 허가</text>
+<rect x="840" y="455" width="300" height="140" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="840" y="455" width="300" height="45" rx="14" fill="#ede9fe"/>
+<rect x="840" y="479" width="300" height="21" fill="#ede9fe"/>
+<text x="856" y="485" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">ReferenceGrant</text>
+<text x="856" y="528" font-size="16" fill="#334155" text-anchor="start" font-weight="400">from: 앱 namespace HTTPRoute</text>
+<text x="856" y="553" font-size="16" fill="#334155" text-anchor="start" font-weight="400">to: 이 namespace Service</text>
+<text x="856" y="578" font-size="16" fill="#334155" text-anchor="start" font-weight="400">대상 소유자가 만드는 허가</text>
+<path d="M990 455 V350" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="1005" y="410" font-size="15" fill="#334155" text-anchor="start" font-weight="400">참조 허가</text>
+<text x="60" y="515" font-size="21" fill="#1e40af" text-anchor="start" font-weight="700">허가 A</text>
+<text x="60" y="548" font-size="17" fill="#334155" text-anchor="start" font-weight="400">Gateway의 listener가</text>
+<text x="60" y="578" font-size="17" fill="#334155" text-anchor="start" font-weight="400">어떤 Route를 받아줄까?</text>
+<text x="450" y="515" font-size="20" fill="#115e59" text-anchor="start" font-weight="700">두 조건 모두 필요</text>
+<text x="450" y="548" font-size="17" fill="#334155" text-anchor="start" font-weight="400">parentRef만 쓰거나</text>
+<text x="450" y="578" font-size="17" fill="#334155" text-anchor="start" font-weight="400">Grant만 만들면 충분하지 않다.</text>
+<text x="40" y="698" font-size="16" fill="#334155" text-anchor="start" font-weight="400">허가 A: Gateway 소유자가 attach 범위를 정함. 허가 B: backend 소유자가 외부 객체의 참조를 허용함.</text>
+<text x="40" y="736" font-size="16" fill="#334155" text-anchor="start" font-weight="400">같은 namespace backend는 일반적인 cross-namespace ReferenceGrant 대상이 아니다.</text>
+<text x="40" y="774" font-size="16" fill="#334155" text-anchor="start" font-weight="400">그림의 점선은 API 참조·허가 관계이며 실제 HTTP packet 경로가 아니다.</text>
+</g>
+</svg>

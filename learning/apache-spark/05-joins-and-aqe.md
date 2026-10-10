@@ -55,6 +55,40 @@ NULL의 일반 `=` 비교는 두 NULL을 자동 일치시키지 않는다. Null-
 
 ## 3. Broadcast join
 
+### 중복 행과 물리 전략을 한 예제에서 분리한다
+
+Events에 S1이 2행, Devices에 S1이 2행이면 어떤 전략을 골라도 S1 결과는 4행이다. Broadcast hash join은 오른쪽의 두 S1 행을 각 executor의 hash relation에 넣고 왼쪽 S1 한 행마다 두 값을 찾는다. Sort-merge join은 양쪽 S1 구간을 맞춰 같은 네 조합을 만든다. 전략은 비용을 바꾸지만 cardinality 의미는 바꾸지 않는다.
+
+| 전략 | Driver가 정하는 것 | Executor가 하는 것 | 이 예제의 S1 결과 |
+| --- | --- | --- | ---: |
+| Broadcast hash join | 작은 쪽을 broadcast할 계획 | 작은 쪽 복사본으로 각 큰 partition을 조회 | 4행 |
+| Sort-merge join | 양쪽을 key 분포·정렬할 계획 | shuffle partition의 같은 key 구간 결합 | 4행 |
+
+Devices가 8 MiB로 추정되었지만 실제 필터 뒤 80 KiB라고 하자. 초기 계획이 sort-merge join이어도 AQE는 지원 조건에서 실행 통계를 보고 broadcast join으로 바꿀 수 있다. 그 변화는 첫 shuffle query stage가 materialize된 뒤에야 실제 크기를 알았기 때문에 가능하다.
+
+```mermaid
+sequenceDiagram
+    participant P as 초기 물리 계획
+    participant S as Shuffle query stage
+    participant A as AQE
+    participant E as 다음 executor tasks
+    P->>S: SMJ 후보로 실행 시작
+    S-->>A: 필터 후 오른쪽 80 KiB
+    A->>A: join 유형·임계값·지원 조건 검증
+    A->>E: broadcast hash join 최종 계획
+```
+
+반대로 오른쪽이 80 KiB여도 broadcast할 수 없는 join 유형이거나 명시적 설정·지원 조건이 맞지 않으면 전환되지 않을 수 있다. 또 오른쪽 80 KiB를 driver가 수집·직렬화하고 executor마다 보관하는 비용은 0이 아니다. 작은 lookup을 반복 broadcast하는 여러 동시 쿼리는 각 executor의 메모리를 함께 사용한다.
+
+다음 순서로 문제를 나누면 “AQE가 해결해 줄 것”이라는 추측을 피할 수 있다.
+
+1. Join 전후 key별 행 수를 계산해 의도한 cardinality인지 확인한다.
+2. 초기 계획의 통계와 join 전략을 기록한다.
+3. 실행 후 최종 adaptive plan에서 전략과 partition 수 변화를 확인한다.
+4. Shuffle read, broadcast 크기, task 최대 시간을 결과 행 수와 함께 비교한다.
+
+**반례.** Devices의 S1 중복이 데이터 오류인데 broadcast로 빨라졌다면 쿼리는 더 빠르게 틀린 네 행을 만든다. 중복의 업무 규칙을 고친 뒤 실행 전략을 조정해야 한다.
+
 **Broadcast**는 작은 입력을 여러 실행 task 쪽으로 전달하는 전략이다. 작은 Devices를 전달하면 큰 Events의 모든 행을 join key로 이동시키는 비용을 줄일 수 있다.
 
 ```mermaid

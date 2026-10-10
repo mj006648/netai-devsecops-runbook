@@ -201,6 +201,54 @@ node egress IP: 192.0.2.10
 
 routing policy와 actual implementation은 다를 수 있다. 운영 문서에 "Pod CIDR은 routable"이라고 써 있어도 CNI가 overlay를 쓰거나, eBPF NAT를 쓰거나, cloud route table을 쓰거나, nftables SNAT를 쓸 수 있다. 설계 의도와 노드 datapath 증거를 분리해 기록한다.
 
+### 한 송신의 queue 상태를 숫자로 추적한다
+
+Application이 TCP socket에 32 KiB를 쓴다고 하자. MTU 1500, TCP payload를 단순히 1460 byte로 잡으면 wire TCP segment는 대략 `ceil(32768 / 1460) = 23개`다. 그러나 GSO가 켜진 host에서 `write()` 직후 23개의 작은 skb가 반드시 보이는 것은 아니다.
+
+```mermaid
+sequenceDiagram
+    participant A as Application
+    participant S as TCP socket
+    participant Q as qdisc
+    participant D as Driver/NIC
+    A->>S: write 32 KiB
+    S-->>A: 32768 반환
+    Note over S: send buffer에 byte 범위 저장
+    S->>Q: 큰 GSO skb 1개일 수 있음
+    Q->>D: dequeue
+    Note over D: TSO가 23개 wire segment로 분할 가능
+    D-->>Q: TX completion
+    Note over S: ACK 전까지 TCP byte는 미확인 상태
+```
+
+교육용 시간표는 다음과 같다.
+
+| 시점 | socket send buffer | qdisc | TX ring/NIC | 의미 |
+| --- | --- | --- | --- | --- |
+| T0 | 0 KiB | 0 | 0 | 쓰기 전 |
+| T1 | 32 KiB 증가 | 아직 0일 수 있음 | 0 | `write()`가 copy/queue를 진행 |
+| T2 | ACK 전 byte 유지 | 큰 skb 1개 대기 가능 | 0 | qdisc policy가 지연할 수 있음 |
+| T3 | 그대로 | dequeue | descriptor 몇 개 사용 | NIC가 DMA할 준비 |
+| T4 | ACK 전 byte 유지 | 비어 있을 수 있음 | wire segment 전송 | qdisc가 비었다고 TCP 완료는 아님 |
+| T5 | ACK 범위만큼 해제 가능 | - | TX completion 완료 | NIC 전송 완료와 peer ACK도 다른 사건 |
+
+TX completion은 NIC가 descriptor 처리를 끝냈다는 신호다. 상대 application이 읽었다는 뜻이 아니다. TCP ACK는 상대 TCP가 byte 범위를 받았다는 신호다. 상대 application의 `recv()`나 DB commit까지 뜻하지 않는다.
+
+조건이 달라지면 수가 달라진다. TCP option으로 header가 커지면 MSS가 줄 수 있고, path MTU가 1450이면 1460 payload 가정을 쓸 수 없다. GSO가 꺼져 있으면 kernel stack에서 더 일찍 작은 skb로 나눌 수 있다. UDP datagram은 TCP byte stream처럼 ACK 후 socket byte를 해제하는 모델이 아니다.
+
+### 관측 지점마다 같은 packet 수가 안 나오는 이유
+
+| 관측 지점 | 볼 수 있는 단위 | 32 KiB 예제에서 가능한 모습 |
+| --- | --- | --- |
+| application | `write()` byte 수 | 1회, 32768 byte |
+| socket/TCP | byte sequence 범위 | 여러 segment로 나눌 하나의 stream 범위 |
+| TC egress | skb | GSO 상태면 큰 skb 수 개 |
+| switch SPAN | 실제 Ethernet frame | 약 23개 data frame와 ACK frame들 |
+| receiver GRO 뒤 | 합쳐진 skb | 여러 wire segment가 다시 큰 skb로 보일 수 있음 |
+| receiver application | `recv()` 반환 | 8 KiB 네 번, 32 KiB 한 번 등 여러 가능성 |
+
+따라서 `write 호출 1회`, `TC counter 1`, `switch frame 23`, `recv 호출 4회`는 서로 모순이 아닐 수 있다. 각 counter의 hook, offload 전후, byte/packet 단위를 함께 기록해야 한다.
+
 ## 9. 읽기 전용 관측 명령은 무엇을 답하는가
 
 아래 명령은 운영 노드에서 실행하라는 절차가 아니다. 읽기 전용으로 어떤 질문에 답하는지 배우기 위한 목록이다. 권한, 보안 정책, 운영 시간, 개인정보 노출을 고려해야 한다.

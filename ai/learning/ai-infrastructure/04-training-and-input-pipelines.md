@@ -174,6 +174,52 @@ Gradient `-18`은 weight를 조금 키우면 이 지점의 loss가 줄어드는 
 
 **Loss scaling(손실 배율 조정)**은 작은 gradient가 낮은 정밀도에서 0으로 사라지는 것을 줄이려고 loss에 큰 수를 곱해 backward한 뒤, optimizer가 쓰기 전에 gradient를 같은 수로 나누는 방법이다. 예를 들어 원래 gradient가 `0.00001`이고 scale이 1024라면 backward 중 값은 `0.01024`가 되고, update 전 다시 1024로 나눈다. Scale이 너무 크면 overflow가 날 수 있어 구현은 유한값 여부를 확인하고 step을 건너뛰거나 scale을 조정할 수 있다.
 
+### 두 microbatch가 parameter 하나를 바꾸는 실제 순서
+
+Gradient accumulation을 정의로만 보면 batch 크기를 늘리는 옵션처럼 보인다. 실제로는 같은 gradient buffer를 여러 backward가 언제 더하고, optimizer가 언제 읽고, 언제 비우는지 정하는 상태 기계다.
+
+모델 `y_hat=w×x`, loss `0.5×(y_hat-y)^2`, 초기 `w=1`, learning rate `0.1`을 사용하자. 한 optimizer step에 microbatch 두 개를 누적한다.
+
+```text
+microbatch A: x=1, y=3
+microbatch B: x=2, y=4
+```
+
+두 샘플의 gradient를 현재 weight `w=1`에서 각각 계산한다.
+
+```text
+A: y_hat=1, loss=2, dw_A=(1-3)×1=-2
+B: y_hat=2, loss=2, dw_B=(2-4)×2=-4
+```
+
+평균 loss와 같은 scale을 원하면 누적 gradient를 microbatch 수 2로 나눈다.
+
+```text
+gradient buffer after A = -2
+gradient buffer after B = -2 + -4 = -6
+gradient used by optimizer = -6 / 2 = -3
+new_w = 1 - 0.1×(-3) = 1.3
+```
+
+| 시점 | parameter `w` | gradient buffer | 누가 바꾸나 |
+|---|---:|---:|---|
+| step 시작 | 1.0 | 0 | 학습 루프가 이전 gradient를 정리 |
+| A forward | 1.0 | 0 | forward는 activation만 생성 |
+| A backward | 1.0 | -2 | autograd가 gradient 누적 |
+| B forward | 1.0 | -2 | 같은 parameter snapshot으로 계산 |
+| B backward | 1.0 | -6 | autograd가 기존 buffer에 더함 |
+| 평균/clip | 1.0 | -3 | 학습 정책이 optimizer 입력을 변환 |
+| optimizer step | 1.3 | -3 | optimizer가 parameter/state 갱신 |
+| 다음 step 준비 | 1.3 | 0 | gradient buffer 정리 또는 재사용 |
+
+A backward 직후 optimizer step을 하면 B forward는 `w=1.2`를 보게 되어 큰 batch `[A,B]`를 한 번 계산한 것과 다른 알고리즘이 된다. Accumulation window 안에서는 parameter snapshot을 유지하고, window 경계에서만 update해야 하는 이유다.
+
+DDP에서는 통신 시점도 붙는다. 모든 microbatch마다 all-reduce하면 값은 맞을 수 있지만 통신 횟수가 늘어난다. 중간 microbatch는 local gradient만 누적하고 마지막 backward에서 동기화하면 통신을 줄일 수 있다. 이때 모든 rank가 같은 accumulation count와 같은 경계에 도달해야 한다. 한 rank만 데이터가 일찍 끝나 collective 호출 수가 달라지면 hang이나 잘못된 평균이 생길 수 있다.
+
+Loss scaling을 함께 쓰면 `scaled loss backward → 누적 → 한 번 unscale → inf/NaN 검사 → gradient clipping → optimizer step 또는 skip → gradient 정리` 순서를 명시해야 한다. Microbatch마다 서로 다른 scale로 만든 gradient를 그대로 더하거나 clipping을 unscale보다 먼저 하면 기준이 달라진다. Overflow 때문에 step을 건너뛴 경우 “batch를 읽었다”와 “parameter update가 성공했다”도 서로 다른 진행 단위가 된다.
+
+반례로, 두 microbatch의 sample 수나 유효 token 수가 다르면 단순히 gradient를 2로 나누는 것이 전체 token 평균과 같지 않을 수 있다. A가 유효 token 2개, B가 8개라면 각 microbatch mean loss를 다시 평균할 때 두 token과 여덟 token에 같은 무게를 준다. Token 평균이 목적이면 loss sum과 유효 token 수를 함께 누적해 10으로 나누는 식으로 분모를 맞춰야 한다.
+
 ## 6. Gradient accumulation은 optimizer step을 늦춘다
 
 장치 메모리에 batch 64를 한 번에 못 올린다고 하자. microbatch 8개를 8번 처리하고 gradient를 누적하면, optimizer는 batch 64를 본 것처럼 한 번만 움직일 수 있다.

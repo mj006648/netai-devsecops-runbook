@@ -133,7 +133,56 @@ kubectl auth can-i create pods --as=system:serviceaccount:spark-lab:spark-driver
 
 위 명령은 `lab13/spark-lab` 예시이며 실행하지 않았다. Driver log, executor log, Spark UI event, object-store/catalog log를 application ID와 시간으로 연결한다.
 
-## 9. 문제와 해설
+## 9. Driver와 executor 실패를 Kubernetes retry로만 읽지 않는다
+
+Kubernetes가 executor Pod를 다시 만들 수 있는지와 Spark가 stage task를 재시도할 수 있는지는 서로 다른 control loop다. Driver가 살아 있으면 잃은 executor를 감지해 새 executor를 요청하고 task를 다시 schedule할 수 있다. Driver가 사라지면 application 전체 복구는 submit 방식, restart policy, operator, checkpoint에 따라 달라진다.
+
+```mermaid
+sequenceDiagram
+    participant D as "Spark driver"
+    participant A as "Kubernetes API"
+    participant E1 as "executor Pod e1"
+    participant S as "external sink"
+    participant E2 as "replacement executor e2"
+    D->>A: "executor e1 Pod 요청"
+    A-->>E1: "Pod 실행"
+    D->>E1: "partition 42 task"
+    E1->>S: "output 일부 write"
+    E1--xD: "OOMKilled"
+    D->>A: "replacement executor 요청"
+    A-->>E2: "새 Pod UID 실행"
+    D->>E2: "partition 42 재시도"
+    E2->>S: "같은 output 다시 write 가능"
+```
+
+Spark의 task retry가 output commit protocol과 함께 안전한지 확인해야 한다. 단순 REST 호출, email, 임의 database insert를 task 안에서 수행하면 speculative execution이나 retry로 중복될 수 있다. Partition ID와 application attempt를 idempotency key로 쓰거나 transaction·commit protocol이 있는 sink를 사용한다.
+
+## 10. 한 application의 자원 계산
+
+Driver request 1 CPU/2Gi, executor 4개가 각각 2 CPU/8Gi를 요청하면 scheduler가 보는 합은 대략 9 CPU/34Gi다. Executor memory 설정만 더한 값이 아니다.
+
+```text
+driver:    1 × (1 CPU, 2Gi) = 1 CPU, 2Gi
+executors: 4 × (2 CPU, 8Gi) = 8 CPU, 32Gi
+합계 request                 = 9 CPU, 34Gi
+```
+
+세 node에 각각 남은 자원이 4 CPU/12Gi라면 합계는 충분해 보여도 executor 하나가 들어갈 node별 연속 공간과 driver placement를 순서대로 봐야 한다. Pod anti-affinity, taint, zone-bound PVC가 있으면 후보는 더 줄어든다. Dynamic allocation의 최대 executor를 기준으로 namespace quota와 downstream connection 한도도 계산한다.
+
+## 11. 실패 시간표를 여러 log로 맞추기
+
+```text
+11:00:00 Spark UI: stage 8, task partition=42 시작
+11:00:18 executor log: native allocation 1.2Gi
+11:00:20 Pod status: lastState.reason=OOMKilled, exitCode=137
+11:00:21 Kubernetes event: BackOff 또는 executor Pod 종료 관찰
+11:00:23 driver log: executor lost, task 42 재시도
+11:00:40 sink log: partition 42 write request 두 번 관찰
+```
+
+Driver log만 보면 “executor lost”이고 Kubernetes status만 보면 “OOMKilled”이며 sink log만 보면 “duplicate write”다. Application ID, stage/task attempt, Pod UID, executor ID, output partition을 함께 남겨야 하나의 사건으로 연결된다. Executor limit만 올리기 전에 skew된 partition, heap 밖 memory, Python worker, shuffle fetch와 retry side effect를 구분한다.
+
+## 12. 문제와 해설
 
 1. Executor 4개면 기본 Pod 수는? **Driver 포함 약 5개**다.
 2. `executor.memory=6g`면 container limit도 6Gi인가? **아니다.** overhead 등을 포함해야 한다.

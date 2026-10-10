@@ -44,6 +44,42 @@ Q0/Q1에 어느 key가 가는지는 실제 hash·partitioning 규칙에 따라 �
 
 ## 3. Narrow와 wide dependency
 
+### 세 partition에서 실제로 무엇이 움직이는가
+
+입력에 7행이 있고 `device_id`별 평균을 구한다고 하자.
+
+| partition | 원본 행 수 | 로컬 부분 상태 수 | shuffle로 보내는 값 |
+| --- | ---: | ---: | --- |
+| P0 | 3 | 2 | S1=(42,2), S2=(10,1) |
+| P1 | 2 | 2 | S1=(24,1), S2=(14,1) |
+| P2 | 2 | 2 | S2=(18,1), S3=(30,1) |
+
+부분 집계가 없으면 일곱 원본 행이 key 분배 대상이다. 부분 집계가 적용되면 여기서는 여섯 상태만 이동한다. 실제 절감 폭은 partition 안의 같은 key 반복 정도에 달려 있다. 모든 행의 key가 서로 다르면 부분 상태 수도 일곱이라 거의 줄지 않는다.
+
+| 시점 | 누가 바꾸는가 | partition의 의미 |
+| --- | --- | --- |
+| scan 계획 | Driver와 source | 파일 split을 입력 partition으로 계획 |
+| Stage 0 실행 | 각 executor task | 자기 입력 partition 안에서 필터·부분 집계 |
+| shuffle write | Stage 0 task | key partitioner가 목적 bucket을 계산 |
+| shuffle read | Stage 1 task | 여러 이전 task가 쓴 자기 bucket을 가져옴 |
+| AQE 조정 가능 시점 | Driver의 adaptive plan | 수집된 shuffle 통계로 작은 bucket을 합칠 수 있음 |
+
+`spark.sql.shuffle.partitions=4`라고 하면 초기 목적 bucket은 네 개다. 그러나 S1·S2·S3 세 key만 있고 데이터가 작으면 빈 bucket이 있거나 AQE가 작은 bucket을 합쳐 downstream task를 줄일 수 있다. 반대로 입력 partition이 세 개라는 이유로 shuffle partition도 세 개가 되는 것은 아니다.
+
+```mermaid
+flowchart LR
+    P0["P0 / Task 0<br/>S1,S2 부분 상태"] -->|bucket 0~3 중 계산| W["shuffle files"]
+    P1["P1 / Task 1<br/>S1,S2 부분 상태"] -->|bucket 0~3 중 계산| W
+    P2["P2 / Task 2<br/>S2,S3 부분 상태"] -->|bucket 0~3 중 계산| W
+    W --> Q0["Stage 1 / bucket A"]
+    W --> Q1["Stage 1 / bucket B"]
+    W --> Q2["Stage 1 / bucket C"]
+```
+
+**결과가 느린 이유를 분리한다.** Shuffle write가 크면 부분 집계가 덜 줄였거나 행 자체가 크다는 뜻일 수 있다. Shuffle read 한 task만 크면 key skew를 의심한다. 모든 task가 작지만 수천 개라면 scheduling과 파일 생성 비용이 문제일 수 있다.
+
+**반례.** S1 하나가 전체 90%인 상태에서 partition 수만 4에서 400으로 늘려도 S1은 같은 key 규칙 때문에 한 bucket으로 간다. 이 경우 partition 개수 조절은 병목 key를 쪼개지 않는다. 업무 의미를 보존하는 사전 집계, skew join 처리, 검증된 salting 같은 다른 설계가 필요하다.
+
 **Narrow dependency**는 출력 조각이 제한된 입력 조각에 의존하는 관계다. 일반적인 `select`, `filter`는 partition 안에서 이어 수행할 수 있다.
 
 **Wide dependency**는 출력 조각에 여러 입력 조각의 데이터를 모으는 관계다. Key별 집계나 재분배에는 shuffle이 필요할 수 있다. Join은 이미 가진 분포와 broadcast 전략 등에 따라 실제 shuffle 위치가 달라진다.

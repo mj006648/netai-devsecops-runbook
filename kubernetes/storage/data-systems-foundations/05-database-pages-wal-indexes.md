@@ -147,6 +147,38 @@ Synchronous commit 설정에서 T1이 commit ACK를 받았다면 commit WAL도 d
 
 반대로 asynchronous commit에서는 client가 success를 받은 직후 crash가 나면 아직 flush되지 않은 최근 transaction이 사라질 수 있다. PostgreSQL 문서는 이 경우 risk가 data corruption이 아니라 최근 transaction loss라고 설명한다. [PostgreSQL 18 Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html) 따라서 commit 응답의 의미는 설정과 durability 옵션을 함께 적어야 하며, “data file page가 이미 제자리 저장됐다”로 해석하면 안 된다.
 
+### WAL과 data page를 두 행으로 놓은 crash 표
+
+Transaction T7이 page 42의 값을 바꾸고 commit한다고 하자. WAL record는 LSN 500, commit record는 LSN 540이며, page 42의 이전 disk image는 LSN 420까지 반영했다고 가정한다.
+
+```mermaid
+sequenceDiagram
+    participant T as Transaction T7
+    participant B as Buffer page 42
+    participant W as WAL device
+    participant D as Data file
+    T->>B: row update, pageLSN=500, dirty
+    T->>W: WAL record LSN 500
+    T->>W: COMMIT LSN 540
+    W-->>T: flush through 540 complete
+    T-->>T: commit ACK
+    B->>D: later write page 42
+```
+
+| crash 시점 | WAL 행 | data page 행 | 복구 해석 |
+| --- | --- | --- | --- |
+| C0: LSN 500 flush 전 | 420까지만 durable | disk page도 420 | T7을 복구할 근거 없음 |
+| C1: 500 durable, 540 전 | 변경 record는 있음, commit 없음 | page는 420일 수 있음 | T7을 committed로 노출하지 않음 |
+| C2: 540 durable, page write 전 | update+commit durable | page는 420 | redo가 LSN 500 변경을 page에 적용 |
+| C3: page 500 durable, commit 540 전 | update bytes가 data file에 있을 수 있음 | pageLSN 500 | transaction 상태로 T7을 보이지 않게 처리 |
+| C4: commit ACK 뒤 | 540까지 durable | page는 420 또는 500 | 둘 다 recovery 후 같은 committed 결과를 만들어야 함 |
+
+C3가 처음에는 이상해 보인다. 미커밋 transaction의 page가 data file에 먼저 내려갈 수 있기 때문이다. Write-ahead rule은 page LSN 500보다 WAL 500이 먼저 durable할 것을 요구하지만, commit record 540까지 먼저 durable해야만 page를 쓸 수 있다고 말하지는 않는다. Visibility는 MVCC transaction status가 별도로 결정한다.
+
+조건이 `synchronous_commit=off`이면 commit ACK가 C2보다 앞설 수 있어 최근 성공 응답 transaction이 crash 뒤 사라질 여지가 있다. `fsync=off`이면 순서와 durable write 전제가 더 약해져 단순한 최근 transaction loss를 넘어 복구 불가능한 손상 위험이 커질 수 있다. Replicated database라면 local WAL flush 외에 어느 replica가 어느 LSN까지 확인해야 ACK하는지도 추가 행으로 넣어야 한다.
+
+이 시간표의 숫자는 교육용이다. 실제 PostgreSQL의 WAL record, full-page image, hint bit, transaction status 저장과 checkpoint 상호작용은 더 복잡하다. 그래도 “commit ACK 시점”과 “data page 최신 image가 파일에 쓰인 시점”을 분리하는 원리는 유지된다.
+
 ## 6. MVCC snapshot, backup snapshot, Iceberg snapshot은 서로 다른 계약이다
 
 PostgreSQL MVCC에서 각 SQL statement는 어떤 과거 시점의 database version snapshot을 보며, concurrent update의 불완전 상태를 보지 않도록 한다. [PostgreSQL 18 MVCC Introduction](https://www.postgresql.org/docs/18/mvcc-intro.html) 이 snapshot은 주로 transaction visibility 규칙이다. 물리 backup snapshot은 특정 시간대의 파일 집합과 WAL 범위를 함께 보존해 복구 가능성을 제공하는 운영 산출물이다. PostgreSQL WAL 문서는 online backup과 point-in-time recovery가 WAL archive로 가능하며, backup이 순간 snapshot이 아니어도 WAL replay로 내부 불일치를 고칠 수 있다고 설명한다. [PostgreSQL 18 WAL](https://www.postgresql.org/docs/18/wal-intro.html) Iceberg snapshot은 analytic table의 data file 집합을 가리키는 table-format metadata 상태다. Iceberg spec은 snapshot을 특정 시점의 table state로 정의하고, data file은 manifest와 manifest list를 통해 추적된다고 설명한다. [Apache Iceberg Table Spec](https://iceberg.apache.org/spec/) 이 셋을 모두 “스냅샷”이라고 부르지만, 하나는 읽기 가시성, 하나는 복구 자료, 하나는 파일 집합 버전이다.

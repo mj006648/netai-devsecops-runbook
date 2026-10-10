@@ -176,6 +176,38 @@ BMC는 OS와 별도인 관리 프로세서다. 호스트가 정지해도 대기 
 
 계산 예: 압축되지 않은 20GB 데이터를 100Gb/s 경로로 한 방향 전송한다면, 헤더·저장장치·CPU·혼잡을 모두 무시한 최저 전송 시간은 `20GB ÷ 12.5GB/s = 1.6초`다. 실측이 2초라고 해서 바로 카드가 불량인 것은 아니다. 기대값의 전제가 현실에 맞는지 먼저 본다.
 
+### 같은 처리량 숫자라도 기다리는 위치가 다를 수 있다
+
+용량·대역폭·지연시간·처리량을 정의한 뒤에는 요청 하나의 **체류 시간**을 단계별로 나눠야 한다. 1MiB 요청이 저장장치에서 가속기로 이동한다고 하자.
+
+```text
+SSD queue 대기 0.4ms
+SSD에서 읽기 0.6ms
+host memory copy/준비 0.2ms
+PCIe queue 대기 0.3ms
+PCIe 전송 0.1ms
+가속기 계산 0.8ms
+--------------------
+end-to-end 2.4ms
+```
+
+이 숫자들이 직렬이고 겹치지 않는 교육용 예에서는 합이 `0.4 + 0.6 + 0.2 + 0.3 + 0.1 + 0.8 = 2.4ms`다. 여기서 PCIe 전송 자체를 두 배 빠르게 만들어 0.05ms로 줄여도 전체는 2.35ms다. 약 2.1% 개선에 그친다. “가장 큰 사양 숫자”보다 현재 요청이 오래 머무는 구간을 먼저 찾아야 하는 이유다.
+
+누가 언제 무엇을 하는지 표로 분리한다.
+
+| 구간 | 요청을 들고 있는 주체 | 기다리는 자원 | 관측 질문 |
+|---|---|---|---|
+| SSD queue | block layer/controller | device queue slot과 media | queue depth와 completion latency는? |
+| RAM 준비 | CPU/driver | memory bandwidth, allocation, lock | CPU가 실행 중인가 sleep 중인가? |
+| PCIe queue | DMA engine/switch path | shared uplink와 credits | 같은 상위 링크를 누가 공유하는가? |
+| 가속기 계산 | device scheduler/kernel | execution unit와 device memory | compute인가 memory stall인가? |
+
+처리량이 초당 1,000요청이고 평균 end-to-end latency가 2.4ms라면 Little의 법칙을 단순 적용한 평균 동시 요청 수는 `1,000/s × 0.0024s = 2.4`개다. 실제 시스템에서는 분산과 burst가 있으므로 queue capacity를 3개로 맞추라는 뜻이 아니다. 처리량·지연·동시성의 단위가 서로 연결된다는 감각을 얻기 위한 계산이다.
+
+예상 결과는 같은 1GB/s 처리량이라도 낮은 concurrency에서 링크가 포화된 경우와, 긴 queue에 많은 요청이 쌓여 겨우 1GB/s를 만든 경우의 사용자 latency가 다르다는 것이다. 평균만 같아도 tail latency는 다를 수 있다.
+
+조건이 바뀌는 반례도 있다. DMA와 계산을 double buffering으로 겹치면 단계 시간의 단순 합이 아니라 가장 느린 pipeline stage가 steady-state 처리량을 제한할 수 있다. 반대로 첫 요청은 buffer 준비와 모델 로딩을 모두 겪어 합에 가까운 긴 latency를 보인다. 그래서 최초 로딩, warm steady state, burst 뒤 회복을 같은 숫자로 섞지 않는다.
+
 ## 7. 성능은 경로의 공유 자원과 직렬 구간에서 제한된다
 
 서로 다른 구간을 차례로 통과하면 지연시간이 더해진다. 충분히 겹쳐 실행되는 파이프라인의 지속 처리량은 느린 구간에 제한된다. 모든 경우를 단순히 각 대역폭의 최솟값 하나로 정확히 예측할 수는 없지만, 불가능한 성능 기대를 거르는 데는 유용하다.

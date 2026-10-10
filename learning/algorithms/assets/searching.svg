@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280" role="img" aria-labelledby="title desc">
+  <title id="title">Binary search 경계 변화</title>
+  <desc id="desc">정렬된 8개 key에서 target 44를 찾으며 범위가 0에서 7, 4에서 7로 줄어드는 과정</desc>
+  <rect width="960" height="280" fill="#f8fafc"/>
+  <g font-family="sans-serif" text-anchor="middle"><text x="480" y="32" font-size="22" fill="#0f172a">target = 44</text>
+    <g font-size="18"><rect x="72" y="70" width="816" height="54" fill="#e0f2fe" stroke="#0284c7"/>
+      <text x="123" y="103">3</text><text x="225" y="103">8</text><text x="327" y="103">12</text><text x="429" y="103">20</text><text x="531" y="103">31</text><text x="633" y="103">44</text><text x="735" y="103">57</text><text x="837" y="103">91</text>
+      <text x="72" y="155" text-anchor="start">1회: lo=0, mid=3, hi=7 → 20 &lt; 44</text>
+      <rect x="480" y="180" width="408" height="54" fill="#dcfce7" stroke="#16a34a"/><text x="531" y="213">31</text><text x="633" y="213" font-weight="bold">44</text><text x="735" y="213">57</text><text x="837" y="213">91</text>
+      <text x="72" y="255" text-anchor="start">2회: lo=4, mid=5, hi=7 → index 5</text>
+    </g>
+  </g>
+</svg>

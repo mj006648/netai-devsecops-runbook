@@ -384,6 +384,53 @@ TLS termination이 ingress에서 일어나면 backend pod는 평문 HTTP를 받�
 
 이 장은 Kubernetes 설정을 다루지 않지만, 계층 질문을 분리하는 기준을 제공한다.
 
+### 같은 요청에서 DNS·TCP·TLS·HTTP 상태가 생기는 순서
+
+`https://api.example.test/orders/7`을 처음 여는 교육용 상황을 보자. Recursive resolver cache, TCP connection reuse, TLS session resumption, HTTP cache는 모두 비어 있다고 가정한다.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R as Recursive DNS
+    participant S as Server 203.0.113.20
+    C->>R: A api.example.test?
+    R-->>C: 203.0.113.20, TTL 300
+    Note over C: DNS cache 갱신
+    C->>S: TCP SYN dst 203.0.113.20:443
+    S-->>C: SYN-ACK
+    C->>S: ACK
+    C->>S: TLS ClientHello, SNI=api.example.test
+    S-->>C: ServerHello, certificate, Finished
+    Note over C: 인증서 chain·SAN·시각 검증
+    C->>S: encrypted HTTP GET /orders/7<br/>Host: api.example.test
+    S-->>C: encrypted HTTP 200
+```
+
+각 단계가 바꾸는 상태와 다음 단계가 소비하는 입력은 다르다.
+
+| 시점 | 상태를 바꾸는 주체 | 새로 생긴 상태 | 다음 단계가 쓰는 값 |
+| --- | --- | --- | --- |
+| T0 | DNS resolver | 이름 → `203.0.113.20`, TTL 300 cache | connect의 destination IP |
+| T1 | Client와 server TCP | 양쪽 sequence, window, 5-tuple 상태 | TLS가 쓸 ordered byte stream |
+| T2 | TLS 양끝 | 협상한 cipher, traffic key, 인증된 server identity | 암호화된 application data channel |
+| T3 | HTTP client | method, path, Host, header, body | server의 virtual host와 route |
+| T4 | HTTP server/app | status와 response body | client의 업무 결과 해석 |
+
+DNS server는 `/orders/7`을 보지 않는다. DNS는 host 이름을 조회할 뿐이다. TCP는 `GET`이나 인증서를 이해하지 않는다. TLS는 path routing을 결정하지 않으며, HTTP 200은 TCP ACK와 다른 사건이다.
+
+### 작은 실패 네 가지를 같은 주소에서 비교한다
+
+| 조건 변경 | wire에서 어디까지 진행되는가 | 대표 결과 | 왜 그런가 |
+| --- | --- | --- | --- |
+| DNS가 `203.0.113.99`를 반환 | 잘못된 IP로 TCP 시도 | timeout 또는 다른 서버 응답 | 이름 상태가 첫 destination을 바꿈 |
+| DNS는 맞지만 443이 닫힘 | SYN에 RST 가능 | connect refused | HTTP와 TLS는 시작 전 |
+| TCP 성공, certificate SAN 불일치 | TLS certificate까지 수신 | hostname verification 실패 | 암호화 가능성과 신원 확인은 별개 |
+| TLS 성공, Host가 `other.example.test` | 암호화된 HTTP request 전달 | 다른 virtual host의 404 가능 | SNI와 HTTP Host는 시점과 계층이 다름 |
+
+DNS TTL 300초 동안 server 주소를 바꿨다고 하자. 기존 resolver cache는 이전 주소를 계속 줄 수 있다. 하지만 이미 열린 HTTP/2 connection은 DNS를 다시 보지 않고 이전 server로 요청을 보낼 수 있다. 반대로 DNS cache가 만료돼 새 주소를 얻어도 TLS certificate가 새 server에 준비되지 않았다면 연결은 다음 단계에서 실패한다.
+
+HTTP/3은 반례를 만든다. TCP state가 생기는 대신 UDP 위 QUIC connection state와 TLS 1.3 handshake가 결합된다. 그렇더라도 DNS, server identity, HTTP method/path의 책임이 하나로 합쳐지는 것은 아니다. “웹 연결은 항상 DNS → TCP → TLS → HTTP”라는 순서는 TCP 기반 HTTPS의 모델이며, QUIC에서는 TCP 단계가 QUIC transport로 바뀐다.
+
 ## 24. 자주 틀리는 오개념
 
 | 오개념 | 바로잡기 |

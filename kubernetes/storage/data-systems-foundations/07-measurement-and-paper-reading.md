@@ -148,6 +148,79 @@ storage를 2배 빠르게: read 60 -> 30, total 70, speedup 100/70 = 1.43x
 
 동시 staging 작업을 2개에서 8개로 늘렸는데 총 처리량이 거의 같고 요청 지연이 늘어난다면, CPU 부족만 볼 것이 아니라 공유 object store와 network 경합을 봐야 한다. 실제 원인은 동시 관측으로 확인해야 하며 이 문장은 측정 전 가설이다.
 
+### I/O 시간은 요청 수와 byte 수가 함께 만든다
+
+두 layout이 같은 1 GiB payload를 읽는 교육용 계산을 해 보자.
+
+~~~text
+Layout A: 4 KiB request 262,144개
+Layout B: 1 MiB request 1,024개
+
+가정:
+  장치/서비스 payload bandwidth = 1 GiB/s
+  요청마다 고정 software+network latency = 0.2 ms
+  요청을 완전히 직렬 실행
+~~~
+
+전송 시간만 보면 둘 다 약 1초다. 그러나 요청 고정 비용을 직렬로 더하면 결과가 크게 달라진다.
+
+~~~text
+Layout A request overhead:
+262,144 × 0.2 ms = 52,428.8 ms ≈ 52.4 s
+
+Layout B request overhead:
+1,024 × 0.2 ms = 204.8 ms ≈ 0.205 s
+
+교육용 단순 총시간:
+A ≈ 53.4 s
+B ≈ 1.205 s
+~~~
+
+이 계산은 실제 장치 예측이 아니다. 현실에서는 queue depth로 여러 요청이 겹치고, OS가 merge/readahead하며, SSD가 병렬 처리하고, object store는 connection reuse를 한다. 계산의 목적은 “같은 byte 수인데 왜 작은 요청이 많으면 느릴 수 있는가”의 원인을 고정 비용으로 설명하는 것이다.
+
+```mermaid
+flowchart LR
+    W["1 GiB workload"] --> N["request count"]
+    W --> B["payload bytes"]
+    N --> F["per-request fixed cost<br/>syscall·metadata·RTT"]
+    B --> T["transfer time<br/>bytes / bandwidth"]
+    F --> Q["queueing·parallel overlap"]
+    T --> Q
+    Q --> R["observed latency"]
+```
+
+### 동시성 32가 고정 비용을 숨기는 방식
+
+Layout B의 1,024개 요청을 이상적으로 32개씩 병렬 처리하고 각 wave가 `0.2 ms + 1 MiB / 1 GiB/s` 걸린다고 단순화하자.
+
+~~~text
+1 MiB / 1 GiB/s ≈ 0.977 ms
+한 wave ≈ 1.177 ms
+wave 수 = 1,024 / 32 = 32
+총시간 하한의 단순 모델 ≈ 37.7 ms
+~~~
+
+이 값이 1 GiB/s bandwidth 한계에서 1초보다 작으므로 물리적으로 동시에 모든 요청이 독립 1 GiB/s를 얻는다는 가정이 틀렸음을 바로 알 수 있다. 공유 bandwidth를 넣으면 전체 payload 1 GiB 전송에는 최소 약 1초가 남는다. 따라서 더 타당한 하한은 대략 `max(공유 byte 전송 시간, 병렬화된 고정 비용)`으로 생각한다.
+
+~~~text
+shared transfer lower bound ≈ 1.0 s
+parallel fixed-cost component ≈ (1,024 / 32) × 0.2 ms = 6.4 ms
+단순 lower bound ≈ 1.0064 s 이상
+~~~
+
+이 예는 성능 계산의 검산법도 보여 준다. 결과가 링크나 장치의 byte/s 상한을 넘으면 요청들이 각자 독립 bandwidth를 얻는 잘못된 가정을 넣은 것이다.
+
+### 관측값으로 원인을 구별하는 표
+
+| 변화 | request count | transferred bytes | 가능한 원인 |
+| --- | ---: | ---: | --- |
+| 시간 감소, 요청 수만 감소 | 크게 감소 | 거의 동일 | metadata/RTT/syscall 고정 비용 감소 |
+| 시간 감소, bytes만 감소 | 비슷 | 크게 감소 | pruning·projection·compression 효과 |
+| 요청·bytes 동일, 시간 감소 | 동일 | 동일 | cache, 병렬성, CPU decode, 외부 부하 차이 |
+| throughput 그대로, p99 증가 | 비슷 | 비슷 | queueing·경합·tail retry 가능성 |
+
+작은 파일 compaction 뒤 빨라졌다면 object GET 수, footer read 수, manifest planning time, 실제 data bytes를 같이 본다. 요청 수와 bytes가 모두 줄었다면 한 메커니즘만 원인이라고 단정하기 어렵다. Codec과 sort order까지 바뀌었다면 별도 ablation이 필요하다.
+
 ## 5. Cache 조건은 하나가 아니다
 
 | 계층 | cache 예시 | 기록할 것 |

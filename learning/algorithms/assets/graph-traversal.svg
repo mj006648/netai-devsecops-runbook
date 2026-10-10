@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" role="img" aria-labelledby="title desc">
+  <title id="title">BFS와 DFS 순회</title>
+  <desc id="desc">A에서 시작해 BFS는 B와 C를 먼저 보고 DFS는 한 경로를 깊게 방문하는 그래프</desc>
+  <rect width="960" height="320" fill="#f0fdf4"/>
+  <g stroke="#15803d" stroke-width="3"><path d="M480 55L290 145"/><path d="M480 55L670 145"/><path d="M290 145L480 245"/><path d="M670 145L480 245"/></g>
+  <g fill="#dcfce7" stroke="#15803d" stroke-width="2" font-family="sans-serif" font-size="20" text-anchor="middle">
+    <circle cx="480" cy="55" r="32"/><circle cx="290" cy="145" r="32"/><circle cx="670" cy="145" r="32"/><circle cx="480" cy="245" r="32"/>
+    <text x="480" y="62">A</text><text x="290" y="152">B</text><text x="670" y="152">C</text><text x="480" y="252">D</text>
+  </g>
+  <g font-family="sans-serif" font-size="16" fill="#14532d"><text x="40" y="285">BFS: A, B, C, D</text><text x="700" y="285">DFS 예: A, B, D, C</text></g>
+</svg>

@@ -42,6 +42,33 @@ GROUP BY device_id;
 
 ## 3. 분산 처리는 계산과 데이터 이동을 함께 설계한다
 
+### 한 행이 결과가 되기까지 소유권이 바뀐다
+
+센서 행 9개가 파일 세 개에 세 행씩 있다고 하자. Driver는 파일 바이트를 직접 모두 읽는 주체가 아니라, 파일 목록과 통계를 바탕으로 세 입력 partition과 task를 계획한다. Executor의 task가 각 partition을 읽고 계산한다.
+
+| 시점 | 주체 | 바꾸는 것 |
+| --- | --- | --- |
+| 계획 | Driver | SQL을 scan·filter·aggregate 실행 계획으로 변환 |
+| 입력 읽기 | Executor task | 파일 split의 바이트를 typed row로 해석 |
+| 부분 계산 | Executor task | 세 행을 key별 `(sum,count)`로 축약 |
+| 데이터 이동 | Shuffle writer/reader | 같은 key의 부분 상태를 같은 downstream partition으로 이동 |
+| 결과 반환 | Executor와 Driver | 최종 작은 결과를 driver/client로 전달 |
+
+이 구분이 필요한 이유는 실패 위치마다 처방이 다르기 때문이다. 파일 읽기 권한 오류는 executor에서 날 수 있고, 큰 결과를 `collect`한 OOM은 driver에서 날 수 있다. 같은 key가 몰린 문제는 shuffle 뒤 특정 task에서 나타난다.
+
+```mermaid
+flowchart LR
+    D["Driver: 계획"] --> T0["Task: file 0"]
+    D --> T1["Task: file 1"]
+    D --> T2["Task: file 2"]
+    T0 --> S["key별 shuffle"]
+    T1 --> S
+    T2 --> S
+    S --> R["최종 집계"]
+```
+
+**반례.** 입력이 9행이라고 task도 9개인 것은 아니다. 반대로 파일이 세 개라고 task가 반드시 세 개인 것도 아니다. 파일 split, 작은 파일 묶기, source 구현, 설정에 따라 입력 partition 수가 달라진다.
+
 **분산 처리(distributed processing)**는 여러 실행 주체가 데이터를 나누어 처리하고 결과를 결합하는 것이다. 여러 서버의 묶음을 **클러스터(cluster)**라고 한다.
 
 S1의 두 행이 서로 다른 서버에 있으면 각각 부분 합계를 만들 수 있다.

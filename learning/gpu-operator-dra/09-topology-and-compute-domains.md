@@ -113,6 +113,64 @@ ComputeDomain API는 NVIDIA DRA 문서에서 확인한다.
 GPU claim이 성공해도 ComputeDomain 준비가 실패할 수 있다.
 반대로 ComputeDomain이 준비되어도 GPU claim이 부족하면 Pod는 실행되지 못한다.
 
+### 9.6.1 두 수명주기를 한 시간축에 겹쳐 보기
+
+2노드 학습 Job에 worker Pod 두 개가 있고, 각 Pod가 GPU 두 개를 요청한다고 하자. ComputeDomain `train-42`는 두 Pod가 함께 쓸 IMEX 통신 구성을 나타내고, Claim `gpu-worker-0`, `gpu-worker-1`은 실제 GPU identity를 가진다.
+
+```text
+t0  ComputeDomain train-42 생성
+t1  domain controller가 node-a, node-b의 IMEX 준비 시작
+t2  worker-0/1 Pod와 각자의 GPU Claim 생성
+t3  scheduler가 worker-0 → node-a GPU0,1 할당
+t4  scheduler가 worker-1 → node-b GPU0,1 할당
+t5  두 Claim의 node Prepare와 CDI 주입 완료
+t6  ComputeDomain Ready, 두 Pod 시작
+t7  rank 0~3이 NCCL communicator 생성
+t8  worker-1 실패, 해당 Pod/Claim 정리 시작
+t9  replacement worker-1과 새 Claim 생성·할당
+t10 replacement가 train-42 domain에 참여
+t11 Job 종료, 모든 GPU Claim 해제
+t12 마지막 참여자 종료 뒤 ComputeDomain 정리
+```
+
+```mermaid
+sequenceDiagram
+    participant CD as ComputeDomain train-42
+    participant C0 as Claim worker-0
+    participant C1 as Claim worker-1
+    participant P as Pods/ranks
+    CD->>CD: 두 노드 IMEX 준비
+    C0->>C0: node-a GPU0,1 할당·Prepare
+    C1->>C1: node-b GPU0,1 할당·Prepare
+    CD-->>P: domain ready
+    C0-->>P: GPU identity 전달
+    C1-->>P: GPU identity 전달
+    P->>P: NCCL communicator 생성
+    P-->>C1: worker-1 종료, Claim 해제
+    Note over CD: domain은 worker-0과 교체를 위해 유지 가능
+    C1->>P: replacement Claim으로 재참여
+    P-->>C0: Job 종료
+    P-->>C1: Job 종료
+    P-->>CD: 마지막 참여자 종료 후 domain 정리
+```
+
+이 예에서 t8에 GPU Claim 하나가 사라져도 ComputeDomain을 바로 지우면 남은 worker와 교체 Pod의 통신 구성이 깨질 수 있다. 반대로 t11에 GPU Claim을 모두 해제했는데 domain을 무기한 남기면 IMEX 관련 노드 상태와 객체가 누수될 수 있다. Job controller나 상위 워크로드가 두 객체군의 owner와 종료 순서를 분명히 해야 한다.
+
+상태를 판단할 때는 다음 네 질문을 독립적으로 답한다.
+
+| 질문 | 증거 |
+|---|---|
+| 실제 GPU가 정해졌는가? | 각 ResourceClaim의 allocation |
+| 선택 노드에서 GPU 접근이 준비됐는가? | Claim Prepare와 Pod container 상태 |
+| 통신 도메인이 준비됐는가? | ComputeDomain과 IMEX controller/plugin 상태 |
+| 모든 rank가 통신에 참가했는가? | 애플리케이션/NCCL 로그와 rank membership |
+
+ComputeDomain Ready와 Claim 4개 Allocated는 필요 조건일 수 있지만 충분 조건은 아니다. 예를 들어 rank 3 process가 시작 전에 종료되면 Kubernetes 객체는 준비돼 보여도 communicator 생성은 모든 참가자를 기다리다 실패할 수 있다.
+
+반대로 Claim 하나가 Pending이라고 ComputeDomain controller를 먼저 재시작하는 것도 원인과 맞지 않을 수 있다. GPU 수량, selector, node placement를 먼저 본다. Domain은 GPU capacity를 만들어 내지 않는다.
+
+Replacement Pod가 이전 Pod와 같은 GPU를 다시 받아야 한다고도 단정하지 않는다. 새 Claim allocation은 가용 inventory에서 다른 identity를 고를 수 있다. 애플리케이션이 checkpoint의 rank-to-device mapping을 고정했다면 재시작 시 새 rank, node, GPU mapping을 다시 구성해야 한다. ComputeDomain 이름이 같다는 사실은 물리 GPU identity까지 같다는 뜻이 아니다.
+
 ## 9.7 개념 YAML
 
 다음은 객체 관계를 읽기 위한 축약 예다.

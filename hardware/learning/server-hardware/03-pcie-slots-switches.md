@@ -175,6 +175,55 @@ Linux DMA API 문서는 CPU 가상 주소, CPU 물리 주소, 장치가 보는 b
 
 **MSI-X(Message Signaled Interrupts eXtended)**는 장치가 별도 interrupt 핀을 흔드는 대신 메모리 쓰기 형태의 메시지로 인터럽트를 알리는 PCI 기능이다. 쉬운 뜻은 “장치가 정해진 주소에 완료 알림 쪽지를 쓰는 방식”이다. 왜 필요할까? 고성능 NIC나 NVMe는 여러 큐와 CPU에 interrupt를 나눠 처리해야 한다. 기작은 장치가 MSI-X table의 vector별 주소와 데이터를 사용해 interrupt message를 발생시키는 것이다. 쪽지 비유의 한계는 실제 interrupt routing은 APIC/interrupt remapping/IOMMU/커널 설정과 함께 움직인다는 점이다. Linux MSI HOWTO는 MSI/MSI-X 사용 조건과 드라이버 API를 설명한다. [Linux MSI Driver Guide HOWTO](https://cdn.kernel.org/doc/html/latest/PCI/msi-howto.html).
 
+### PCIe packet 안에서 주소와 데이터는 어떻게 움직이는가
+
+“장치가 PCIe로 주소 Z에 쓴다”는 문장을 실제 링크 동작으로 한 단계 더 내리면 **TLP(Transaction Layer Packet)**가 나온다. TLP는 PCIe transaction layer가 만드는 패킷이다. CPU 명령 한 개가 언제나 TLP 하나가 되는 것도 아니고, IP packet을 PCIe TLP에 그대로 넣는 것도 아니다. 링크 중간의 switch는 TLP header에 있는 routing 정보를 보고 다음 포트로 전달한다.
+
+| 요청 | TLP에 실리는 핵심 | 응답은 어떻게 오는가 |
+|---|---|---|
+| Memory Write | 목적 DMA/MMIO 주소, 길이, byte enable, 쓸 data | 일반적으로 별도 completion TLP가 없는 posted request |
+| Memory Read | 읽을 주소, 길이, requester/tag | Completer가 data를 담은 Completion with Data를 돌려줌 |
+| Configuration Read/Write | BDF로 식별한 function과 register 위치 | 열거와 설정에 쓰는 completion이 돌아옴 |
+
+**posted**는 링크 수준의 응답 TLP를 기다리지 않는 요청이라는 뜻이다. 링크가 오류 검출과 재전송을 전혀 하지 않는다는 뜻도, 소프트웨어 작업이 완료됐다는 뜻도 아니다. CPU가 NIC doorbell BAR에 Memory Write를 보낸 뒤에도 NIC가 descriptor를 가져가고 packet을 전송하는 시간이 남는다.
+
+NIC가 호스트 RAM의 4KiB buffer를 읽어 송신하는 예를 보자. 드라이버가 얻은 DMA 주소가 `0x8000_1000`, 장치가 한 번에 요청하는 data 조각이 256바이트라고 단순화한다.
+
+```text
+준비: CPU virtual V → physical P → IOMMU mapping → DMA 0x8000_1000
+
+1. CPU가 descriptor에 DMA 주소 0x8000_1000, 길이 4096을 기록한다.
+2. CPU가 NIC BAR의 doorbell에 Memory Write TLP를 보낸다.
+3. NIC는 descriptor를 DMA read한다.
+4. NIC는 4KiB buffer를 여러 Memory Read Request TLP로 나눈다.
+5. root complex 쪽은 Completion with Data TLP들로 내용을 돌려준다.
+6. NIC는 모은 byte로 Ethernet frame들을 만들고 선으로 내보낸다.
+7. NIC는 completion ring에 상태를 DMA write하고 필요하면 MSI-X를 보낸다.
+```
+
+256바이트씩 정확히 나뉜다고 가정한 교육용 계산은 `4096 / 256 = 16`개의 data 조각이다. 실제 TLP 수는 Max Read Request Size, Max Payload Size, 4KiB 경계, 주소 정렬, completion 분할, protocol overhead에 따라 달라진다. 이 계산의 목적은 사양값을 예언하는 것이 아니라 한 번의 4KiB 애플리케이션 작업이 링크에서는 여러 요청과 completion으로 보일 수 있음을 이해하는 것이다.
+
+```mermaid
+sequenceDiagram
+    participant CPU as CPU/driver
+    participant RC as Root complex + IOMMU
+    participant SW as PCIe switch
+    participant NIC as NIC
+    CPU->>SW: Doorbell Memory Write TLP
+    SW->>NIC: Doorbell 전달
+    NIC->>SW: DMA Memory Read Request (주소 Z, tag)
+    SW->>RC: 요청 전달
+    RC->>RC: Z 권한 검사·물리 주소 변환
+    RC-->>SW: Completion with Data (같은 tag)
+    SW-->>NIC: data 전달
+    NIC->>RC: completion ring Memory Write
+    NIC->>CPU: MSI-X 알림(선택)
+```
+
+장치는 드라이버가 준 DMA 주소 Z를 사용한다. IOMMU가 켜져 있으면 IOMMU가 Z를 RAM의 물리 주소 Y로 바꾸고 접근 권한을 검사한다. PCIe switch는 일반적으로 프로세스 가상 주소 X나 CPU page table을 알지 못한다. CPU page table과 IOMMU table은 목적과 소유 주체가 다른 변환 표다.
+
+예상 결과는 잘못된 descriptor 주소가 있을 때 PCIe link만 찾으면 안 된다는 것이다. 링크는 정상이어도 IOMMU fault로 DMA가 막힐 수 있고, mapping은 정상이어도 장치 queue가 멈췄을 수 있다. 반례로 IOMMU가 passthrough처럼 동작하는 환경에서는 DMA 주소와 물리 주소가 같아 보일 수 있다. 그래도 드라이버가 CPU virtual pointer를 임의로 장치에 넘겨도 된다는 일반 규칙은 되지 않는다.
+
 ### P2P 가능성과 성능은 별도로 확인
 
 P2P가 가능하다는 말은 장치 두 개가 특정 DMA 경로를 사용할 수 있다는 뜻이다. 그 경로가 일반적인 호스트 경유보다 늘 빠르다는 뜻은 아니다. 작은 전송에서는 설정·동기화 비용이 더 클 수도 있고, 전송 대상 장치의 메모리 등록과 드라이버 기능이 필요할 수 있다. GPU와 NPU 사이의 지원 조건은 제조사 스택마다 다르다.

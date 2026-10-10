@@ -110,6 +110,42 @@ Append처럼 합칠 수 있는 변화는 새 상태를 읽고 일부 준비물�
 
 ## 5. 메타데이터 커밋 재시도와 작업 전체 재실행은 다르다
 
+### 두 writer의 파일과 pointer를 시점별로 펼친다
+
+기준 metadata가 `v10.json`, 현재 snapshot이 S10, data file이 A라고 하자. Writer X는 B를 append하고 writer Y는 C를 append한다.
+
+| 시각 | Writer X | Writer Y | 저장소 객체 | catalog pointer |
+| --- | --- | --- | --- | --- |
+| 10:00 | v10 읽기 | v10 읽기 | A | v10 |
+| 10:02 | B와 X용 manifest 작성 | C와 Y용 manifest 작성 | A, B, C, 두 준비물 | v10 |
+| 10:03 | v10→v11 조건부 갱신 성공 | 아직 준비 | 그대로 | v11: A+B |
+| 10:04 | 완료 | v10→Y11 갱신 거절 | C는 미공개 상태 | v11 |
+| 10:05 | 완료 | v11을 다시 읽고 append 검증 | C와 새 Y12 metadata | v11 |
+| 10:06 | 완료 | v11→v12 갱신 성공 | A, B, C | v12: A+B+C |
+
+Y가 재시도할 때 C의 데이터 바이트를 반드시 다시 쓸 필요는 없다. Append가 최신 상태와 합칠 수 있고 검증을 통과하면 기존 C와 manifest 정보를 새 metadata 구성에 재사용할 수 있다. 그러나 overwrite가 X가 바꾼 같은 파일 A를 기준으로 했다면 단순 rebase가 안전하지 않을 수 있다.
+
+```mermaid
+sequenceDiagram
+    participant X as Writer X
+    participant Y as Writer Y
+    participant O as Object store
+    participant C as Catalog pointer
+    X->>O: B와 metadata 준비
+    Y->>O: C와 metadata 준비
+    X->>C: v10이면 v11로 변경
+    C-->>X: 성공
+    Y->>C: v10이면 Y11로 변경
+    C-->>Y: 거절, 현재 v11
+    Y->>Y: v11 기준 충돌 검증
+    Y->>C: v11이면 v12로 변경
+    C-->>Y: 성공
+```
+
+Pointer 갱신 전에는 B와 C가 저장소에 있어도 reader의 현재 상태가 아니다. Pointer 갱신 성공이 원자적 공개 경계다. 성공 응답이 유실되면 writer는 pointer와 snapshot summary를 확인해야 한다. 준비 파일을 곧바로 orphan이라 판단해 지우면 성공한 snapshot을 손상할 수 있다.
+
+**반례.** X와 Y가 같은 `order_id=7`을 서로 다른 값으로 overwrite하면 A+B+C처럼 단순 합치는 것이 정답이 아닐 수 있다. 충돌 필터, 격리 수준, 작업 의미에 따라 한쪽이 재계획되거나 실패해야 한다.
+
 **커밋 재시도**는 이미 준비한 변경을 최신 상태에 다시 적용해 유효한 새 커밋을 만드는 과정이다. 엔진·라이브러리가 수행하고 재사용 여부는 작업에 따라 달라진다.
 
 **작업 재실행**은 입력부터 다시 읽고 파일을 다시 만드는 것이다. 이전 작업이 이미 커밋되었다면 같은 이벤트를 다시 넣어 중복할 수 있다. 트랜잭션이 원자적이라는 사실만으로 사용자 요청의 재실행이 멱등해지지는 않는다.

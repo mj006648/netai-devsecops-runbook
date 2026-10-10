@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1020" viewBox="0 0 1200 1020" role="img" aria-labelledby="title desc">
+<title id="title">Gateway API: 제어 경로와 데이터 경로</title>
+<desc id="desc">위쪽은 선언과 설정, 아래쪽은 실제 HTTP 요청이다. HTTPRoute 객체로 HTTP 바이트를 보내지 않는다.</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L9 5 L0 10 Z" fill="#475569"/></marker></defs>
+<rect width="1200" height="1020" fill="#f8fafc" rx="18"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif">
+<text x="40" y="52" font-size="30" font-weight="700" fill="#0f172a">Gateway API: 제어 경로와 데이터 경로</text>
+<text x="40" y="91" font-size="17" fill="#475569">위쪽은 선언과 설정, 아래쪽은 실제 HTTP 요청이다. HTTPRoute 객체로 HTTP 바이트를 보내지 않는다.</text>
+<text x="40" y="131" font-size="19" fill="#1e40af" text-anchor="start" font-weight="700">제어 경로 · Kubernetes API 객체</text>
+<rect x="40" y="155" width="330" height="155" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="155" width="330" height="45" rx="14" fill="#dbeafe"/>
+<rect x="40" y="179" width="330" height="21" fill="#dbeafe"/>
+<text x="56" y="185" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">GatewayClass</text>
+<text x="56" y="228" font-size="16" fill="#334155" text-anchor="start" font-weight="400">어떤 controller 구현인가?</text>
+<text x="56" y="253" font-size="16" fill="#334155" text-anchor="start" font-weight="400">controllerName</text>
+<text x="56" y="278" font-size="16" fill="#334155" text-anchor="start" font-weight="400">cluster 범위 객체</text>
+<rect x="435" y="155" width="330" height="155" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="435" y="155" width="330" height="45" rx="14" fill="#dbeafe"/>
+<rect x="435" y="179" width="330" height="21" fill="#dbeafe"/>
+<text x="451" y="185" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Gateway</text>
+<text x="451" y="228" font-size="16" fill="#334155" text-anchor="start" font-weight="400">listener · port · TLS</text>
+<text x="451" y="253" font-size="16" fill="#334155" text-anchor="start" font-weight="400">allowedRoutes</text>
+<text x="451" y="278" font-size="16" fill="#334155" text-anchor="start" font-weight="400">진입점 담당자가 선언</text>
+<rect x="830" y="155" width="330" height="155" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="830" y="155" width="330" height="45" rx="14" fill="#dbeafe"/>
+<rect x="830" y="179" width="330" height="21" fill="#dbeafe"/>
+<text x="846" y="185" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">HTTPRoute</text>
+<text x="846" y="228" font-size="16" fill="#334155" text-anchor="start" font-weight="400">parent · hostname · path</text>
+<text x="846" y="253" font-size="16" fill="#334155" text-anchor="start" font-weight="400">backendRefs</text>
+<text x="846" y="278" font-size="16" fill="#334155" text-anchor="start" font-weight="400">앱 담당자가 선언</text>
+<rect x="375" y="370" width="450" height="105" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="375" y="370" width="450" height="45" rx="14" fill="#dbeafe"/>
+<rect x="375" y="394" width="450" height="21" fill="#dbeafe"/>
+<text x="391" y="400" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Controller</text>
+<text x="391" y="443" font-size="16" fill="#334155" text-anchor="start" font-weight="400">객체를 관찰해 실제 처리 계층 설정으로 변환</text>
+<path d="M205 310 V338 H480 V370" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M600 310 V370" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M995 310 V338 H720 V370" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M600 475 V650" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="620" y="533" font-size="16" fill="#334155" text-anchor="start" font-weight="400">listener · route · upstream 설정</text>
+<path d="M40 580 H1160" stroke="#cbd5e1" stroke-width="2"/>
+<text x="40" y="623" font-size="19" fill="#115e59" text-anchor="start" font-weight="700">데이터 경로 · 실제 HTTP 요청과 응답</text>
+<rect x="40" y="650" width="250" height="150" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="40" y="650" width="250" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="40" y="674" width="250" height="21" fill="#ccfbf1"/>
+<text x="56" y="680" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Client</text>
+<text x="56" y="723" font-size="16" fill="#334155" text-anchor="start" font-weight="400">Host: api.example.test</text>
+<text x="56" y="748" font-size="16" fill="#334155" text-anchor="start" font-weight="400">GET /v1/books</text>
+<text x="56" y="773" font-size="16" fill="#334155" text-anchor="start" font-weight="400">Gateway 주소로 연결</text>
+<rect x="420" y="650" width="350" height="150" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="420" y="650" width="350" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="420" y="674" width="350" height="21" fill="#ccfbf1"/>
+<text x="436" y="680" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">실제 Gateway proxy</text>
+<text x="436" y="723" font-size="16" fill="#334155" text-anchor="start" font-weight="400">예: Envoy HTTP listener</text>
+<text x="436" y="748" font-size="16" fill="#334155" text-anchor="start" font-weight="400">규칙에 맞는 backend 선택</text>
+<text x="436" y="773" font-size="16" fill="#334155" text-anchor="start" font-weight="400">API 객체 자체가 아님</text>
+<rect x="910" y="650" width="250" height="150" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="910" y="650" width="250" height="45" rx="14" fill="#ccfbf1"/>
+<rect x="910" y="674" width="250" height="21" fill="#ccfbf1"/>
+<text x="926" y="680" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">앱 Pod</text>
+<text x="926" y="723" font-size="16" fill="#334155" text-anchor="start" font-weight="400">선택된 backend</text>
+<text x="926" y="748" font-size="16" fill="#334155" text-anchor="start" font-weight="400">프로그램 listen :5678</text>
+<text x="926" y="773" font-size="16" fill="#334155" text-anchor="start" font-weight="400">업무 응답 반환</text>
+<path d="M290 725 H420" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="355" y="704" font-size="15" fill="#334155" text-anchor="middle" font-weight="400">HTTP :80</text>
+<path d="M770 725 H910" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="840" y="704" font-size="15" fill="#334155" text-anchor="middle" font-weight="400">HTTP :5678</text>
+<rect x="385" y="842" width="445" height="92" rx="14" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+<rect x="385" y="842" width="445" height="45" rx="14" fill="#ede9fe"/>
+<rect x="385" y="866" width="445" height="21" fill="#ede9fe"/>
+<text x="401" y="872" font-size="20" fill="#0f172a" text-anchor="start" font-weight="700">Service·EndpointSlice 정보</text>
+<text x="401" y="915" font-size="16" fill="#334155" text-anchor="start" font-weight="400">예제 port 80 → 준비된 앱 endpoint :5678</text>
+<path d="M600 842 V800" fill="none" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<text x="40" y="977" font-size="16" fill="#334155" text-anchor="start" font-weight="400">실제 구현은 endpoint 직접 전달 또는 Service IP 등 다른 경로를 사용할 수 있다. 이 그림은 개념도다.</text>
+</g>
+</svg>

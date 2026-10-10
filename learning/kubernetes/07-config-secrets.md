@@ -132,7 +132,107 @@ kubectl auth can-i get secrets -n config-lab
 
 위 명령은 `lab13/config-lab` 읽기 전용 예시이며 실행하지 않았다. 실제 Secret 값을 출력하는 `get secret -o yaml`을 일상 점검 명령으로 사용하지 않는다.
 
-## 8. 문제와 해설
+## 8. API의 새 값, 파일의 새 값, process의 새 값
+
+“ConfigMap을 변경했다”는 말은 서로 다른 세 상태를 구분해야 한다.
+
+```mermaid
+sequenceDiagram
+    participant U as "사용자"
+    participant A as "API server의 ConfigMap"
+    participant K as "kubelet projected volume"
+    participant F as "container가 보는 file"
+    participant P as "application process"
+    U->>A: "LOG_LEVEL info → debug"
+    Note over A: "API object에는 새 값"
+    A-->>K: "watch/cache 주기에 따라 변경 관찰"
+    K->>F: "atomic projection 갱신"
+    Note over F: "file에는 새 값"
+    P->>F: "reload 또는 다음 read"
+    Note over P: "이때만 behavior가 새 값일 수 있음"
+```
+
+API server에서 `resourceVersion`이 바뀌었다고 Pod 안의 file이 즉시 바뀌었다는 뜻은 아니다. File이 바뀌었다고 application memory의 parsed configuration이 바뀌었다는 뜻도 아니다. Application이 매 요청마다 파일을 읽는지, file watch로 reload하는지, SIGHUP을 받는지, 시작 때 한 번만 읽는지를 문서화한다.
+
+| 주입 방식 | object 변경 뒤 container view | process가 새 값을 쓰는 조건 |
+| --- | --- | --- |
+| `env`/`envFrom` | 기존 process environment는 그대로 | 새 container process 시작 |
+| ConfigMap/Secret volume | 전파 지연 뒤 projected file 갱신 가능 | application이 file을 다시 읽거나 reload |
+| `subPath` file mount | 실행 중 자동 갱신되지 않음 | 새 Pod/container와 mount 필요 |
+| API를 application이 직접 watch | client가 새 object event를 받을 수 있음 | watch 재연결, validation, application reload 구현 |
+
+환경 변수는 `/proc`이나 crash dump, debug endpoint를 통해 노출될 수 있고 process 전체 수명 동안 남는다. Volume file은 filesystem permission으로 접근을 좁힐 수 있지만 `pods/exec` 권한이 넓으면 여전히 읽힐 수 있다. 보안 요구와 reload 요구를 함께 보고 방식을 고른다.
+
+## 9. `subPath`가 갱신을 받지 않는 이유를 읽는 법
+
+Projected ConfigMap volume은 kubelet이 관리하는 directory tree를 새 content로 전환하는 방식으로 갱신될 수 있다. `subPath`는 그 directory 안의 특정 항목을 container path에 별도로 bind mount한다. 이미 잡힌 mount가 새 projection tree로 따라가지 않으므로 자동 갱신을 기대할 수 없다.
+
+```yaml
+volumeMounts:
+  - name: config
+    mountPath: /etc/research/application.yaml
+    subPath: application.yaml
+    readOnly: true
+volumes:
+  - name: config
+    configMap:
+      name: api-config
+```
+
+이 조각은 container와 Pod spec에 넣는 교육용 예시이며 단독 manifest로 적용하지 않는다. 기존 image의 `/etc/research` directory 전체를 덮지 않고 파일 하나만 넣는 장점이 있지만, hot reload가 필요하면 부적합하다.
+
+반례로 directory 전체를 mount했더라도 application이 startup 때 YAML을 한 번 parse해 object로 보관하면 behavior는 바뀌지 않는다. 반대로 application이 매 요청마다 file을 읽으면 새 값은 반영될 수 있지만 잘못된 중간 configuration, 성능 비용, 여러 replica가 서로 다른 시각에 갱신되는 문제를 처리해야 한다.
+
+## 10. 설정 rollout을 명시적 상태 전이로 만들기
+
+많은 application은 설정 object 이름 또는 content hash를 Pod template에 넣어 새 ReplicaSet rollout을 일으킨다.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: config-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+      annotations:
+        example.org/config-revision: "api-config-v18"
+    spec:
+      containers:
+        - name: api
+          image: registry.example/research-api:1.4.0
+          envFrom:
+            - configMapRef:
+                name: api-config-v18
+```
+
+이 manifest는 image와 ConfigMap이 실제 존재하지 않는 교육용 예시이며 적용하지 않는다. Template annotation이나 reference가 바뀌면 새 Pod가 만들어져 env를 다시 구성한다. Rollout history에서 어느 config revision을 사용했는지 찾기도 쉽다.
+
+다만 replica가 두 개면 rollout 동안 v17 process와 v18 process가 잠시 함께 요청을 처리할 수 있다. 새 설정이 protocol이나 database schema와 호환되지 않으면 단순 rollout도 장애를 만든다. 설정을 backward-compatible하게 만들고 readiness에서 필수 dependency를 검증하며, secret rotation은 old/new credential overlap 기간을 둔다.
+
+## 11. 변경 후 확인 시간표
+
+다음은 실제 실행 결과가 아니라 volume projection과 application reload를 구분하기 위한 예상 시간표다.
+
+```text
+14:00:00 ConfigMap API update 완료
+14:00:03 Pod A의 application은 여전히 info (env 주입)
+14:00:20 Pod B의 mounted file은 debug, process cache는 info
+14:00:22 Pod C는 subPath file도 여전히 info
+14:01:00 Deployment rollout로 새 Pod D 시작, env=debug
+14:01:15 Pod B에 reload signal 전달, process behavior=debug
+```
+
+이 결과에서 “cluster 설정이 반만 적용됐다”라고만 기록하면 원인을 잃는다. Pod별로 주입 방식, file content, process가 보고한 effective configuration, Pod 시작 시각을 함께 본다. Secret은 값을 log에 출력하지 말고 version 또는 checksum처럼 원문을 드러내지 않는 식별자를 사용한다.
+
+## 12. 문제와 해설
 
 1. ConfigMap 환경 변수는 object 변경 뒤 실행 중 process에 갱신되는가? **아니다.** 새 process가 필요하다.
 2. Volume mount ConfigMap 변경은 application behavior를 즉시 바꾸는가? **아니다.** 전파 지연과 application reload가 있다.

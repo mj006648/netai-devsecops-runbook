@@ -74,6 +74,62 @@ Kubernetes의 [consumable capacity](https://kubernetes.io/docs/concepts/resource
 
 NVIDIA 경로는 gate 외에도 GPU kubelet plugin의 `CONSUMABLE_SHARES` 설정이 필요하다. 지원 값과 설정 위치, MPS와의 조합 제한은 [Operator DRA 제한](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/26.7/dra-intro-install.html)을 따른다. 이 교재는 연구실에 공유 설정을 자동 적용하지 않는다.
 
+### 08.5.1 세 방식의 capacity 장부를 같은 숫자로 비교하기
+
+물리 GPU 한 장이 24 GiB라고 하자. 아래 세 구성은 모두 Kubernetes에서 “여러 요청을 받을 수 있다”처럼 보이지만 장부의 단위가 다르다.
+
+**구성 A: MIG 인스턴스 두 개.** 제품이 지원하는 profile로 10 GiB 인스턴스 두 개를 이미 만들었다고 가정한다. 나머지 물리 메모리는 임의의 4 GiB claim으로 자동 조각나지 않는다.
+
+```text
+inventory: mig-0(10 GiB), mig-1(10 GiB)
+Claim A → mig-0
+Claim B → mig-1
+Claim C → 후보 없음
+```
+
+Claim A가 6 GiB만 실제 사용해도 mig-0의 남은 4 GiB가 별도 MIG 장치로 광고된 것은 아니다. 인스턴스 profile이 할당 단위다. 두 workload의 메모리와 fault 경계는 MIG 인스턴스가 제공하는 범위에서 분리된다.
+
+**구성 B: time-slicing replica 4.** Scheduler가 네 논리 slot을 보지만 VRAM 장부는 물리 장치 하나다.
+
+```text
+광고 slot: 4
+Pod A 실제 peak: 8 GiB
+Pod B 실제 peak: 7 GiB
+Pod C 실제 peak: 6 GiB
+Pod D 실제 peak: 6 GiB
+합계 peak: 27 GiB > 물리 24 GiB
+```
+
+네 Pod 모두 slot을 성공적으로 받아도 동시에 peak에 도달하면 메모리 압박이나 OOM이 생길 수 있다. `4 replicas × 6 GiB` 같은 격리된 몫은 자동 생성되지 않는다. Slot 장부와 byte 장부가 분리되어 있기 때문이다.
+
+**구성 C: consumable shares 100 단위.** Driver가 한 GPU에 나눠 쓸 수 있는 capacity 100을 게시하고 실제 제한을 구현한다고 가정한다.
+
+| 순서 | Claim 요청 | 할당 전 남음 | 결과 | 할당 후 남음 |
+|---:|---:|---:|---|---:|
+| 1 | A=40 | 100 | 성공 | 60 |
+| 2 | B=35 | 60 | 성공 | 25 |
+| 3 | C=30 | 25 | Pending | 25 |
+| 4 | A 해제 | 25 | capacity 반환 | 65 |
+| 5 | C 재평가=30 | 65 | 성공 | 35 |
+
+여기서 scheduler가 회계한 40과 35가 정확히 40%, 35%의 실행 시간이나 9.6 GiB, 8.4 GiB 메모리 격리를 뜻하는지는 driver의 capacity 정의와 enforcement를 확인해야 한다. 광고 capacity가 admission 장부만 있고 실제 runtime 제한이 없다면 두 workload의 순간 사용량은 여전히 충돌할 수 있다.
+
+```mermaid
+flowchart TB
+    P["물리 GPU 24 GiB"] --> M["MIG: profile별 장치 inventory"]
+    P --> T["time-slicing: slot 수만 4로 광고"]
+    P --> C["consumable capacity: 총 100에서 요청량 차감"]
+    M --> MI["10 GiB instance A/B 경계"]
+    T --> TV["네 Pod가 같은 24 GiB 경쟁"]
+    C --> CL["40+35 할당, 25 남음"]
+```
+
+같은 Claim을 Pod A와 B가 참조하는 경우도 이 표의 A=40, B=35와 다르다. 같은 Claim 공유는 allocation 하나의 identity를 함께 쓰는 것이며 새 35 capacity 차감을 만들지 않는다. 두 Pod가 독립 몫을 원하면 driver가 지원하는 독립 Claim과 consumable capacity 표현이 필요하다.
+
+DynamicMIG를 켜지 않은 상태에서 `30 GiB MIG를 요청하면 남은 profile을 합쳐 새 인스턴스를 만들 것`이라고 기대하는 것도 반례다. 기존 MIG device 할당은 이미 구성된 instance inventory에서 고른다. Claim 요구에 맞춘 생성·재구성은 별도 Alpha 기능과 사전 조건을 가지며, 실행 중 workload에 영향을 주는 재구성 정책까지 확인해야 한다.
+
+Capacity 실험 결과에는 `물리 GPU 수`, `MIG profile/instance 수`, `광고 slot 또는 share 총량`, `Claim별 차감`, `실제 process별 peak bytes`를 따로 기록한다. 이 중 하나만 남기면 scheduler가 왜 허용했는지와 GPU가 왜 OOM이 났는지를 연결할 수 없다.
+
 ## 08.6 독립 광고 두 개의 함정
 
 같은 물리 GPU를 device plugin이 “사용 가능 한 개”로, DRA driver가 “사용 가능 한 개”로 각각 공개했다고 가정한다. 두 allocator가 서로의 할당을 모른 채 같은 장치를 두 workload에 줄 수 있다. 각 API에서는 요청이 맞아도 실제 workload는 경쟁할 수 있다.

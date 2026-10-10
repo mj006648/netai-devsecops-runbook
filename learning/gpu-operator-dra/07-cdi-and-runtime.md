@@ -135,6 +135,74 @@ P1 런타임 요청에는 GPU-A의 fully-qualified name만 들어가야 한다.
 CDI spec이 두 장치를 모두 정의한다고 해서 P1에 둘 다 주입되는 것은 아니다.
 런타임에 요청된 CDI 장치 이름이 컨테이너별 주입 범위를 정한다.
 
+### 7.6.1 Prepare 결과가 실제 파일 편집으로 풀리는 예
+
+GPU-A의 claim이 이미 할당됐다고 가정하자. Node plugin의 Prepare 결과와 CDI spec을 연결하면 다음 두 조각이 있다.
+
+```text
+Prepare 결과의 논리 참조
+  claim uid: rc-77
+  CDI device: nvidia.com/gpu=GPU-A
+
+노드 CDI registry의 정의
+  kind: nvidia.com/gpu
+  device name: GPU-A
+  container edits:
+    /dev/nvidia0 추가
+    /dev/nvidiactl 추가
+    필요한 library mount 또는 hook
+    NVIDIA_VISIBLE_DEVICES=GPU-A 같은 환경 편집
+```
+
+CDI registry 파일의 기본 검색 경로와 NVIDIA가 생성한 파일 이름은 runtime·Toolkit 설정에 따라 확인해야 한다. 중요한 점은 kubelet이 `/dev/nvidia0`을 문자열로 추측하는 것이 아니라 fully-qualified name을 넘기고, CDI-aware runtime이 registry에서 같은 kind와 device name을 찾아 편집을 합친다는 것이다.
+
+```mermaid
+flowchart LR
+    A["allocation: GPU-A"] --> B["Prepare: rc-77"]
+    B --> C["CDI name nvidia.com/gpu=GPU-A"]
+    C --> D{"runtime registry에 kind/device가 있는가?"}
+    D -->|아니오| E[container create 실패]
+    D -->|예| F[deviceNodes/mounts/env/hooks 병합]
+    F --> G[OCI runtime spec]
+    G --> H[container process 시작]
+```
+
+다음은 교육용으로 줄인 CDI 문서와 OCI 편집 결과다. 실제 NVIDIA spec에는 더 많은 장치 노드와 mount, hook이 들어갈 수 있다.
+
+```yaml
+cdiVersion: "0.8.0"
+kind: "nvidia.com/gpu"
+devices:
+  - name: "GPU-A"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+        - path: /dev/nvidiactl
+      env:
+        - NVIDIA_VISIBLE_DEVICES=GPU-A
+```
+
+```text
+런타임이 container 생성 직전에 얻는 효과
+  Linux devices: /dev/nvidia0, /dev/nvidiactl 접근 항목
+  Environment:   NVIDIA_VISIBLE_DEVICES=GPU-A
+  요청하지 않은 GPU-B 항목: 없음
+```
+
+오류 위치도 구체적으로 갈린다.
+
+| 관찰 | 의미 | 다음 확인 |
+|---|---|---|
+| Prepare가 CDI name을 못 만듦 | node plugin이 allocation을 준비하지 못함 | plugin log, 장치 초기화 |
+| CDI name은 반환됐지만 registry에 없음 | 이름과 spec snapshot 불일치 | 생성 시각, registry 검색 경로 |
+| spec은 있으나 `/dev/nvidia0` 없음 | 오래된 spec 또는 driver device node 문제 | host device node, spec 재생성 |
+| container에 node는 있으나 library load 실패 | 주입 이후 사용자 공간 경계 | image library와 host driver 호환성 |
+| library load 후 kernel 실패 | 실행 경계 | 실제 CUDA 오류와 GPU 상태 |
+
+CDI spec을 갱신했다고 이미 실행 중인 컨테이너의 OCI 구성이 자동으로 다시 작성되는 것도 아니다. Container creation 시점에 적용된 편집은 그 컨테이너의 수명 동안 유지된다. 장치 정의가 바뀌었다면 새 container가 어느 spec generation을 읽었는지 확인해야 한다.
+
+반례로, `NVIDIA_VISIBLE_DEVICES=GPU-A` 환경 변수만 수동으로 넣었다고 CDI 주입과 같아지지 않는다. 필요한 device node, library mount, hook, cgroup 허용이 빠질 수 있다. 반대로 `/dev/nvidia0` 하나만 bind mount했다고 UUID와 minor number의 대응이 재부팅 후에도 같은지 보장되지 않는다. 논리 ID와 실제 편집을 CDI spec 한 곳에서 연결하는 이유다.
+
 ## 7.7 CDI가 보장하지 않는 것
 
 CDI는 다음을 자동으로 보장하지 않는다.

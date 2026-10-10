@@ -101,6 +101,70 @@ CRUSH rule chooses acting set
 
 Client는 monitor에서 cluster map을 받아 placement를 계산할 수 있다. 중앙 metadata server가 모든 data I/O 경로에 반드시 끼어드는 구조가 아니다. Ceph는 OSD들이 peering, recovery, backfill 같은 작업을 수행하며 동적으로 균형을 맞춘다.
 
+### 한 RGW PUT을 API object에서 OSD write까지 추적한다
+
+Client가 10 MiB의 S3 object `bucket-a/logs/001.bin`을 RGW에 단일 PUT한다고 하자. RGW가 이를 head와 tail RADOS object로 표현하고, pool은 replication size 3을 쓴다는 교육용 모델이다. 실제 stripe 크기와 object naming은 구현·설정에 따라 다르다.
+
+```mermaid
+sequenceDiagram
+    participant C as S3 client
+    participant G as RGW
+    participant P as Primary OSD
+    participant R1 as Replica OSD 1
+    participant R2 as Replica OSD 2
+    C->>G: HTTP PUT bucket-a/logs/001.bin
+    G->>G: auth·bucket lookup·RADOS object 구성
+    G->>P: write tail/head object
+    P->>R1: replicate
+    P->>R2: replicate
+    R1-->>P: subop complete
+    R2-->>P: subop complete
+    P-->>G: RADOS write complete
+    G->>G: bucket index transaction
+    G-->>C: HTTP success
+```
+
+이 흐름에서 상태 owner가 바뀐다.
+
+| 상태 | owner | key의 모양 | 목적 |
+| --- | --- | --- | --- |
+| HTTP request | S3 client·RGW | bucket + S3 key | 인증과 API 의미 |
+| RGW object metadata | RGW | bucket instance, object version 등 | head/tail과 index 조정 |
+| RADOS object | RADOS pool | 내부 object id | 실제 분산 저장 단위 |
+| PG | CRUSH/RADOS | pool id와 hash에서 계산 | 여러 object를 배치·복구 묶음으로 관리 |
+| acting set | OSDMap+CRUSH | OSD 번호 집합 | 현재 primary와 replica 결정 |
+| BlueStore extent | 각 OSD | 내부 allocator 위치 | local block device에 bytes 저장 |
+
+### 작은 배치 숫자 예
+
+가상의 pool에 PG가 8개 있고 hash 결과를 단순히 `hash mod 8`로 설명한다고 하자. 실제 Ceph의 PG 계산은 이보다 복잡하지만 owner 변환을 보는 교육용 예다.
+
+~~~text
+internal object head hash = 29
+PG index = 29 mod 8 = 5
+pool id 7과 결합한 PG = 7.5라고 표기한다고 가정
+CRUSH acting set = [OSD.3(host-a), OSD.8(host-b), OSD.11(host-c)]
+primary = OSD.3
+~~~
+
+Object 이름을 안다고 OSD를 영구히 고정해서 아는 것은 아니다. OSDMap과 CRUSH topology가 바뀌면 같은 PG의 acting set이 달라질 수 있고 recovery/backfill이 object를 새 OSD로 옮길 수 있다. 반대로 PG를 안다고 S3 key를 바로 복원할 수도 없다. 여러 API object의 내부 RADOS object가 같은 PG에 섞일 수 있기 때문이다.
+
+### GET 성공과 LIST 성공이 갈라지는 반례
+
+RGW가 head/tail object를 써서 GET할 payload를 만들었지만 bucket index commit이 지연됐다고 하자. Object key를 정확히 지정한 GET 경로와 bucket index를 훑는 LIST 경로는 다른 metadata를 소비할 수 있다.
+
+~~~text
+T0 tail objects written
+T1 head visibility point written
+T2 bucket index update pending
+T3 index transaction committed
+T4 HTTP success returned according to implementation contract
+~~~
+
+정상 구현은 자신이 약속한 일관성을 맞추도록 이 상태들을 조정한다. 장애 분석에서는 “RADOS object가 있다”만으로 S3 API 성공을 주장하지 않고, head object, bucket index transaction, HTTP response의 순서를 확인한다. 반대로 S3 LIST에서 key가 보인다는 사실만으로 Iceberg current snapshot이 그 object를 참조한다고 말할 수 없다.
+
+조건이 RBD라면 bucket index와 HTTP PUT은 없다. RBD client의 logical block write가 image object와 RADOS write로 바뀐다. CephFS라면 MDS가 file namespace metadata를 조정한다. 세 interface 모두 RADOS를 쓸 수 있지만 RGW 시간표를 그대로 공유하지 않는다.
+
 ## 4. Failure domain은 CRUSH rule의 일부다
 
 Failure domain은 “어떤 단위가 함께 망가질 수 있는가”라는 모델이다. 예시는 disk, OSD, host, chassis, rack, room, datacenter다. CRUSH map은 topology를 담고, CRUSH rule은 replica나 EC chunk를 어느 failure domain에 분산할지

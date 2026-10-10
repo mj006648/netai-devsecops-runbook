@@ -350,7 +350,64 @@ TLS는 성공했지만 HTTP 404가 나오면 application routing 문제일 수 �
 UDP port 443을 쓰더라도 단순 UDP 애플리케이션이 아니다.
 QUIC이 transport 기능을 제공한다.
 
-## 21. 자주 틀리는 오개념
+## 21. TCP ACK와 애플리케이션 완료 사이를 시간순으로 본다
+
+Client가 `POST /charge` 요청 900 byte를 보내고 server가 DB에 기록한 뒤 응답한다고 하자. TCP initial sequence는 client 1000, server 7000이며 SYN이 sequence 공간 하나를 소비했다고 가정한다.
+
+```mermaid
+sequenceDiagram
+    participant C as Client app/TCP
+    participant S as Server TCP/app
+    participant D as Database
+    C->>S: request bytes seq=1001 len=900
+    S-->>C: TCP ACK=1901
+    Note over C,S: server TCP가 byte 범위를 받음
+    S->>S: HTTP parse·업무 검증
+    S->>D: transaction write
+    D-->>S: commit response
+    S-->>C: HTTP 201 response bytes
+    C->>S: response TCP ACK
+```
+
+각 응답은 확인 범위가 다르다.
+
+| 시점 | 관측 | 확인된 것 | 아직 확인되지 않은 것 |
+| --- | --- | --- | --- |
+| T0 | client `send()`가 900 반환 | local kernel이 900 byte를 수락 | wire 전송, server 수신 |
+| T1 | server가 ACK 1901 전송 | server TCP가 1001..1900 byte를 수신 | HTTP parse, 결제 처리, DB commit |
+| T2 | server app이 request parse | HTTP message 형식 해석 | 업무 규칙과 저장 성공 |
+| T3 | DB commit 응답 | DB 계약상 transaction 완료 | HTTP response가 client에 도착 |
+| T4 | client가 HTTP 201 해석 | application protocol 결과 확인 | 외부 후속 시스템의 완료 |
+
+### ACK 뒤 연결이 끊기는 반례
+
+Server TCP가 request 전체를 받고 ACK 1901을 보낸 직후 process가 crash났다고 하자. Client는 TCP ACK를 봤지만 HTTP response를 못 받는다. DB transaction이 시작되기 전 crash라면 업무 효과는 없을 수 있다. DB commit 직후 response 전송 전에 crash라면 업무 효과는 이미 있을 수 있다. Client에서 보이는 증상은 둘 다 timeout일 수 있다.
+
+~~~text
+Case A
+  TCP ACK → app crash → DB write 없음 → client timeout
+
+Case B
+  TCP ACK → DB commit → app crash → client timeout
+~~~
+
+그래서 timeout 뒤 무조건 같은 요청을 다시 보내면 Case B에서 중복 효과가 생길 수 있다. Transport reliability와 업무 idempotency는 다른 설계다. 요청 ID, unique constraint, 서버의 중복 판정 범위가 필요한 이유다.
+
+### 하나의 segment 손실이 stream에 미치는 영향
+
+900 byte 요청을 300 byte씩 세 segment로 단순화해 보자.
+
+~~~text
+S1 seq=1001 len=300  도착
+S2 seq=1301 len=300  손실
+S3 seq=1601 len=300  도착
+~~~
+
+수신 TCP는 S1 뒤 `ACK=1301`을 보낸다. S3가 먼저 도착해 buffer에 보관돼도 빈 범위 1301..1600 때문에 누적 ACK는 계속 1301일 수 있다. S2가 재전송돼 도착하면 연속 범위가 1900까지 이어지고 `ACK=1901`이 가능하다.
+
+TCP가 순서를 복원하므로 application은 보통 중간 구멍을 그대로 받지 않는다. 대신 S3가 이미 도착했어도 S2를 기다리는 지연이 생긴다. QUIC의 독립 stream은 한 stream의 이런 구멍이 다른 stream의 전달을 모두 막는 범위를 줄이지만, 같은 QUIC stream 안의 순서와 물리 경로 손실까지 없애지는 않는다.
+
+## 22. 자주 틀리는 오개념
 
 | 오개념 | 바로잡기 |
 | --- | --- |
@@ -362,7 +419,7 @@ QUIC이 transport 기능을 제공한다.
 | QUIC은 UDP라 신뢰성이 없다 | QUIC이 UDP 위에 신뢰성과 stream을 구현한다 |
 | TIME_WAIT는 무조건 제거해야 한다 | TCP 안전성을 위한 정상 상태다 |
 
-## 22. 해설 문제
+## 23. 해설 문제
 
 ### 문제 1
 
@@ -407,7 +464,7 @@ UDP를 쓰는 애플리케이션이 반드시 직접 설계해야 할 수 있는
 예: timeout, retry, duplicate 처리, ordering, congestion response, message id, idempotency.
 UDP 자체는 delivery와 ordering을 보장하지 않는다.
 
-## 23. 1차 출처와 더 읽기
+## 24. 1차 출처와 더 읽기
 
 - TCP: [RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.html)
 - UDP: [RFC 768](https://www.rfc-editor.org/rfc/rfc768.html)

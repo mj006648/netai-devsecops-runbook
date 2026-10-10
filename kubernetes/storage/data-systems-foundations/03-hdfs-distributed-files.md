@@ -246,6 +246,77 @@ Total replica payload   = 900 MiB before metadata/checksum overhead
 
 중간 실패도 같은 그림으로 본다. DN5가 B1의 packet P300 처리 중 죽으면, client와 남은 DataNode는 실패를 감지하고 pipeline에서 DN5를 제외하거나 새 DataNode를 받아 pipeline을 재구성할 수 있다. 이미 ACK 받은 packet과 아직 ACK 받지 못한 packet을 구분해야 한다. “client가 write 함수를 호출했다”, “packet ACK를 받았다”, “file close가 성공했다”는 서로 다른 지점이다.
 
+### NameNode 상태와 DataNode 상태가 어긋나는 짧은 구간
+
+Write path를 두 행으로 나누면 장애 지점이 더 잘 보인다.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N as NameNode
+    participant D1 as DN1
+    participant D2 as DN2
+    participant D3 as DN3
+    C->>N: create F, block B0 pipeline 요청
+    N-->>C: B0 = DN1→DN2→DN3
+    C->>D1: packet P0
+    D1->>D2: P0
+    D2->>D3: P0
+    D3-->>D2: ACK P0
+    D2-->>D1: ACK P0
+    D1-->>C: ACK P0
+    C->>N: close/finalize F
+    Note over N: 최종 length·block list 확정
+```
+
+| 시점 | NameNode metadata 행 | DataNode payload 행 |
+| --- | --- | --- |
+| T0 | 파일 F 생성, lease=C, length는 초기 상태 | block 없음 |
+| T1 | B0와 pipeline 위치 할당 | DN1·DN2·DN3가 B0 수신 준비 |
+| T2 | 최종 file length가 아직 뒤처질 수 있음 | P0 일부 또는 전부가 pipeline buffer/local storage에 있음 |
+| T3 | metadata는 여전히 open file | P0 ACK가 client까지 돌아옴 |
+| T4 | `hflush()`/`hsync()`에 따라 visibility·durability 경계 진행 | 현재 block의 bytes 상태가 호출 계약에 맞게 전진 |
+| T5 | `close()` 성공 뒤 최종 block list와 length 확정 | 완성 block replicas 유지 |
+
+T3에서 DataNode들이 P0를 처리했다는 사실과 T5에서 namespace의 파일 길이가 최종 확정됐다는 사실은 다르다. `listStatus`나 file length가 쓰기 도중 payload보다 늦을 수 있는 이유다.
+
+### 두 block을 읽을 때 NameNode가 payload proxy가 아닌 이유
+
+파일 F가 B0, B1 두 block이고 각 replica 위치가 다음과 같다고 하자.
+
+~~~text
+B0: DN1, DN2, DN3
+B1: DN2, DN4, DN5
+Client와 가까운 순서: DN1, DN2, DN4, DN3, DN5
+~~~
+
+Client는 NameNode에서 두 목록을 한 번에 받거나 필요할 때 갱신한 뒤 B0는 DN1, B1은 DN2에서 직접 읽을 수 있다.
+
+~~~text
+Control path bytes:
+  path F, block IDs, offsets, replica locations
+
+Data path bytes:
+  B0 payload DN1→Client
+  B1 payload DN2→Client
+~~~
+
+NameNode가 모든 B0/B1 payload를 중계하지 않으므로 DataNode 여러 대의 read bandwidth를 병렬로 활용할 수 있다. 하지만 NameNode가 불필요하다는 뜻은 아니다. 이름, 권한, block 위치를 못 얻으면 client는 어느 DataNode의 어느 block이 파일 F의 현재 상태인지 알 수 없다.
+
+### Replica 한 개가 더 긴 반례
+
+Client가 P100을 DN1→DN2→DN3로 보내는 중 DN3까지 도착했지만 ACK가 client에 오기 전에 연결이 끊겼다고 하자. Client는 P100 성공을 확정하지 못한다. 일부 DataNode에는 P100이 있고, 다른 관측 시점에는 pipeline 재구성으로 길이가 다를 수 있다.
+
+~~~text
+DN1 replica length: L
+DN2 replica length: L
+DN3 replica length: L + packet P100
+~~~
+
+Recovery가 단순히 가장 긴 replica를 선택하면 client가 성공으로 확인하지 못한 tail을 공식 데이터로 만들 위험이 있다. 반대로 가장 짧은 것만 고르면 이미 안전하게 처리된 data를 버릴 수 있다. 그래서 generation stamp, replica state, acknowledged length, NameNode의 block recovery 절차가 함께 필요하다.
+
+조건이 replication factor 1이면 pipeline ACK의 경로가 짧아지지만 node 장애 내성도 달라진다. Erasure coding HDFS라면 data/parity chunk 작성과 복구 비용이 replica pipeline과 같지 않다. 이 장의 세 DataNode 복제 trace를 모든 storage policy에 그대로 적용하지 않는다.
+
 ## 8. ACK, visibility, durability를 구분한다
 
 Hadoop OutputStream 문서는 `hflush()`와 `hsync()`의 의미를 분리한다. [OutputStream, Syncable and

@@ -93,6 +93,27 @@ NULL을 0으로 채운 뒤 평균을 구하면 `(20+22+0)/3=14`가 된다. 결�
 
 ## 5. 변환은 새 계산 표현을 만든다
 
+### Schema가 잘못되면 값이 사라지는 시점을 추적한다
+
+CSV 원문 세 값이 `"12"`, `"12.5"`, `"unknown"`이고 목표 컬럼이 정수라고 하자. 문자열 상태에서는 세 값이 모두 존재하지만 정수 cast를 거치면 정책에 따라 12, 오류 또는 NULL 같은 결과가 된다. 이후 `WHERE value IS NOT NULL`을 적용하면 변환 실패 행이 조용히 제외될 수 있다.
+
+| 단계 | 담당 | 행 수 예시 | 확인할 것 |
+| --- | --- | ---: | --- |
+| 파일 parsing | Data source | 3 | delimiter·quote·corrupt record 정책 |
+| 타입 cast | Spark expression | 3 또는 오류 | ANSI·try cast·timezone |
+| NULL filter | SQL/DataFrame filter | 1~3 | 실패를 결측으로 취급해도 되는가 |
+| aggregation | Executor tasks | 남은 행 수 기준 | 분모가 바뀌었는가 |
+
+`12`만 남아 평균 12가 나왔다면 계산 자체는 맞지만 데이터 품질 계약은 틀릴 수 있다. `12.5`를 버릴 것인지 반올림할 것인지, `unknown`을 별도 오류 테이블로 보낼 것인지 ingestion 경계에서 정한다.
+
+```text
+원문 3행 → parsing 3행 → integer 변환 성공 1행 → NULL 제외 1행 → AVG=12
+```
+
+이 흐름에서 평균만 검증하면 두 행 손실을 찾지 못한다. 입력 행 수, 변환 실패 수, NULL 수, 결과 분모를 함께 기록해야 한다.
+
+**반례.** Schema를 명시하면 모든 데이터 품질 문제가 해결되는 것은 아니다. 센서 온도 999가 정수 타입에는 맞아도 업무 범위에는 틀릴 수 있다. 타입 검증과 도메인 검증을 분리한다.
+
 DataFrame에 `select`, `filter`, `withColumn`, `groupBy` 등을 적용하면 새로운 DataFrame 표현을 만든다. 일반적으로 원본 파일의 바이트를 그 자리에서 변경하는 것이 아니다.
 
 ```mermaid

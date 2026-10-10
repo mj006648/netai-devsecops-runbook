@@ -34,6 +34,57 @@ sequenceDiagram
   R-->>K: 컨테이너 실행
 ```
 
+### 1.1 객체와 노드 상태를 누가 언제 바꾸는가
+
+생명주기를 이해하려면 “DRA가 처리한다” 대신 작성 주체를 붙여야 한다. Pod 하나가 템플릿 Claim으로 GPU 하나를 쓰는 교육용 시간표를 보자.
+
+| 시각 | 주체 | 읽는 것 | 쓰거나 바꾸는 것 | 아직 보장하지 않는 것 |
+|---|---|---|---|---|
+| t0 | Deployment/Pod controller | Pod template | Pod와 Pod용 ResourceClaim 생성 | 장치 선택 |
+| t1 | scheduler | Pod, Claim spec, DeviceClass, ResourceSlice | Claim allocation과 Pod node 결정 | 노드 준비 |
+| t2 | API server | scheduler의 갱신 요청 | allocation/reservation 상태 저장 | CDI 적용 |
+| t3 | 선택 노드 kubelet | bound Pod와 allocated Claim | node plugin에 Prepare 호출 | CUDA 계산 |
+| t4 | DRA node plugin | allocation의 장치 ID | 노드 준비 상태, CDI 장치 결과 | container 시작 |
+| t5 | container runtime | CRI 요청과 CDI spec | OCI device/mount/env 구성 후 container 생성 | 모델 정확도 |
+| t6 | kubelet | container 종료와 Claim 사용 관계 | Unprepare 호출 | Claim 객체 삭제 |
+| t7 | driver/controller | 소비자 없음, 해제 가능 상태 | 장치 재사용 가능 상태와 Claim 상태 정리 | 보안 삭제 정책 |
+
+이 흐름에는 API 객체 상태와 노드 로컬 상태가 함께 있다. API server가 저장한 `status.allocation`은 다른 컴포넌트가 읽을 durable record다. 반면 `/dev` 장치 접근, CDI spec, driver 내부 prepare record는 선택 노드에 존재할 수 있다. API 객체를 봤다고 노드 파일까지 존재한다고 추정하면 안 된다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Requested: Claim spec 생성
+    Requested --> Allocated: scheduler가 장치·노드 선택
+    Allocated --> Prepared: kubelet→node plugin 성공
+    Prepared --> Running: runtime이 CDI 적용
+    Running --> Stopping: Pod/container 종료
+    Stopping --> Allocated: Unprepare, 명시적 Claim 유지
+    Stopping --> Released: Unprepare, 소비자·소유 수명 종료
+    Released --> [*]
+```
+
+명시적 Claim이면 `Stopping → Allocated`처럼 장치 allocation을 객체에 남긴 채 새 소비자를 기다리는 설계가 가능할 수 있다. 템플릿에서 만들어져 Pod 수명에 묶인 Claim이면 owner 관계와 controller 정책에 따라 객체까지 정리되는 흐름이 자연스럽다. 정확한 deallocation 시점은 claim의 allocation mode와 현재 API 의미, driver 동작을 확인한다.
+
+실패가 생기면 마지막으로 완료한 전이를 찾는다.
+
+```text
+Claim status에 allocation 없음
+  → Requested 구간: class, slice, selector, Pod 배치 조건 조사
+
+allocation 있음, Pod가 ContainerCreating
+  → Allocated~Prepared 구간: kubelet과 node plugin Prepare 조사
+
+Prepare 성공 기록, runtime create 실패
+  → Prepared~Running 구간: CDI spec lookup과 OCI 적용 조사
+
+Pod 종료, 장치가 새 Claim에 잡히지 않음
+  → Stopping~Released 구간: reservedFor, Unprepare, driver 정리 조사
+```
+
+재시도에서는 같은 호출이 다시 올 수 있다는 점도 중요하다. Kubelet이나 controller는 장애 뒤 원하는 상태를 맞추기 위해 Prepare/Unprepare를 재시도할 수 있다. Node plugin은 “이미 같은 Claim과 장치를 준비했다”는 경우를 중복 mount나 중복 CDI entry로 폭발시키지 않도록 현재 상태와 요청 identity를 대조해야 한다. 운영자는 재시도 로그 여러 줄을 서로 다른 GPU 여러 개가 할당된 증거로 세지 않는다.
+
+반례로, allocation이 기록된 직후 node가 사라지면 scheduler의 선택 자체는 과거에 성공했어도 Prepare는 시작하지 못한다. 반대로 runtime이 container를 만들었다가 kubelet 응답 전에 재시작되면 실제 node 상태와 API 관찰 사이에 잠깐 차이가 날 수 있다. 조정 시스템에서는 한 순간의 단일 필드보다 시간순 event와 반복 후 수렴 여부가 더 강한 증거다.
+
 ## 2. 단계 0: 명시적 Claim 또는 템플릿
 
 Claim을 제공하는 방식은 두 가지로 이해하면 쉽다.

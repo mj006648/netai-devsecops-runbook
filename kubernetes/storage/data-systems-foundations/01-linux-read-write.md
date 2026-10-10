@@ -191,6 +191,66 @@ ed959c 3 3 3
 
 이 표는 순서를 이해하기 위한 모델이다. 실제 커널에서는 lock, readahead, writeback thread, 장치 queue, interrupt, CPU scheduling이 겹친다. 그래도 핵심은 변하지 않는다. **`write()` 반환은 dirty page 생성과 offset 갱신의 성공 근거일 수 있지만, 자동으로 물리 저장 완료를 뜻하지 않는다.**
 
+### 같은 8 KiB 쓰기를 두 줄의 시간표로 비교한다
+
+`offset=4096`에서 8 KiB를 buffered write하는 교육용 상황을 보자. 첫 4 KiB는 파일의 두 번째 page 범위, 다음 4 KiB는 세 번째 page 범위에 해당한다고 단순화한다.
+
+```mermaid
+sequenceDiagram
+    participant P as Process
+    participant C as Page cache
+    participant F as Filesystem
+    participant D as Device
+    P->>C: pwrite offset=4096, length=8192
+    C->>C: page 1·2 갱신, dirty 표시
+    C-->>P: 8192 반환
+    Note over P,C: 다른 process는 새 bytes를 볼 수 있음
+    P->>F: fsync(fd)
+    F->>D: dirty data + 필요한 metadata 제출
+    D-->>F: completion/flush 계약상 완료
+    F-->>P: fsync 성공
+```
+
+| 시간 | API 행 | 메모리·저장 행 |
+| --- | --- | --- |
+| T0 | `pwrite(fd, buf, 8192, 4096)` 진입 | page cache에 해당 page가 없으면 준비·읽기가 필요할 수 있음 |
+| T1 | syscall 진행 중 | offset 4096..12287에 새 byte를 복사하고 두 page를 dirty로 표시 |
+| T2 | `pwrite()`가 8192 반환 | 장치 queue에는 아직 요청이 없을 수도 있음 |
+| T3 | 다른 fd의 `pread()`가 새 내용 반환 가능 | page cache hit로 장치를 읽지 않을 수 있음 |
+| T4 | background writeback 시작 가능 | dirty page를 파일시스템 block I/O로 변환 |
+| T5 | `fsync(fd)` 호출 | 아직 남은 dirty data와 필요한 metadata를 모아 제출 |
+| T6 | `fsync()` 성공 반환 | 하위 stack의 flush/FUA 계약까지 완료됐다는 근거 |
+
+이 표에서 T3은 visibility이고 T6은 durability 계약의 완료다. T3을 봤다고 T6을 추론할 수 없다. 반대로 T4에서 장치에 data가 내려갔더라도 필요한 metadata와 ordering이 끝나지 않았다면 `fsync()`와 같은 완료를 주장할 수 없다.
+
+### Crash 시점 두 개가 만드는 다른 결과
+
+~~~text
+Crash A: T2 직후 전원 손실
+  실행 중에는 새 bytes가 보였어도,
+  재부팅 뒤 옛 내용·부분 상태·새 내용 중 무엇이 가능한지는
+  filesystem과 writeback 순서에 달려 있다.
+
+Crash B: T6 직후 전원 손실
+  filesystem·device·가상화 stack이 sync 계약을 지킨다는 조건에서
+  해당 파일 범위의 새 내용을 복구할 근거가 생긴다.
+~~~
+
+`fsync()`가 성공한 파일이 새로 만든 파일이라면 이름의 durability는 여전히 부모 directory와 관련될 수 있다. 내용 page와 directory entry는 다른 상태이기 때문이다.
+
+조건이 direct I/O라면 page cache의 dirty page 시간표가 그대로 적용되지 않는다. 하지만 direct write completion이 곧 power-loss durability라는 뜻도 아니다. `O_SYNC`, explicit sync, device cache 계약을 별도로 본다. 네트워크 파일시스템이면 local kernel에서의 `fsync()`가 remote server와 stable storage 중 어디까지 기다리는지는 해당 protocol과 mount의 계약을 확인해야 한다.
+
+### Offset이 겹치는 두 writer 반례
+
+P1과 P2가 서로 따로 `open()`한 fd로 같은 offset 4096에 각각 4 KiB를 쓰면 open file description의 offset 공유 여부는 문제를 해결하지 않는다. 두 요청의 **대상 byte 범위 자체가 겹친다**.
+
+~~~text
+P1: pwrite(fd1, "AAAA..." 4096 B, offset 4096)
+P2: pwrite(fd2, "BBBB..." 4096 B, offset 4096)
+~~~
+
+최종 범위가 전부 A 또는 전부 B인지, sector/page 일부가 섞일 수 있는지, reader가 중간 상태를 볼 수 있는지는 filesystem·API의 atomicity 범위에 달려 있다. `pwrite()`가 shared offset race를 피하게 해 주는 것은 맞지만, 여러 writer의 겹치는 byte range를 transaction으로 직렬화해 주는 API는 아니다. 업무 record 원자성이 필요하면 DB transaction, record framing과 lock, append log 같은 상위 규칙이 필요하다.
+
 ## 6. Page cache는 왜 생겼고 무엇을 숨기는가?
 
 저장장치는 CPU와 메모리보다 느리고, 장치가 좋아하는 I/O 크기는 프로그램이 호출하는 크기와 다를 수 있다. 매번 작은 `write()`를 장치에 즉시 보내면 syscall·할당·queue·장치 처리 비용이 커진다. 그래서 Linux는 일반 파일 I/O에서 page cache를 사용한다.

@@ -29,6 +29,34 @@ Executor 메모리를 늘려도 driver의 `collect` 문제가 그대로 남을 �
 
 ## 3. Heap·execution·storage·overhead
 
+### 같은 OOM처럼 보여도 고칠 위치가 다르다
+
+Executor container 한 개에 JVM heap 4 GiB와 네 개의 동시 task가 있다고 가정하자. 각 JVM task가 join 상태로 700 MiB를 요구하면 단순 합은 2.8 GiB다. 여기에 broadcast 500 MiB와 cache 900 MiB가 동시에 살아 있으면 4.2 GiB이므로 heap 압박이 생긴다. 이 경우 Python을 쓰지 않아도 executor JVM에서 spill이나 OOM이 날 수 있다.
+
+다른 작업에서 JVM task 상태가 각각 200 MiB여도 네 Python worker가 각각 600 MiB를 사용하면 Python 쪽 합만 2.4 GiB다. JVM heap 그래프가 여유 있어 보여도 container 총 한도를 넘거나 Python worker가 먼저 종료될 수 있다.
+
+| 관찰 시점 | 소유 프로세스 | 예시 증상 | 먼저 줄일 대상 |
+| --- | --- | --- | --- |
+| 결과 수집 | Driver JVM·client | `collect` 뒤 driver 종료 | 수집 행·결과 크기 |
+| JVM join·sort | Executor JVM | GC 증가, spill, heap OOM | 큰 task·skew·join 상태 |
+| Python UDF | Python worker | worker crash, container kill | batch·동시성·Python 객체 |
+| 전체 합 | Container/cgroup | heap OOM 로그 없이 exit | heap 밖 사용량과 limit |
+
+```mermaid
+flowchart TD
+    O["OOM 또는 executor lost"] --> L{"어느 프로세스 로그인가?"}
+    L -->|Driver| D["collect·계획·파일 목록 확인"]
+    L -->|Executor JVM| J["task 최대 크기·join·spill 확인"]
+    L -->|Python worker| P["UDF batch·Arrow·동시 worker 확인"]
+    L -->|Container kill| C["heap + Python + native + overhead 합 확인"]
+```
+
+메모리를 바꾸는 주체와 시점도 다르다. Driver는 계획과 작은 결과를 보유한다. Executor JVM은 task 시작 시 실행 상태를 만들고 완료 뒤 해제하거나 cache를 남긴다. Python worker는 JVM에서 batch를 전달받을 때 Python 객체나 Arrow buffer를 만든다. Cluster manager나 Kubernetes는 이 프로세스들의 합을 container 한도와 비교한다.
+
+**왜 executor heap 증설이 Python OOM을 악화시킬 수도 있는가.** Container limit을 그대로 둔 채 heap만 4 GiB에서 6 GiB로 올리면 heap 밖에 남는 여유가 줄어든다. Python worker의 사용량이 같아도 container kill 가능성이 커질 수 있다. 자원 설정은 heap 한 숫자가 아니라 배포 모드의 전체 계산식으로 맞춘다.
+
+**반례.** 모든 task가 같은 입력 크기인데 특정 host에서만 container kill이 반복되면 key skew만으로 설명되지 않는다. 같은 host의 다른 pod, 디스크, native library, node pressure도 확인해야 한다. Spark UI의 task 분포와 cluster-level 종료 이유를 함께 봐야 한다.
+
 **Heap**은 JVM이 객체를 관리하는 메모리 영역이다. Spark는 heap 안에서 실행용 메모리와 cache 등의 저장용 메모리를 관리한다. **Execution memory**는 정렬·집계·join 등, **storage memory**는 cache 같은 용도와 관련된다.
 
 Spark의 메모리 모델에서는 execution과 storage가 공유 영역을 사용하며 서로 영향을 줄 수 있다. `spark.memory.fraction` 같은 설정은 전체 heap에서 관리할 영역을 정한다. 초보 단계에서 이 값을 임의로 조정하기보다 task 크기·join·cache를 먼저 관찰한다.

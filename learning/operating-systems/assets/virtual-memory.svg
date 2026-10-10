@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="380" viewBox="0 0 960 380" role="img">
+  <title>가상 주소 변환</title><desc>VPN과 offset을 page table로 frame과 physical address에 연결</desc>
+  <defs><style>.b{fill:#eef7ff;stroke:#2e6092;stroke-width:2}.t{font:18px sans-serif}.a{stroke:#555;stroke-width:3;fill:none;marker-end:url(#m)}</style><marker id="m" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#555"/></marker></defs>
+  <rect class="b" x="40" y="80" width="260" height="90"/><text class="t" x="170" y="115" text-anchor="middle">VA 0x1234</text><text class="t" x="170" y="150" text-anchor="middle">VPN 0x12 | offset 0x34</text>
+  <rect class="b" x="370" y="60" width="220" height="130"/><text class="t" x="480" y="105" text-anchor="middle">TLB / page table</text><text class="t" x="480" y="145" text-anchor="middle">VPN 0x12 → frame 0x3A</text>
+  <rect class="b" x="660" y="80" width="260" height="90"/><text class="t" x="790" y="115" text-anchor="middle">PA 0x3A34</text><text class="t" x="790" y="150" text-anchor="middle">frame 0x3A | offset 0x34</text>
+  <path class="a" d="M300 125H365"/><path class="a" d="M590 125H655"/>
+  <text class="t" x="480" y="285" text-anchor="middle">TLB miss: 변환을 다시 찾음 · page fault: 현재 표로 접근을 완료할 수 없음</text>
+</svg>
