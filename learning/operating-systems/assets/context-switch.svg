@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">한 CPU 코어에서 일어나는 컨텍스트 스위치</title>
+  <desc id="desc">스레드 A의 프로그램 카운터, 스택 포인터와 일반 레지스터를 커널이 저장하고, 스레드 B의 상태를 복원해 실행한 뒤, 나중에 A를 복원하는 시간 흐름이다. 두 프로세스의 사용자 메모리는 전체 복사되지 않고 그대로 유지된다.</desc>
+  <defs>
+    <linearGradient id="header" x1="0" x2="1">
+      <stop offset="0" stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 30px sans-serif; fill: #ffffff; }
+      .subtitle { font: 500 17px sans-serif; fill: #dbeafe; }
+      .label { font: 700 18px sans-serif; fill: #0f172a; }
+      .body { font: 500 16px sans-serif; fill: #1e293b; }
+      .small { font: 500 14px sans-serif; fill: #334155; }
+      .mono { font: 600 15px monospace; fill: #0f172a; }
+      .time { font: 700 15px sans-serif; fill: #475569; }
+      .lane { stroke: #94a3b8; stroke-width: 2; }
+      .arrow { stroke: #334155; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="760" rx="20" fill="#f8fafc"/>
+  <rect x="0" y="0" width="1400" height="100" rx="20" fill="url(#header)"/>
+  <rect x="0" y="80" width="1400" height="20" fill="url(#header)"/>
+  <text x="48" y="45" class="title">컨텍스트 스위치: CPU 상태는 교체하고, 사용자 메모리는 통째로 복사하지 않는다</text>
+  <text x="48" y="76" class="subtitle">한 코어의 시간 흐름 · A 저장 → B 복원 → B 실행 → A 복원</text>
+
+  <text x="44" y="148" class="label">시간</text>
+  <line x1="128" y1="142" x2="1340" y2="142" class="arrow"/>
+  <text x="180" y="130" class="time">t0</text>
+  <text x="446" y="130" class="time">t1</text>
+  <text x="730" y="130" class="time">t2</text>
+  <text x="1024" y="130" class="time">t3</text>
+  <text x="1280" y="130" class="time">t4</text>
+
+  <text x="44" y="205" class="label">CPU 코어</text>
+  <line x1="128" y1="200" x2="1340" y2="200" class="lane"/>
+  <rect x="150" y="166" width="260" height="68" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="178" y="193" class="label">스레드 A 실행</text>
+  <text x="178" y="218" class="mono">PC=104  SP=7992  R1=8</text>
+
+  <rect x="420" y="166" width="276" height="68" rx="12" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="448" y="193" class="label">커널: A 저장</text>
+  <text x="448" y="218" class="small">A의 kernel stack / task 상태</text>
+
+  <rect x="706" y="166" width="278" height="68" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="734" y="193" class="label">커널: B 복원</text>
+  <text x="734" y="218" class="mono">PC=500  SP=12000  R1=31</text>
+
+  <rect x="994" y="166" width="270" height="68" rx="12" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+  <text x="1022" y="193" class="label">스레드 B 실행</text>
+  <text x="1022" y="218" class="mono">PC=504  R1=62</text>
+
+  <rect x="1274" y="166" width="82" height="68" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="1291" y="193" class="label">A</text>
+  <text x="1286" y="218" class="small">재개</text>
+
+  <path d="M410 200 L420 200" class="arrow"/>
+  <path d="M696 200 L706 200" class="arrow"/>
+  <path d="M984 200 L994 200" class="arrow"/>
+  <path d="M1264 200 L1274 200" class="arrow"/>
+
+  <rect x="42" y="274" width="638" height="205" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="70" y="310" class="label">커널이 task별로 보존하거나 선택하는 상태</text>
+  <circle cx="84" cy="346" r="6" fill="#2563eb"/>
+  <text x="104" y="352" class="body">PC: 다음에 재개할 명령어 위치</text>
+  <circle cx="84" cy="382" r="6" fill="#2563eb"/>
+  <text x="104" y="388" class="body">SP와 일반 레지스터: 호출 위치와 계산 중간값</text>
+  <circle cx="84" cy="418" r="6" fill="#2563eb"/>
+  <text x="104" y="424" class="body">kernel stack · trap frame · 스케줄링 상태</text>
+  <circle cx="84" cy="454" r="6" fill="#2563eb"/>
+  <text x="104" y="460" class="body">다른 프로세스라면 사용할 주소 공간도 선택</text>
+
+  <rect x="720" y="274" width="638" height="205" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="748" y="310" class="label">전환 때 통째로 복사하지 않는 것</text>
+  <circle cx="762" cy="346" r="6" fill="#16a34a"/>
+  <text x="782" y="352" class="body">A의 code · heap · user stack 페이지</text>
+  <circle cx="762" cy="382" r="6" fill="#16a34a"/>
+  <text x="782" y="388" class="body">B의 code · heap · user stack 페이지</text>
+  <circle cx="762" cy="418" r="6" fill="#16a34a"/>
+  <text x="782" y="424" class="body">열린 파일의 실제 내용과 저장장치 데이터</text>
+  <circle cx="762" cy="454" r="6" fill="#f59e0b"/>
+  <text x="782" y="460" class="body">cache/TLB는 전부 자동 삭제된다고 단정할 수 없음</text>
+
+  <rect x="42" y="520" width="1316" height="186" rx="16" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text x="70" y="558" class="label">같은 그림에서 구분해야 하는 네 사건</text>
+
+  <rect x="70" y="582" width="284" height="92" rx="12" fill="#ffffff" stroke="#60a5fa"/>
+  <text x="92" y="611" class="label">trap / syscall / interrupt</text>
+  <text x="92" y="639" class="small">커널 진입의 원인</text>
+  <text x="92" y="660" class="small">task가 그대로일 수도 있음</text>
+
+  <rect x="386" y="582" width="284" height="92" rx="12" fill="#ffffff" stroke="#60a5fa"/>
+  <text x="408" y="611" class="label">mode switch</text>
+  <text x="408" y="639" class="small">user ↔ kernel 권한 변경</text>
+  <text x="408" y="660" class="small">A가 계속 실행될 수 있음</text>
+
+  <rect x="702" y="582" width="284" height="92" rx="12" fill="#ffffff" stroke="#60a5fa"/>
+  <text x="724" y="611" class="label">context switch</text>
+  <text x="724" y="639" class="small">실행 task A → B 교체</text>
+  <text x="724" y="660" class="small">저장과 복원이 필요</text>
+
+  <rect x="1018" y="582" width="312" height="92" rx="12" fill="#ffffff" stroke="#60a5fa"/>
+  <text x="1040" y="611" class="label">migration</text>
+  <text x="1040" y="639" class="small">task가 다른 CPU에서 재개</text>
+  <text x="1040" y="660" class="small">cache · NUMA 비용이 더해질 수 있음</text>
+</svg>

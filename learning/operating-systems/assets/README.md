@@ -6,6 +6,7 @@
 | --- | --- |
 | [운영체제의 전체 지도](os-map.svg) | 프로그램과 CPU·메모리·파일을 연결하는 책임 |
 | [프로세스 상태](process-states.svg) | 실행 가능·실행·대기와 상태 전환 |
+| [컨텍스트 스위치](context-switch.svg) | A의 CPU 상태 저장, B 복원, 사용자 메모리 유지, A 재개 |
 | [CPU 스케줄링](scheduling.svg) | 여러 작업에 실행 시간을 나누는 정책 |
 | [가상메모리](virtual-memory.svg) | 가상 주소와 물리 frame의 변환 |
 | [동시성](concurrency.svg) | 공유 상태를 다루는 실행 순서와 동기화 |
