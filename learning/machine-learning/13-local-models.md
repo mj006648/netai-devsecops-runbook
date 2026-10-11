@@ -1,12 +1,59 @@
 # 13. 로컬 계산 모델
 
+![13. 로컬 계산 모델 도식](assets/learning-map.svg)
+
 [← 이전](12-ai-ran-and-operational-evaluation.md) · [목차](README.md) · [다음 →](14-experiments-and-research.md)
+## 코드 객체와 assert의 수명
+
+Python source의 숫자는 실행 전 파일에 있고, 실행하면 지역 변수로 memory에 생긴다. **Assert**는 조건이 거짓이면 즉시 실패시켜 예상 계산이 바뀐 것을 알리는 검사다. Assert 통과는 그 고정 입력의 산술을 증명할 뿐 실제 dataset, GPU, 일반화를 증명하지 않는다.
+
+선형회귀 모형에서 입력 x=2, target=5, weight=1, bias=0은 모두 scalar다. Forward prediction=2, error=-3, loss=4.5다. 편미분은 dL/dprediction=-3, dL/dweight=-6, dL/dbias=-3이다. learning rate 0.1이면 새 weight=1.6, bias=0.3, 새 prediction=3.5다. Assert는 이 중간값과 update를 각각 확인해야 어느 식이 깨졌는지 안다.
+
+분류 모형의 logit, sigmoid probability, threshold decision도 분리한다. Logit 0이면 probability 0.5다. Threshold 0.7이면 negative 결정이다. Probability assert와 class assert를 따로 두면 sigmoid 오류와 threshold 오류를 구분한다.
+
+Attention 모형은 Q,K,V 행렬 shape, score, softmax 행 합 1, output 가중합을 확인한다. 반올림 값에 정확한 equality를 쓰면 floating-point 때문에 실패할 수 있어 tolerance를 사용한다. Tolerance 1e-6은 오차 허용이지 계산을 대충 해도 된다는 뜻이 아니다.
+
+모형의 입력→중간→출력 표:
+
+|모형|입력|중간 상태|출력|경계|
+|---|---|---|---|---|
+|선형회귀|x,target,w,b,lr|prediction,error,loss,grad|새 w,b|한 표본 한 step|
+|분류|logit,label,threshold|sigmoid,loss|class|calibration 미검증|
+|attention|Q,K,V,mask|score,scale,softmax|weighted V|실제 Transformer 아님|
+
+### 추가 완전 풀이
+
+1. prediction 2,target5의 0.5MSE? **해설:** 0.5×9=4.5다.
+2. x=2,error=-3의 weight gradient? **해설:** -6이다.
+3. assert가 모두 통과하면 현장 성능도 맞나? **해설:** 아니다. 고정 산술만 검증한다.
+4. softmax 행 합 assert는 무엇을 잡나? **해설:** 축·mask·정규화 오류를 잡지만 의미 적합성은 못 잡는다.
 
 이 장은 표준 Python 계산 모델 세 개로 손계산을 다시 확인한다.
 
 고정 입력과 assert는 계산 결과의 퇴행을 잡는다.
 
 이 실행은 학습 성능, GPU 성능, 현장망 검증이 아니다.
+
+## 실제 세 Python 파일의 실행 순서
+
+`linear_regression_step.py`는 반복문 없는 한 번의 SGD 갱신이다. `x,target,weight,bias,learning_rate` 다섯 입력에서 prediction 2, error -3, loss 4.5, grad_weight -6, grad_bias -3을 만든다. Update 뒤 new_weight 1.6, new_bias 0.3, new_prediction 3.5, new_loss 1.125다. 마지막 assert는 새 손실이 4.5보다 작은지 확인한다. Learning rate를 1로 바꾸면 weight 7,bias3,prediction17,loss72가 되어 “gradient 방향이 맞아도 step이 너무 크면 실패”라는 반례가 된다.
+
+`softmax_attention_model.py`의 함수는 먼저 maximum을 구하고 모든 score에서 빼 overflow를 막는다. Query `[1,0]`과 두 key의 내적은 1과 0, scale sqrt(2)로 나눈 score는 약 0.707107과 0이다. Maximum을 빼면 `[0,-0.707107]`, 지수는 `[1,0.493069]`, 합 1.493069, weight는 약 `[0.669762,0.330238]`다. Value 가중합은 `[6.697615,6.604769]`다.
+
+`zip(query,key)`는 같은 위치 원소 쌍을 만들고 generator가 q*k를 합한다. Output 바깥 반복은 axis 0,1 두 성분을 만들고, 안쪽 반복은 key/value index 0,1을 합한다. Maximum 빼기를 없애고 `[1000,1000]`에 exp를 직접 적용하면 overflow할 수 있다. `sum(weights)=1`, 첫 weight가 큼, output 두 숫자와 큰 동일 score가 `[0.5,0.5]`임을 assert한다.
+
+`split_leakage_model.py`는 dictionary 세 후보를 순회한다. Validation error 최소는 medium 0.15이고 독립 test error는 0.19다. Test error를 선택에 사용하면 complex 0.14를 고른다. 이 0.14는 선택과 보고에 같은 test를 쓴 optimistic 값이다. `min(...,key=lambda...)`는 각 이름의 지정 metric을 비교한다.
+
+### 여덟 완전 풀이
+
+1. 선형회귀 새 loss는? **해설:** 새 예측3.5, error-1.5, `0.5×2.25=1.125`.
+2. grad_weight가 -6인 이유는? **해설:** error -3에 x2를 곱한다.
+3. lr=1의 반례는? **해설:** 새 loss72로 발산한다.
+4. attention 두 score는? **해설:** `[1/√2,0]≈[0.707107,0]`.
+5. 첫 softmax weight는? **해설:** `1/(1+exp(-0.707107))≈0.669762`.
+6. 첫 output 성분은? **해설:** `0.669762×10+0.330238×0=6.69762`.
+7. Validation 선택 후보는? **해설:** 0.15인 medium, test는0.19.
+8. Test 선택 0.14가 낙관적인 이유는? **해설:** 같은 test를 선택과 보고에 재사용해 독립성을 잃었다.
 
 ## 모델 1: 선형회귀 한 step을 코드와 같은 순서로 읽기
 
@@ -74,47 +121,6 @@ Test error만 보면 simple 0.22, medium 0.19, complex 0.14이므로 complex가 
 **문제 5.** 세 assert가 모두 통과하면 어떤 주장까지 가능한가?
 
 **해설.** 고정 입력에서 구현된 산술과 불변조건이 기대값과 맞는다고 말할 수 있다. 일반화, 성능, 현장 안전은 별도 실험 없이는 주장할 수 없다.
-
-## 이 장의 목표
-
-1. 처음 나오는 단어와 기호를 설명한다.
-2. 작은 입력의 모든 중간값을 계산한다.
-3. 계산 결과와 실제 system 주장을 구분한다.
-
-![13. 로컬 계산 모델 도식](assets/learning-map.svg)
-
-## 기본 단어와 기호
-
-**standard library**는 Python에 기본 포함된 library이다.
-
-**deterministic**는 같은 입력에서 같은 결과이다.
-
-**assert**는 조건이 틀리면 실행을 실패시키는 검사이다.
-
-**regression step**는 회귀 parameter 한 번 갱신이다.
-
-**stable softmax**는 최댓값을 빼 overflow를 줄인 softmax이다.
-
-**attention model**는 Q K V 가중합 계산이다.
-
-**split model**는 validation과 test 책임 모형이다.
-
-**expected output**는 고정 입력의 예상 결과이다.
-
-**tolerance**는 floating point 비교 허용 오차이다.
-
-**unit test**는 작은 동작을 자동 확인이다.
-
-**simulation**는 현상을 단순화한 모형이다.
-
-**empirical evidence**는 실제 관측으로 얻은 증거이다.
-
-## 왜 필요한가
-
-- 손계산과 code가 같아야 설명을 신뢰할 수 있다.
-- Assert는 조용히 틀린 숫자를 출력하는 것을 막는다.
-- Floating point는 정확한 십진 표현이 아닐 수 있어 tolerance를 쓴다.
-- 작은 모형을 실제 model benchmark로 확대하면 안 된다.
 
 ## 입력에서 결과까지
 
@@ -221,14 +227,6 @@ Tolerance가 필요한 이유는?
 - [선형회귀 한 step](examples/linear_regression_step.py)
 - [안정화 softmax와 attention](examples/softmax_attention_model.py)
 - [분할과 test 누수](examples/split_leakage_model.py)
-
-## 학습 체크리스트
-
-- 용어를 자신의 말로 설명할 수 있는가?
-- 중간 숫자를 계산할 수 있는가?
-- 누가 값을 바꾸는지 말할 수 있는가?
-- 반례와 실패 조건을 말할 수 있는가?
-- 독립 test와 운영 평가를 구분하는가?
 
 ## 공식 자료
 

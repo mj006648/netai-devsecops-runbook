@@ -1,12 +1,58 @@
 # 12. AI-RAN과 운영 평가
 
+![12. AI-RAN과 운영 평가 도식](assets/operational-evaluation.svg)
+
 [← 이전](11-training-systems-and-numerical-precision.md) · [목차](README.md) · [다음 →](13-local-models.md)
+## 먼저 실제 무선 객체를 정의한다
+
+**RAN(Radio Access Network, 무선 접속망)**은 사용자 장치와 통신 사업자 핵심망 사이의 무선 구간이다. **UE(User Equipment, 사용자 장치)**는 휴대전화·모뎀 같은 단말이고, **기지국(base station)**은 안테나와 무선 처리 장비로 UE의 송수신을 예약한다. **채널(channel)**은 전파가 안테나 사이를 지나며 감쇠·반사·간섭을 겪는 물리 경로다. **신호(signal)**는 정보를 실어 보낸 전압·전파의 시간 변화다.
+
+**SINR**은 Signal to Interference plus Noise Ratio, 즉 원하는 신호 전력과 간섭+잡음 전력의 비다. 원하는 신호 10 mW, 간섭 2 mW, 잡음 0.5 mW면 SINR은 10/2.5=4이고 dB로는 약 6.02 dB다. **CSI(Channel State Information)**는 송수신기가 추정한 채널 상태 숫자이며 측정 시각 이후 이동과 간섭 때문에 낡는다.
+
+**추론(inference)**은 학습된 모델 weight를 고정하고 새 입력에서 예측을 계산하는 실행이다. **추론 마감시간(deadline)**은 그 결과가 제어에 유효하려면 끝나야 하는 시각이다. 10 ms 제어 주기에서 측정 1.5 ms, feature 1 ms, queue 2 ms, 추론 3 ms, 안전검사 1 ms, 명령 전달 1 ms면 합 9.5 ms로 0.5 ms 여유다. Queue가 3 ms가 되면 10.5 ms로 마감 실패이며 accuracy가 높아도 그 action은 늦다.
+
+| 시각 | 주체 | 상태 |
+|---:|---|---|
+|0 ms|기지국|SINR·CSI 측정|
+|1.5 ms|feature pipeline|입력 tensor 생성|
+|2.5 ms|scheduler|GPU queue 진입|
+|4.5 ms|model|추론 시작|
+|7.5 ms|safety guard|출력 범위·변화율 검사|
+|8.5 ms|RAN controller|명령 전송|
+|9.5 ms|기지국|다음 주기 전 적용|
+
+**폐루프(closed loop)**는 측정→예측→안전검사→동작→새 측정이 반복되는 실제 객체 흐름이다. Model output은 권고값이며 정책·장비 한계·fallback을 통과해야 action이 된다. Timeout이면 이전 안전 설정을 유지하도록 설계할 수 있다.
+
+**Domain shift**는 학습 자료와 현장 입력 분포가 달라지는 현상이다. 한 도시·주파수·UE 속도에서 학습한 model이 다른 도시에서 실패할 수 있다. **Negative transfer**는 다른 domain의 학습이 새 domain 성능을 오히려 악화시키는 현상이다. Pretraining model보다 현장 baseline이 낫다면 전이는 성공이 아니다.
+
+논문 simulation은 채널 model과 traffic 가정 안에서 인과를 통제하기 좋지만 hardware queue, clock, 장애를 완전히 재현하지 않는다. Lab emulation은 실제 software stack 일부를 검증하고, field measurement는 현장 효과를 보지만 외부 변수가 많다. 세 근거를 같은 것으로 합치지 않는다.
+
+### 추가 완전 풀이
+
+1. 10 ms 주기에 단계 합이 11 ms면? **해설:** 1 ms deadline miss다. 예측 정확도와 별도로 실패다.
+2. 신호 8, 간섭 1, 잡음 1 mW의 SINR은? **해설:** 8/(1+1)=4, 약 6.02 dB다.
+3. Simulation 20% 개선이 현장 보장인가? **해설:** 아니다. 채널·traffic·hardware 조건을 현장으로 검증해야 한다.
+4. 새 cell에서 baseline보다 낮아지면? **해설:** domain shift와 negative transfer를 조사하고 fallback한다.
 
 AI-RAN 평가는 offline model metric과 현장 network 효과를 구분한다.
 
 Data 시간 누수, inference 지연, 전력, QoS, 비교 기준을 함께 기록한다.
 
 예측이 좋아도 안전하지 않은 action이면 운영 성공이 아니다.
+
+## 10 ms 제어 주기의 실패를 끝까지 추적한다
+
+UE가 이동하며 실제 SINR이 8 dB에서 2 dB로 떨어졌다고 하자. t=0에 기지국이 이전 8 dB CSI를 읽고, t=1 ms에 feature를 만들고, t=3 ms에 accelerator queue에 들어간다. 정상이라면 t=6 ms 추론, t=7 ms 안전 검사, t=8 ms 명령 전송, t=9 ms 적용이다.
+
+Queue가 5 ms 밀리면 추론 완료가 t=9, 안전 검사 t=10, 전송 t=11, 적용 t=12가 된다. 명령 내용이 8 dB 관측에 맞아도 실제 채널은 이미 2 dB이고 다음 주기까지 2 ms 늦었다. Controller는 늦은 action을 적용하지 않고 timestamp와 deadline을 검사해 fallback을 유지해야 한다.
+
+환경 변화 반례도 있다. Training은 보행 UE 3 km/h, 현장은 차량 100 km/h라 CSI가 더 빨리 낡는다. Offline test를 같은 보행 분포로 나누면 높은 정확도가 유지되지만 현장에서는 prediction horizon 전에 채널이 변한다. 속도·주파수·기지국·계절을 domain 축으로 기록하고 새 domain holdout을 둔다.
+
+학습 누출은 미래 CSI나 action 결과가 현재 feature에 들어갈 때 생긴다. t+10 ms ACK를 t 시점 예측 feature로 사용하면 offline metric은 좋아져도 실시간에는 값이 존재하지 않는다. Feature마다 생성 시각과 이용 가능 시각을 표로 남긴다.
+
+Negative transfer는 다른 cell pretraining이 target cell보다 나쁜 초기값을 만드는 과정이다. Source-only, target-from-scratch, fine-tuning 세 기준을 같은 target test에서 비교한다. Fine-tuning이 scratch보다 나쁘면 source 규모가 크다는 이유로 성공이라 부르지 않는다.
+
+Simulation에서는 channel model, UE 속도, traffic arrival을 통제한다. 현장 측정에서는 실제 scheduler·queue·RF 간섭이 포함되지만 반복 통제가 어렵다. 논문 표에는 simulation인지 testbed인지 field인지, hardware와 deadline 정의를 함께 쓴다.
 
 ## Offline quality에서 무선 동작까지 이어지는 경계
 
@@ -82,47 +128,6 @@ SIL(Software-in-the-Loop)은 실제 무선 장비 대신 소프트웨어 환경�
 **문제 5.** Shadow mode에서 QoS가 유지되면 action도 안전하다고 할 수 있는가?
 
 **해설.** Shadow mode는 action을 적용하지 않았으므로 action의 인과 효과를 측정하지 않았다. 제한된 canary와 즉시 fallback으로 다음 증거를 수집해야 한다.
-
-## 이 장의 목표
-
-1. 처음 나오는 단어와 기호를 설명한다.
-2. 작은 입력의 모든 중간값을 계산한다.
-3. 계산 결과와 실제 system 주장을 구분한다.
-
-![12. AI-RAN과 운영 평가 도식](assets/operational-evaluation.svg)
-
-## 기본 단어와 기호
-
-**AI-for-RAN**는 AI로 RAN 성능·운영을 개선이다.
-
-**KPI**는 핵심 성능 지표이다.
-
-**QoS**는 지연·손실·처리량 같은 서비스 품질이다.
-
-**latency**는 입력부터 결과까지 걸린 시간이다.
-
-**tail latency**는 p95·p99 같은 느린 구간이다.
-
-**power**는 단위 시간 energy 사용률이다.
-
-**energy**는 일을 수행하는 데 쓴 총 에너지이다.
-
-**baseline cell**는 기존 정책을 유지한 비교 cell이다.
-
-**time leakage**는 미래 정보가 과거 예측에 들어감이다.
-
-**drift**는 운영 data 관계 변화이다.
-
-**fallback**는 AI 실패 때 돌아갈 안전 동작이다.
-
-**canary**는 일부 대상에 먼저 배포하는 방법이다.
-
-## 왜 필요한가
-
-- 같은 cell의 인접 시간 window는 독립 sample이 아닐 수 있다.
-- Model inference 2 ms라도 data age 200 ms면 빠른 제어에 늦다.
-- Power가 낮아도 QoS가 악화되면 성공이 아니다.
-- AI action이 KPI를 바꾸므로 feedback data에 정책 효과가 섞인다.
 
 ## 입력에서 결과까지
 
@@ -222,14 +227,6 @@ Throughput +8%, p99 latency +40%면 성공인가?
 Fallback이 필요한 이유는?
 
 **해설:** Drift, timeout, out-of-range 입력에서 안전한 기존 동작으로 복귀하기 위해서다.
-
-## 학습 체크리스트
-
-- 용어를 자신의 말로 설명할 수 있는가?
-- 중간 숫자를 계산할 수 있는가?
-- 누가 값을 바꾸는지 말할 수 있는가?
-- 반례와 실패 조건을 말할 수 있는가?
-- 독립 test와 운영 평가를 구분하는가?
 
 ## 공식 자료
 

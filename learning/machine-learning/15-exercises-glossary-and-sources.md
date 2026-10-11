@@ -1,8 +1,39 @@
 # 15. 종합 문제·용어사전·공식 자료
 
 [← 이전](14-experiments-and-research.md) · [목차](README.md)
+## 용어를 하나의 작동 경로로 연결한다
+
+표본의 특징 vector가 model에 들어가 weight matrix와 곱해 logit을 만든다. Activation과 여러 layer를 거친 예측은 label과 loss로 비교된다. Autograd가 chain rule로 parameter gradient를 만들고 optimizer가 learning rate만큼 update한다. Batch를 모두 사용한 구간이 epoch다.
+
+Classification에서는 sigmoid 또는 softmax가 logit을 확률 모양으로 바꾸고 threshold가 결정을 만든다. Confusion matrix의 TP,FP,FN,TN에서 precision과 recall을 계산한다. Training set은 parameter, validation은 hyperparameter와 threshold, test는 고정된 선택의 최종 평가에 쓴다.
+
+Sequence에서는 token ID가 embedding vector가 되고 position을 더한다. QK 내적을 scale하고 mask 뒤 softmax해 V를 합친다. Autoregressive decode는 요청별 KV cache를 유지한다. Training system은 dtype, loss scale, microbatch accumulation, all-reduce와 optimizer state를 관리한다.
+
+AI-RAN에서는 UE 측정 SINR·CSI가 feature가 되고 model inference가 deadline 안에 끝나야 한다. Safety guard와 fallback 뒤 action이 기지국에 적용된다. Offline metric은 이 closed loop 전체 성공과 같지 않다.
+
+## 추가 종합 완전 풀이 13–15
+
+13. Token 세 개 attention score 한 행이 [0,ln2,ln3]이면 확률은? **해설:** 지수 [1,2,3], 합6이므로 [1/6,2/6,3/6]이다.
+14. Microbatch gradient 2,4,8을 평균하면? **해설:** 14/3≈4.667이며 합14를 그대로 쓰면 update scale이 세 배다.
+15. 10 ms RAN loop에서 측정2,feature1,queue3,inference3,safety2 ms면? **해설:** 합11 ms로 1 ms deadline miss다. 정확도가 좋아도 운영 실패다.
 
 이 장은 앞의 계산을 다시 풀고 용어를 한곳에서 찾게 한다.
+
+## 자료에서 운영까지 끊기지 않는 기작
+
+원시 자료의 행 하나는 특징과 정답을 가진 표본이다. 여러 표본을 행렬 X로 묶고 매개변수 벡터 w와 곱하면 예측 `ŷ=Xw+b`가 된다. 정답 y와 비교한 loss는 틀린 정도를 숫자 하나로 만든다.
+
+미분은 매개변수를 조금 바꿀 때 loss가 변하는 비율이고, 기울기는 모든 매개변수 편미분의 묶음이다. 연쇄법칙은 `parameter→중간값→loss` 경로의 국소 변화율을 곱한다. Optimizer는 `w←w-ηgradient`로 실제 값을 갱신한다. Batch 전체를 한 번 사용하면 epoch 하나다.
+
+학습 집합은 매개변수를, 검증 집합은 learning rate·threshold 같은 선택을, 시험 집합은 고정된 선택의 최종 성능을 평가한다. 이 경계를 섞으면 새 자료 일반화를 과장한다.
+
+분류에서는 logit을 sigmoid나 softmax로 확률 모양으로 만들고 threshold로 action을 정한다. Attention에서는 token embedding이 Q/K/V가 되고 QK 내적, scaling, mask, softmax, V 가중합을 거친다. 운영에서는 dtype·batch·queue·deadline이 수학적 결과가 제시간에 도착하는지를 결정한다.
+
+## 문제를 풀 때 조건 변화까지 확인하는 법
+
+각 문제는 숫자 답 뒤에 가정을 붙인다. 행렬 곱은 shape가 맞아야 하고, gradient step은 learning rate가 바뀌면 결과가 바뀐다. Precision은 class prevalence와 threshold에 따라 달라진다. Attention mask를 softmax 뒤 적용하면 합이 1이 아닐 수 있다. RAN loop는 정확도가 좋아도 deadline을 넘으면 실패다.
+
+예를 들어 문제의 learning rate 0.1을 1.0으로 바꾸면 같은 gradient도 열 배 update가 되어 loss가 증가할 수 있다. Batch gradient를 합으로 쓸지 평균으로 쓸지에 따라 effective learning rate가 달라진다. Test를 한 번 더 보고 model을 바꾸면 그 순간 test는 validation이 된다.
 
 ## 열두 문제를 하나의 학습 흐름으로 연결하기
 

@@ -432,25 +432,42 @@ KV cache는 요청별로 생기는 추론 중간 상태다.
 “Disaggregated prefill은 throughput을 무조건 올린다”는 공식 문서 설명과 맞지 않는다.
 주요 목적은 prefill/decode 자원 조정과 tail ITL 제어다.
 
-## 14. 해설 문제
+## 14. 문제와 완전 해설
 
-문제 1. L=24, KV heads=8, head_dim=128, context=2048, dtype=2bytes일 때 dense full KV cache는?
+### 문제 1. 요청 하나의 KV payload
 
-해설: `24 × 2048 × 8 × 128 × 2 × 2 = 201,326,592 bytes = 192 MiB`다.
+Layer 24, KV head 8, head dimension 128, context 2048, 값 하나 2바이트인 dense full KV cache는 얼마인가?
 
-문제 2. 동시 요청 80개가 각각 512MiB KV cache를 쓴다면 KV cache 총량은?
+**해설.** `24×2048×8×128×2(K,V)×2 bytes=201,326,592 bytes`다. MiB로는 `201,326,592÷1,048,576=192 MiB`다. 이는 요청 하나의 논리 payload다. Block 마지막 빈칸, table, allocator 예약분과 graph buffer는 포함하지 않는다.
 
-해설: `512MiB × 80 = 40,960MiB = 40GiB`다.
+### 문제 2. 동시 요청과 수명
 
-문제 3. `eval()`로 모델을 평가 중인데 KV cache가 계속 커지는 현상은 autograd 때문인가?
+각 요청의 KV payload가 512 MiB이고 동시 요청 80개가 모두 최대 문맥을 채웠다면 합은 얼마인가? 요청 20개가 끝나면 즉시 얼마가 줄어드는가?
 
-해설: 보통 아니다.
-KV cache는 autoregressive 추론을 빠르게 하기 위한 요청별 상태다.
-Autograd graph와 목적이 다르며, `no_grad()`를 써도 generation 중 KV cache는 필요할 수 있다.
+**해설.** 전체 payload는 `512×80=40,960 MiB=40 GiB`다. 공유 prefix가 없고 종료한 요청의 GPU 작업도 완료되어 block을 반환할 수 있다면 20개분 10 GiB가 논리적으로 사라진다. 진행 중 kernel이나 prefix 참조가 남으면 즉시 재사용할 수 없고 allocator reserved 표시는 그대로일 수 있다.
 
-문제 4. Prefix cache를 켜면 같은 문서 기반 질문의 모든 답변이 항상 같아지는가?
+### 문제 3. token별 증가량
 
-해설: 아니다.
-공통 prefix의 KV 계산을 재사용하는 것이며, suffix, sampling 설정, random seed, adapter, policy가 다르면 이후 생성은 달라질 수 있다.
+Layer 32, KV head 8, head dimension 128, FP16이면 새 token 하나가 추가하는 K/V payload는 얼마인가? 100 token 생성은 얼마인가?
+
+**해설.** `32×8×128×2×2=131,072 bytes=128 KiB/token`이다. 100 token은 `12,800 KiB=12.5 MiB`다. 요청별 실제 allocation은 block 단위 올림 때문에 계단처럼 늘 수 있다.
+
+### 문제 4. Paged block의 빈칸
+
+Block 하나가 16 token을 담고 sequence 길이가 33이면 block 수와 빈 slot은?
+
+**해설.** `ceil(33/16)=3 blocks`를 할당해 48 slot을 확보한다. 현재 사용은 33이므로 마지막까지 합쳐 빈 slot은 15개다. Block을 작게 하면 이 내부 낭비는 줄 수 있지만 block table과 관리 연산은 늘 수 있다.
+
+### 문제 5. prefix cache와 출력
+
+같은 2,000-token 문서를 prefix cache에서 재사용하면 두 요청의 완성 답변도 반드시 같은가?
+
+**해설.** 아니다. Cache는 공통 prefix의 K/V 중간 상태와 prefill 계산을 재사용한다. 뒤의 질문 token, sampling 온도와 seed, adapter, 모델 revision이 다르면 생성 결과가 달라진다. Tenant 권한과 tokenizer까지 cache key에 반영해야 다른 사용자의 상태를 잘못 공유하지 않는다.
+
+### 문제 6. prefill 분리의 비용
+
+Prefill GPU가 요청 하나의 512 MiB KV를 만들고 decode GPU로 20 GB/s의 유효 전송률로 보낸다고 단순 가정한다. 순수 payload 전송 하한은 얼마이며 이것으로 전체 지연을 확정할 수 있는가?
+
+**해설.** 512 MiB는 `536,870,912 bytes`이고 20 GB/s를 `20,000,000,000 bytes/s`로 두면 약 `0.0268 s=26.8 ms`다. 연결 설정, block metadata, 직렬화, 경쟁, 동기화와 decode queue 대기는 빠져 있다. 또한 GB와 GiB 대역폭 정의에 따라 수치가 달라진다. Disaggregation이 tail latency를 줄이는지는 prefill 격리 이득과 이 전송 비용을 함께 측정해야 한다.
 
 [용어 사전](12-glossary.md) · [로컬 실습](11-local-labs-and-research.md) · [다음 장](07-serving-scheduling-and-slo.md)

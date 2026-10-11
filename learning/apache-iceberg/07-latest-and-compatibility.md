@@ -19,7 +19,7 @@ v4는 active development, code foundation, metadata read, data read, write, form
 
 [← 이 책 목차](README.md)
 
-작성·문헌 확인일: **2026-10-08**
+작성·문헌 확인일: **2026-10-11**
 
 이 장에서 말하는 “최신”은 위 날짜에 공식 Apache Iceberg 사이트에서 확인한 상태다. 현재 Apache Iceberg 최신 release는 **1.12.0**이며 [release 목록](https://iceberg.apache.org/releases/)에는 2026-09-29 release로 기록되어 있다. 공식 [1.12.0 발표 글](https://iceberg.apache.org/blog/apache-iceberg-1.12.0-release/)은 2026-10-05 게시되었다. Release 날짜와 발표 글 날짜가 다른 것은 모순이 아니다.
 
@@ -56,7 +56,7 @@ flowchart TD
 
 `pip`, Maven, container image에서 Iceberg 1.12.0을 쓴다고 기존 v1 table metadata가 자동으로 v3로 변하지 않는다. 반대로 table property를 v3로 올렸다고 모든 job이 새 DV와 type을 이해하는 것도 아니다.
 
-## 2. 2026-10-08 기준 포맷 상태
+## 2. 2026-10-11 기준 포맷 상태
 
 [format versioning spec](https://iceberg.apache.org/spec/#format-versioning)은 format의 상태를 구분한다. 이 날짜 기준으로 v1, v2, v3은 complete이며 community에서 adopted된 포맷이다. v4는 active development 상태이고 formally adopted되지 않았다.
 
@@ -308,7 +308,7 @@ Iceberg library 1.12.0을 배포하면 기존 v1 table이 자동으로 v3가 되
 
 ### 문제 2
 
-2026-10-08 기준 v4는 어떤 상태인가?
+2026-10-11 기준 v4는 어떤 상태인가?
 
 <details>
 <summary>해설</summary>

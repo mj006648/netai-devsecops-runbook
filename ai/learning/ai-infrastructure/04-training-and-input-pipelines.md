@@ -399,27 +399,42 @@ print(round(token_weighted, 3))
 “LoRA/QLoRA는 항상 full fine-tuning의 하위 호환”도 틀렸다.
 목표 품질, domain shift, adapter 위치, quantization 오차에 따라 달라진다.
 
-## 12. 해설 문제
+## 12. 문제와 완전 해설
 
-문제 1. microbatch size 2, accumulation 16, world size 8이면 sample 기준 effective batch는 얼마인가?
+### 문제 1. sample 기준 effective batch
 
-해설: `2 × 16 × 8 = 256 samples`다.
-다만 각 sample의 token 길이가 다르면 token 기준 effective batch는 step마다 달라질 수 있다.
+Microbatch size 2, gradient accumulation 16회, data-parallel world size 8이면 optimizer step 하나의 sample 기준 effective batch는 얼마인가?
 
-문제 2. microbatch A는 50토큰 loss 합 100, B는 150토큰 loss 합 180이다. token 평균 loss는?
+**해설.** 각 process는 `2×16=32 samples`를 처리하고 서로 다른 입력을 받는 process가 8개이므로 `32×8=256 samples`다. 이 식은 data parallel process만 곱한다. Tensor parallel rank는 같은 sample의 모델 계산을 나누므로 별도 sample을 추가하지 않는다. 길이가 다른 문장에서는 target token 수가 step마다 달라질 수 있으므로 token 기준 batch도 기록한다.
 
-해설: `(100 + 180) / (50 + 150) = 280 / 200 = 1.4`다.
-microbatch 평균을 다시 평균하면 `(2.0 + 1.2) / 2 = 1.6`이므로 의미가 다르다.
+### 문제 2. microbatch 평균과 token 평균
 
-문제 3. validation에서 `model.eval()`만 호출하고 `no_grad()`를 빼면 어떤 일이 생길 수 있는가?
+Microbatch A는 50 token에서 loss 합 100, B는 150 token에서 loss 합 180이다. 올바른 token 평균과 두 microbatch 평균의 단순 평균을 비교하라.
 
-해설: Dropout 같은 module behavior는 평가 모드가 되지만 autograd graph와 중간 buffer가 만들어질 수 있다.
-불필요한 메모리와 시간이 든다.
+**해설.** 전체 token 평균은 `(100+180)/(50+150)=280/200=1.4`다. A의 평균은 2.0, B는 1.2이고 이 둘을 똑같은 비중으로 평균하면 1.6이다. 두 방식은 “각 token이 같은 무게”와 “각 microbatch가 같은 무게”라는 서로 다른 목적 함수를 만든다. 분산 rank마다 유효 token 수가 다를 때는 loss 합과 token 수를 함께 모아야 한다.
 
-문제 4. QLoRA로 학습하면 base model의 모든 실행 메모리가 4bit로만 계산되는가?
+### 문제 3. 입력 queue가 비는 시간표
 
-해설: 아니다.
-Quantized weight 저장, adapter, activation, optimizer state, dequantization, kernel의 compute dtype은 서로 다를 수 있다.
-실제 메모리는 구현과 설정을 확인해야 한다.
+GPU가 microbatch 하나를 40 ms에 처리한다. CPU worker들은 평균 30 ms마다 하나를 만들지만 5번째마다 120 ms가 걸린다. queue에 처음 두 개가 있다면 GPU가 항상 바쁜가?
+
+**해설.** 평균만 보면 CPU가 더 빠르지만 긴 120 ms 구간에서 backlog 두 개를 GPU가 80 ms 동안 소비한다. 그 뒤 새 batch까지 40 ms가 남아 queue가 비고 GPU가 기다릴 수 있다. 평균 생산률뿐 아니라 service time 분포와 queue depth가 필요하다. queue 대기, worker별 decode 시간, H2D와 kernel timeline을 함께 측정한다.
+
+### 문제 4. `eval()`과 gradient 기록
+
+Validation에서 `model.eval()`만 호출하고 gradient 기록을 끄지 않았다. dropout은 어떻게 되고 메모리는 어떻게 될 수 있는가?
+
+**해설.** `eval()`은 module의 training flag를 바꿔 dropout을 비활성화하고 batch normalization 같은 module의 평가 동작을 선택한다. 그러나 자동미분 기록 자체를 끄지 않으므로 연산 graph와 backward용 중간값이 만들어질 수 있다. validation에 gradient가 필요 없다면 별도의 no-grad 또는 inference 모드 계약을 사용한다. 두 스위치는 담당 주체와 효과가 다르다.
+
+### 문제 5. accumulation 중 갱신 시점
+
+두 microbatch의 gradient가 각각 3과 5이고 합을 2로 나눈 평균 gradient를 사용한다. 학습률 0.1, 초기 파라미터 10이면 optimizer step 뒤 값은 얼마인가? 첫 microbatch 뒤 파라미터가 바뀌는가?
+
+**해설.** 누적 합은 8, 평균은 4다. 단순 SGD 갱신은 `10-0.1×4=9.6`이다. accumulation 계약에서는 첫 microbatch backward 뒤 gradient buffer만 바뀌고 파라미터는 아직 10이다. 두 번째 backward와 필요한 분산 동기화가 끝난 뒤 optimizer가 한 번 갱신한다. 매 microbatch마다 갱신하면 다른 알고리즘이다.
+
+### 문제 6. QLoRA 메모리 경계
+
+QLoRA를 쓰면 base model의 모든 값과 계산이 4-bit가 되는가? 메모리 표에 무엇을 따로 적어야 하는가?
+
+**해설.** 아니다. base weight의 양자화 저장 형식, scale과 metadata, 계산 전에 풀어 쓰는 dtype, activation, LoRA adapter, adapter gradient, optimizer state가 서로 다를 수 있다. 표에는 각 객체의 dtype, 전체 원소 수, 장치별 shard 여부, 생성 시점과 수명을 따로 적는다. 지원 kernel이 없는 연산은 더 높은 dtype으로 변환될 수 있으므로 실제 peak와 처리량을 같은 하드웨어에서 확인한다.
 
 [용어 사전](12-glossary.md) · [로컬 실습](11-local-labs-and-research.md) · [다음 장](05-distributed-training-and-collectives.md)

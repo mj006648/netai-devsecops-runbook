@@ -138,6 +138,83 @@ admission은 job을 시작해도 되는지 quota 기준으로 결정하는 단�
 누가 GPU topology를 알고 있는가.
 누가 실패한 rank를 재시작하는가.
 
+## Quota, queue, gang이 배치 전에 만드는 상태
+
+**Quota(할당 한도)**는 사용자·팀·queue가 일정 기간 또는 동시에 사용할 수 있는 자원 상한이다. GPU가 물리적으로 비어 있어도 팀의 quota가 모두 사용 중이면 새 job은 입장하지 못한다. Quota 객체는 Kubernetes의 ResourceQuota나 Kueue ClusterQueue, Slurm account 정책처럼 control plane 저장소에 있고 관리자가 정책으로 갱신한다. Job보다 오래 살며 여러 job 사이 공정성과 비용 경계를 만든다.
+
+**Gang scheduling(묶음 스케줄링)**은 분산 job에 필요한 task를 일부만 시작하지 않고 함께 실행할 수 있을 때 입장시키는 정책이다. 8-rank job에 GPU 8개가 필요한데 4개만 먼저 시작하면 rank 0..3은 나머지 rank와 rendezvous·collective를 기다리며 GPU를 점유할 수 있다. Gang admission은 “8개 모두를 배치할 수 있는가”를 먼저 확인해 이 교착 같은 낭비를 줄인다.
+
+다음 상태를 보자.
+
+```text
+team-A quota: GPU 8개
+이미 실행 중: job-X가 GPU 6개 사용
+새 job-Y: worker 4개, worker당 GPU 1개, 모두 함께 시작 필요
+cluster free: 서로 다른 node에 GPU 10개
+```
+
+Cluster 전체에는 10개가 비어 있지만 team-A의 남은 quota는 2개라 job-Y는 admission을 통과하지 못한다. Worker 2개만 먼저 띄우지 않고 queue에 둔다. Job-X가 끝나 6개가 반환되면 team-A 사용량이 0이 되고 Y의 4개를 함께 예약한 뒤 Pod를 만든다. “Pending인데 GPU 10개가 보인다”는 관찰만으로 scheduler 고장이라고 결론 내리면 안 된다.
+
+## Fragmentation: 총 GPU 수와 가능한 묶음은 다르다
+
+**자원 단편화(fragmentation)**는 빈 자원의 총합은 충분하지만 한 job이 요구하는 모양으로 모여 있지 않은 상태다. 메모리 단편화와 비슷한 단어지만 여기서는 node·GPU topology의 빈칸을 말한다.
+
+| Node | GPU 총수 | 사용 중 | 빈 GPU | 빠른 4-GPU island |
+|---|---:|---:|---:|---|
+| A | 8 | 6 | 2 | 없음 |
+| B | 8 | 5 | 3 | 없음 |
+| C | 8 | 7 | 1 | 없음 |
+
+빈 GPU는 총 6개지만 “한 node의 같은 NVLink island에서 4개”를 요구하는 job은 배치할 수 없다. 제약을 풀어 node 두 대에 2+2로 놓으면 실행은 가능할 수 있으나 node 간 통신 때문에 step 시간이 늘어난다. 스케줄러가 기존 작은 job을 임의 이동시키지 못하면 기다리거나, checkpoint 후 재배치하거나, topology 조건을 완화하는 선택이 필요하다.
+
+Bin packing은 빈칸을 줄이려 job을 조밀하게 모으고, spread는 장애와 간섭을 줄이려 흩는다. 어느 쪽도 항상 옳지 않다. 분산 훈련은 통신 locality를 위해 모으고, 동일 서비스 replica는 장애 도메인을 나누기 위해 흩을 수 있다.
+
+## NUMA와 링크를 포함한 실제 배치 결정
+
+**NUMA node**는 CPU core와 가까운 memory·I/O 장치의 묶음이다. GPU process가 NUMA 0에 가까운 GPU를 쓰는데 dataloader thread와 pinned buffer가 NUMA 1에 놓이면 CPU memory에서 GPU로 가는 경로가 socket 사이 link를 건널 수 있다. 운영체제와 런타임이 placement를 관리하지만 application의 CPU affinity와 memory allocation 시점도 결과에 영향을 준다.
+
+두 socket 서버를 단순화하자.
+
+```text
+NUMA 0: CPU0, RAM0, GPU0-3, NIC0
+NUMA 1: CPU1, RAM1, GPU4-7, NIC1
+GPU0-3와 GPU4-7 사이는 더 느린 경로
+```
+
+4-rank single-node job은 GPU0-3, CPU worker는 NUMA0, node 밖 통신은 NIC0으로 맞추는 후보가 있다. 8-rank job은 두 NUMA 영역을 모두 쓰므로 rank 0-3과 4-7을 각각 가까운 CPU·NIC에 묶고, node 밖 collective가 어떤 NIC를 쓰는지 확인한다. 단순히 `CUDA_VISIBLE_DEVICES=0,4,1,5`처럼 섞으면 local rank 이웃이 물리적으로 멀 수 있다.
+
+**Link(링크)**는 데이터를 옮기는 실제 연결이다. NVLink, PCIe, socket interconnect, Ethernet·InfiniBand가 있으며 대역폭과 지연이 다르다. NCCL은 topology를 보고 경로와 collective 알고리즘을 선택할 수 있지만, container에 노출된 topology 정보와 driver·network plugin 지원이 맞아야 한다. Scheduler가 GPU 개수만 보고 고른 node가 통신에는 나쁜 모양일 수 있다.
+
+## Sharing의 자원 계약을 분리한다
+
+Whole GPU, MIG, MPS, time-slicing은 “한 장을 나눈다”는 문장 아래 같은 것으로 묶으면 안 된다.
+
+| 방식 | 스케줄러가 보는 단위 | 메모리·계산 격리 | 수명과 관리자 |
+|---|---|---|---|
+| Whole GPU | GPU 장치 하나 | 한 workload가 전용 사용 | Pod/job allocation 동안 device manager가 연결 |
+| MIG | 지원 GPU의 profile 인스턴스 | 하드웨어 분할 범위의 격리 | 관리자가 profile 구성, scheduler가 인스턴스 할당 |
+| MPS | 여러 CUDA process의 공유 | 설정된 compute·memory 제한, 지원 조건 확인 | MPS daemon과 client process 수명 |
+| Time-slicing | 논리적으로 복제 노출된 GPU 자원 | 시간 공유이며 memory 보장과 동일하지 않음 | plugin 정책과 Pod 수명 |
+
+한 Pod의 잘못된 kernel이나 장치 reset이 다른 공유 사용자에게 미치는 **fault isolation(장애 격리)**도 방식마다 다르다. 같은 GPU에서 서로 다른 tenant를 공유할 때는 성능 간섭뿐 아니라 데이터 격리와 장애 반경을 확인한다.
+
+## Failure domain과 재시작 범위
+
+**Failure domain(장애 도메인)**은 한 고장이 함께 영향을 줄 수 있는 자원 범위다. GPU 하나, node 하나, top-of-rack switch, storage zone, 전원 rack이 각각 장애 도메인이 될 수 있다. Replica를 서로 다른 node에 놓아도 같은 전원이나 switch를 공유하면 더 큰 장애에는 함께 멈출 수 있다.
+
+2 node×4 GPU의 8-rank 동기 학습에서 node B가 꺼지면 rank 4..7만 사라지지만 rank 0..3도 collective를 끝낼 수 없다. 일반적인 고정 world-size 계약에서는 전체 job을 마지막 완성 checkpoint로 재시작한다. Elastic training이 일부 node 교체와 world-size 변경을 지원하려면 optimizer·sampler·collective 재구성 의미가 명시되어야 한다.
+
+반면 추론 replica 4개를 두 node에 2개씩 두었다면 node 하나 실패 뒤 남은 두 replica가 계속 응답할 수 있다. 그러나 load balancer가 실패 endpoint를 제거하고 남은 replica의 admission을 낮추지 않으면 과부하가 연쇄될 수 있다. 학습 rank와 서비스 replica는 같은 Pod라도 실패 처리 계약이 다르다.
+
+## 배치와 실패를 잇는 세 가지 trace
+
+**Trace A: Pending.** Job object는 생성됐지만 queue quota가 없어 admission 전이다. Pod가 아직 없으므로 container log와 GPU OOM을 찾을 단계가 아니다. Queue 상태와 quota 사용자를 확인한다.
+
+**Trace B: Running 뒤 rendezvous timeout.** Pod 8개는 Running이고 device도 보이지만 rank 6이 잘못된 network interface를 골라 process group에 합류하지 못했다. Scheduler는 일을 끝냈다. Rank별 주소·world size·NIC와 firewall, 최초 collective log를 비교한다.
+
+**Trace C: Step 40의 straggler.** 모든 rank가 시작했지만 rank 5의 dataloader queue가 비고 GPU가 200 ms 쉰다. 나머지는 all-reduce에서 기다린다. NCCL 시간이 길어 보여도 원인은 rank 5의 local NVMe miss일 수 있다. Rank별 forward 시작 시각, input queue, collective 진입 시각을 연결해야 한다.
+
+
 ## Pending, OOM, straggler 진단 행렬
 
 | 증상 | 먼저 볼 곳 | 가능한 원인 | 다음 질문 |
@@ -231,16 +308,46 @@ print(step_a, step_b, round(step_b / step_a, 2))
 - Slurm overview: <https://slurm.schedmd.com/overview.html>
 - NCCL environment variables: <https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html>
 
-## 연습문제
+## 연습문제와 완전 해설
 
-1. Pod가 Pending이다. GPU memory가 부족하다고 바로 결론내도 되는가?
-   답: 아니다. Pending은 scheduler/admission 단계 문제일 수 있다. GPU 부족, quota, taint, selector, queue 정책을 먼저 본다.
+### 문제 1. Pending의 단계
 
-2. 한 GPU를 네 Pod가 time-slicing으로 공유한다. 각 Pod가 GPU memory 1/4을 보장받는가?
-   답: 그렇게 일반화할 수 없다. time-slicing은 시간 공유 전략이며 memory 격리/보장은 별도 메커니즘과 설정에 달려 있다.
+Pod가 Pending이고 GPU node에는 빈 장치가 보인다. GPU memory 부족이라고 결론 내릴 수 있는가?
 
-3. 16 rank job에서 rank 12만 step마다 늦다. 볼 후보 두 가지는?
-   답: rank 12가 놓인 GPU/NIC topology, data loader/cache 상태, 해당 process의 OOM/retry/log, node의 noisy neighbor를 본다.
+**해설.** 없다. Pending은 container가 장치 메모리를 할당하기 전 scheduler·queue 단계다. Quota, gang admission, node selector, taint/toleration, 요청한 GPU profile과 topology를 먼저 본다. Event에서 어느 조건이 거부했는지 확인한다.
 
-4. Slurm과 Kueue를 한 문장으로 구별하라.
-   답: Slurm은 HPC workload manager이고, Kueue는 Kubernetes 위에서 job queue와 quota admission을 제공하는 시스템이다.
+### 문제 2. Gang과 quota
+
+팀 quota 8개 중 6개를 사용 중이고 새 4-rank job이 모두 함께 시작해야 한다. Cluster에는 GPU 10개가 비어 있다. 새 job 상태는?
+
+**해설.** 팀의 남은 quota는 2개라 4개 요청을 입장시킬 수 없다. Gang 정책은 worker 2개만 먼저 띄우지 않고 전체를 queue에 둔다. 기존 6개가 반환되거나 quota가 바뀌어야 admission이 가능하다.
+
+### 문제 3. Topology 단편화
+
+세 node의 빈 GPU가 각각 2, 3, 1개다. 같은 node에서 GPU 4개가 필요한 job을 배치할 수 있는가?
+
+**해설.** 총 6개가 비어도 어느 node에도 4개가 없어 불가능하다. 요구 조건을 node 간 2+2로 완화하면 가능할 수 있지만 통신 비용과 지원 방식을 다시 평가한다. 총량과 가능한 묶음을 구분한다.
+
+### 문제 4. Time-slicing의 보장
+
+GPU 하나를 네 Pod가 time-slicing으로 공유한다. 각 Pod가 메모리 1/4과 지연 1/4을 보장받는가?
+
+**해설.** 일반화할 수 없다. Time-slicing은 실행 시간을 번갈아 제공하는 정책이고 memory quota·fault isolation과 같은 계약이 아니다. Plugin 설정, workload memory peak와 동시 context 비용을 확인한다.
+
+### 문제 5. NUMA 배치
+
+GPU0과 NIC0은 NUMA0, CPU worker와 pinned buffer는 NUMA1에 있다. 어떤 비용이 생길 수 있는가?
+
+**해설.** Host memory에서 GPU·NIC로 가는 데이터가 socket 사이 link를 건너 추가 대역폭 경쟁과 지연을 만들 수 있다. CPU affinity, memory allocation 위치, GPU/NIC topology를 함께 맞추고 변경 전후 H2D·network 시간을 측정한다.
+
+### 문제 6. Straggler
+
+16-rank job에서 rank 12만 매 step 200 ms 늦고 다른 rank의 all-reduce 대기가 길다. 무엇을 비교하는가?
+
+**해설.** Rank별 input queue, forward·backward 종료와 collective 진입 시각을 먼저 맞춘다. Rank 12의 GPU clock·오류, CPU·NVMe cache, NIC 경로와 noisy neighbor를 본다. Collective에서 기다린 시간이 길다고 network가 원인이라고 단정하지 않는다.
+
+### 문제 7. Node 장애
+
+2 node×4 GPU 동기 학습에서 한 node가 사라졌다. 남은 네 rank만 계속 step을 진행해도 되는가?
+
+**해설.** 고정 world-size collective에서는 안 된다. 상대 rank가 없어 collective가 완료되지 않고 model·optimizer 복제본도 일치하지 않는다. 전체를 마지막 검증 checkpoint로 재시작한다. Elastic 재구성을 쓰려면 framework가 world-size 변경과 sampler·optimizer 의미를 지원하는지 별도 확인한다.

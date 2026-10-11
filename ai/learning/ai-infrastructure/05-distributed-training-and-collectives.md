@@ -461,24 +461,42 @@ latency, topology, algorithm, bucket, overlap, slow rank를 함께 봐야 한다
 “Sampler가 분산이면 데이터 중복이 없다”는 틀렸다.
 길이 맞춤, drop_last, epoch seed, validation metric 처리까지 확인해야 한다.
 
-## 14. 해설 문제
+## 14. 문제와 완전 해설
 
-문제 1. world size 8에서 rank 번호 범위는?
+### 문제 1. rank 범위와 group
 
-해설: 기본 group 기준 `0`부터 `7`까지다.
-부분 process group에서는 같은 process가 다른 local rank 의미를 가질 수 있다.
+world size 8의 rank 범위와 부분 group `[0,1]`에서 global rank 1의 group rank를 구하라.
 
-문제 2. 4rank all-reduce에서 local gradient가 `[2, 2, 6, 10]`이면 평균 gradient는?
+**해설.** 기본 group은 0..7이다. 부분 group `[0,1]`에서 global rank 1의 group rank도 1이다. rank는 장치 번호가 아니라 communicator 안 위치이므로 group을 함께 적는다.
 
-해설: 합은 `20`, 평균은 `20 / 4 = 5`다.
+### 문제 2. 합과 평균
 
-문제 3. 8rank ring all-reduce에서 rank마다 2GiB tensor를 줄이면 단순 모델상 각 rank 송신량은?
+네 rank gradient `[2,2,6,10]`의 sum과 평균은?
 
-해설: `2 × (8 - 1) / 8 × 2GiB = 3.5GiB`다.
-실제 시간은 topology와 algorithm에 따라 달라진다.
+**해설.** 합은 20, 평균은 `20/4=5`다. 각 rank가 합 20을 받은 뒤 학습 계약에 따라 나눈다. framework의 기존 정규화를 확인한다.
 
-문제 4. FSDP가 DDP보다 메모리를 줄일 수 있는데도 OOM이 나는 이유를 두 가지 쓰라.
+### 문제 3. 링 전송량
 
-해설: layer 계산을 위한 transient all-gather가 peak를 만들 수 있고, activation·temporary workspace·communication buffer·allocator fragmentation은 parameter shard와 별개로 남는다.
+8 rank가 2 GiB를 ring all-reduce할 때 rank당 송신량은?
+
+**해설.** `2×(8-1)/8×2=3.5 GiB`다. 두 구간의 payload 근사이며 시작 지연, header, topology와 경쟁은 빠져 있다.
+
+### 문제 4. sharding 뒤 OOM
+
+FSDP로 parameter를 8등분해도 OOM이 나는 이유 두 가지를 설명하라.
+
+**해설.** 계산 직전 shard all-gather가 순간 peak를 만들 수 있다. Activation, workspace, 통신 buffer와 단편화도 남으므로 장치별 peak를 본다.
+
+### 문제 5. 병렬 차원의 effective batch
+
+DP=4, TP=2, PP=2이고 microbatch 8개를 accumulation 4회 한다. sample 기준 effective batch는?
+
+**해설.** 서로 다른 입력 복제본 수인 DP만 곱해 `8×4×4=128 samples`다. TP와 PP는 같은 microbatch 계산을 나누므로 곱하지 않는다.
+
+### 문제 6. collective 순서 불일치
+
+두 rank가 all-reduce와 broadcast를 반대 순서로 호출하면 왜 멈추는가?
+
+**해설.** 각 rank가 다른 첫 collective의 상대를 기다린다. Shape와 dtype이 같아도 호출 순서가 다르면 멈출 수 있다. rank별 step·collective·group을 비교한다.
 
 [용어 사전](12-glossary.md) · [로컬 실습](11-local-labs-and-research.md) · [다음 장](06-llm-inference-and-kv-cache.md)

@@ -172,6 +172,77 @@ rank 0이 manifest를 먼저 올리고 rank 7이 나중에 실패하면 독자�
 cleanup을 publish와 묶지 않는다.
 새 checkpoint가 깨졌는데 old checkpoint까지 지우면 재시작 지점이 사라진다.
 
+## Epoch, step, cursor와 RNG 상태
+
+**Epoch(에포크)**은 정해 둔 학습 데이터 전체를 한 번 순회한 단위다. **Global step**은 보통 optimizer가 파라미터를 갱신한 횟수이고, **micro step**은 gradient accumulation 안에서 작은 batch를 처리한 횟수다. 같은 epoch 2라도 어느 sample까지 읽었고 accumulation의 몇 번째 microbatch였는지에 따라 다음 계산이 달라진다.
+
+**Cursor(커서)**는 다음에 읽을 데이터 위치를 나타내는 복구 상태다. 파일 byte offset일 수도 있고 `(shard ID, record index)`, sampler permutation의 index일 수도 있다. 커서는 dataset 파일 안에 자동으로 저장되는 값이 아니라 dataloader·sampler 또는 training coordinator가 관리하며 checkpoint와 같은 step에서 기록해야 한다. Dataset revision이 바뀌면 같은 숫자 cursor가 다른 sample을 가리킬 수 있으므로 revision과 함께 해석한다.
+
+**RNG(Random Number Generator, 난수 생성기) 상태**는 다음 난수를 만들기 위한 내부 상태다. CPU, 각 GPU, dataloader worker, dropout과 augmentation이 서로 다른 난수 상태를 가질 수 있다. Seed는 시작점을 정하는 입력이고 RNG state는 실행 도중 현재 위치다. Seed만 다시 넣으면 checkpoint 이전까지 소비한 난수 개수를 정확히 재현하지 못해 dropout mask와 sample 순서가 달라질 수 있다.
+
+다음은 dataset 1,000개, batch 10, accumulation 2의 단순 예다. Optimizer step 하나는 sample 20개를 소비한다.
+
+```text
+checkpoint 이름: step-30
+dataset revision: sha256:D
+epoch: 0
+global step: 30
+micro step: 0
+next sample cursor: 600
+sampler permutation revision: P
+CPU RNG state: Rcpu
+GPU rank별 RNG state: Rgpu[0..3]
+```
+
+복구기는 revision D와 permutation P를 확인하고 sample 600부터 읽는다. Model·optimizer·scheduler는 step 30 상태를 읽는다. Cursor만 580으로 돌아가면 sample 580..599를 중복 학습하고, 620이면 600..619를 건너뛴다. “정확한 재현”이 필요한 작업에서는 이 차이가 허용되지 않는다.
+
+Checkpoint가 accumulation 중간, 예를 들어 micro step 1에서 저장된다면 아직 optimizer에 적용하지 않은 gradient buffer까지 저장하거나 그 microbatch를 다시 계산한다는 명시적 정책이 필요하다. Global step만 저장하고 gradient를 버리면 재개 직후 갱신이 달라진다. 많은 시스템은 일관성을 단순하게 만들기 위해 optimizer step 경계에서만 durable checkpoint를 게시한다.
+
+## 원자적 게시와 reader 계약
+
+**Atomic publish(원자적 게시)**는 독자가 미완성 묶음과 완성 묶음의 중간 상태를 보지 않게 게시 지점을 하나로 만드는 규칙이다. 여러 shard를 물리적으로 한 번에 쓰는 마법이 아니다. 작성자는 임시 이름으로 모든 객체를 저장하고 검증한 뒤, 작은 manifest나 complete marker를 마지막에 게시한다. Reader는 디렉터리 목록에서 최신 파일을 추측하지 않고 그 게시 객체가 가리키는 shard만 읽는다.
+
+8 rank의 `step-120` 게시를 상태로 펼치면 다음과 같다.
+
+| 시각 | 저장소 상태 | coordinator 판단 | reader가 볼 수 있는 복구점 |
+|---:|---|---|---|
+| t0 | `step-100/manifest` 존재 | 기존 안전점 유지 | step 100 |
+| t1 | `step-120.tmp/rank0..3` 업로드 | 미완성 | step 100 |
+| t2 | rank4..7 업로드, rank6 checksum 불일치 | 게시 금지 | step 100 |
+| t3 | rank6 재업로드, 8개 checksum 통과 | manifest 생성 가능 | step 100 |
+| t4 | `step-120/manifest` 최종 게시 | 새 안전점 | step 120 |
+| t5 | 별도 보존 정책이 step 80 삭제 | publish와 독립 | step 120, rollback용 100 |
+
+POSIX 파일시스템에서는 같은 파일시스템 안 임시 manifest를 쓰고 파일·필요한 디렉터리를 동기화한 뒤 rename하는 패턴을 쓸 수 있다. Object storage에서는 불변 shard key를 먼저 PUT하고 최종 manifest key를 마지막에 PUT한다. 어느 경우든 API의 성공 응답과 실제 durability 계약을 해당 저장소 문서로 확인한다.
+
+Manifest는 최소한 checkpoint ID, training step, shard key, 바이트 크기, checksum, format version, world size, model·dataset·code revision을 가진다. **Checksum(검사합)**은 파일 내용을 계산해 얻는 짧은 값으로 전송·저장 중 변경을 찾는 데 쓴다. 같은 checksum이 악의적 변조까지 모두 막는다는 뜻은 아니며 신뢰 경계에는 서명과 접근 제어가 추가될 수 있다.
+
+## 장애 복구와 rollback 전체 추적
+
+**Rollback(롤백)**은 최신 시도보다 이전의 검증된 상태로 되돌아가는 일이다. Step 120 manifest는 있지만 shard 하나가 사라졌거나 format reader가 지원하지 않으면 loader는 그 checkpoint를 부분적으로 읽어 학습을 시작하지 않는다. Step 100을 선택하고 어떤 checkpoint가 왜 거부되었는지 기록한다.
+
+복구 순서는 다음과 같다.
+
+1. 저장소에서 complete manifest 후보를 읽고 step과 생성 시각으로 정렬한다.
+2. Reader가 지원하는 format version인지 확인한다.
+3. 모든 shard의 존재, 크기와 checksum을 검증한다.
+4. Model, optimizer, scheduler, gradient scaler와 rank mapping을 복원한다.
+5. Dataset revision과 tokenizer·transform revision을 고정한다.
+6. Epoch, cursor, sampler와 RNG 상태를 복원한다.
+7. 작은 validation batch로 loss가 유한한지, step 번호가 맞는지 확인한다.
+8. 새 run ID 아래 학습을 재개하고 원래 checkpoint ID를 부모로 기록한다.
+
+Rank 3 process가 step 137에서 죽었고 마지막 완성 checkpoint가 step 120이라고 하자. 모든 rank는 step 120으로 돌아가 17 step을 다시 계산한다. 살아 있던 rank만 137에서 계속하면 모델·optimizer 복제본과 collective 호출 순서가 어긋난다. Elastic 방식은 다른 계약을 가질 수 있지만, 어떤 상태를 보존하고 world size 변경을 어떻게 처리하는지 별도 지원 조건이 필요하다.
+
+## Retention은 삭제 순서를 정하는 복구 정책이다
+
+**Retention(보존 정책)**은 checkpoint를 얼마 동안 몇 개 남길지 정하는 규칙이다. 저장 비용만 보고 최신 하나만 남기면 최신 파일 손상, 조용한 데이터 오류, 뒤늦게 발견한 학습 발산에서 돌아갈 곳이 없다.
+
+예시 정책은 “최근 3개, 최근 24시간의 시간별 1개, 최근 7일의 일별 1개, 검증 통과한 release checkpoint”를 남길 수 있다. 삭제기는 새 checkpoint가 게시됐다는 사실만 보지 않고 검증 완료와 최소 rollback 수를 확인한다. 업로드 중인 tmp 객체는 생성 시각과 active writer lease를 보고 별도 정리한다. Manifest가 참조하는 shard를 삭제하지 않도록 reference를 계산한다.
+
+Checkpoint 하나가 2 TiB이고 10개를 보존하면 순수 payload는 20 TiB다. 압축·중복 제거·객체 버전 비용은 저장소에 따라 달라진다. 비용을 줄이기 위해 보존 수를 바꿀 때 복구 지점 목표, 탐지까지 걸리는 시간, 규제 보존 요구를 함께 결정한다.
+
+
 ## Worked calculation: bandwidth
 
 checkpoint 크기가 2 TiB이고 저장 경로의 실제 지속 쓰기 처리량이 4 GiB/s라고 하자.
@@ -235,16 +306,46 @@ benchmark에는 cache 상태를 반드시 적는다.
 - Amazon S3의 현재 consistency model은 성공한 PUT 뒤 GET/LIST 동작을 설명한다: <https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel>
 - Linux·파일시스템 동기화 기초는 이 교재의 데이터 시스템 장을 다시 본다: <../../../kubernetes/storage/data-systems-foundations/01-linux-read-write.md>
 
-## 연습문제
+## 연습문제와 완전 해설
 
-1. 500 GiB checkpoint를 2 GiB/s로 저장한다. 순수 쓰기 시간은?
-   답: `500 / 2 = 250초`, 약 4.17분이다. metadata, checksum, flush, contention은 제외한 하한이다.
+### 문제 1. 쓰기 하한
 
-2. rank 0-7 중 rank 6 shard 업로드가 실패했다. manifest를 publish해도 되는가?
-   답: 안 된다. manifest는 모든 shard의 durable 확인 뒤 마지막에 publish해야 한다.
+500 GiB checkpoint를 실제 2 GiB/s 경로로 저장한다. 순수 쓰기 하한은?
 
-3. 학습을 정확히 이어가기 위해 weight 외에 최소 세 가지를 말하라.
-   답: optimizer state, scheduler state, RNG state, sampler/data position 등이 필요하다.
+**해설.** `500÷2=250초`, 약 4.17분이다. Shard metadata, checksum, flush, 공유 대역폭 경쟁과 manifest publish가 빠진 하한이다. Rank별 속도와 저장소 전체 상한 중 더 느린 병목을 함께 계산한다.
 
-4. cold cache benchmark와 warm cache benchmark를 섞어 평균을 냈다. 무엇이 문제인가?
-   답: 서로 다른 조건을 평균낸 것이다. cache 상태가 처리량과 tail latency를 바꾸므로 따로 보고해야 한다.
+### 문제 2. 미완성 shard
+
+Rank 0..7 중 rank 6 업로드가 실패했지만 나머지 파일은 있다. Manifest를 게시해도 되는가?
+
+**해설.** 안 된다. Manifest는 완성 묶음의 commit record다. Rank 6을 재시도해 크기와 checksum까지 통과한 뒤 게시한다. 실패한 tmp shard는 reader가 보지 않으며 나중의 안전한 cleanup이 회수한다.
+
+### 문제 3. 복구 상태
+
+Weight 외에 학습을 같은 위치에서 이어가기 위한 상태를 네 가지 설명하라.
+
+**해설.** Optimizer moment는 다음 갱신값, scheduler는 다음 학습률, RNG state는 dropout·augmentation 난수 위치, sampler cursor는 다음 sample을 정한다. Gradient scaler와 accumulation 중간 gradient도 정책에 따라 필요하다. 하나가 빠지면 파일은 읽혀도 이어진 계산은 달라진다.
+
+### 문제 4. Cursor 불일치
+
+Step 30 checkpoint가 다음 sample 600을 기록해야 하는데 580을 기록했다. Batch 10, accumulation 2라면 무슨 일이 생기는가?
+
+**해설.** Sample 580..599의 20개를 다시 읽어 optimizer step 하나분 데이터를 중복 학습한다. Model은 step 30 상태인데 data 위치가 step 29에 가까워져 상태 쌍이 일치하지 않는다. Cursor를 model·optimizer와 같은 publish 단위에 넣어야 한다.
+
+### 문제 5. 장애 뒤 손실 작업
+
+Step당 3초, checkpoint 간격 1,000 step이고 장애가 다음 저장 직전에 발생했다. 최대와 단순 평균 손실 작업은?
+
+**해설.** 최대는 `3×1000=3000초=50분`이다. 장애 시점이 구간에 균등하다는 단순 가정의 평균은 25분이다. 저장을 더 자주 하면 손실은 줄지만 I/O와 pause가 늘므로 총 완료 시간으로 비교한다.
+
+### 문제 6. Rollback 선택
+
+최신 step 200은 manifest가 있지만 shard checksum 하나가 틀리고 step 180은 모두 검증됐다. Loader는 무엇을 해야 하는가?
+
+**해설.** Step 200을 부분 로드하지 않고 거부 이유를 기록한 뒤 step 180으로 rollback한다. Code와 format이 step 180을 지원하고 dataset·tokenizer revision도 복원 가능한지 확인한다. 재개 run은 parent checkpoint 180을 기록한다.
+
+### 문제 7. Cold cache와 warm cache
+
+같은 dataset scan의 cold run은 120분, warm run은 40분이다. 둘을 평균해 80분이라고 보고하면 왜 잘못인가?
+
+**해설.** Cache 상태라는 서로 다른 실험 조건을 섞었다. 첫 배포나 cache eviction 뒤 동작을 묻는다면 cold가 중요하고, 반복 epoch의 정상 상태를 묻는다면 warm이 중요하다. Cache revision과 hit rate를 기록해 각각 보고한다.

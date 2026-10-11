@@ -2,180 +2,226 @@
 
 [이 책 목차](README.md) · [이전: WAL, checkpoint와 recovery](09-wal-checkpoints-and-recovery.md) · [다음: Columnar·vectorized query engine](11-columnar-vectorized-query-engines.md)
 
-Replication은 한 node의 변경을 다른 node에 전달해 availability와 read scale을 높일 수 있다. Distributed transaction은 여러 participant의 commit 결정을 맞추지만 latency, blocking과 failure state를 추가한다.
+데이터베이스 서버 한 대의 저장장치가 안전해도 서버 전체가 멈추면 서비스는 중단된다. 다른 서버가 같은 변경을 받아 대신 읽기와 쓰기를 수행할 수 있어야 한다. 그러나 “같은 데이터”라는 말에는 최소 네 단계가 숨어 있다. 네트워크로 바이트를 받았는가, 파일에 썼는가, 전원 상실 뒤에도 남게 확정했는가, 데이터 페이지에 재생해 질의가 볼 수 있는가가 서로 다르다. 이 장은 이 네 경계를 먼저 구분한 뒤, 여러 데이터베이스에 걸친 한 업무를 모두 커밋하거나 모두 취소하는 방법을 설명한다.
 
-모든 출력과 수치는 교육용이며 실제 PostgreSQL·Spark·Iceberg 실행 결과가 아니다.
+## 1. 복제에 참여하는 실제 객체와 프로세스
 
-## 복제 진행 위치와 읽기 의미
+**primary, 주 서버** 는 현재 클라이언트 쓰기를 받아 WAL을 만드는 데이터베이스 인스턴스다. **standby 또는 replica, 대기 복제본** 은 주 서버의 base backup에서 시작해 이후 WAL을 계속 받아 적용하는 별도 인스턴스다. 복제본은 같은 서버의 다른 폴더가 아니라 독립 장애를 견디려면 별도 호스트·저장장치·전원 영역에 두어야 한다.
 
-primary가 LSN 1000까지 만들고 replica가 received=980, written=970, flushed=960, replayed=900이라고 하자. receive는 네트워크 도착, write는 OS에 전달, flush는 지속 저장 계약 완료, replay는 데이터 페이지와 논리 상태에 적용한 위치다. primary와 replay 차이 100 LSN unit은 byte 또는 시간과 자동으로 같지 않다. 처리량이 변하므로 시간 lag를 알려면 특정 commit의 timestamp와 replay 시점을 연결한다.
+PostgreSQL의 물리 스트리밍 복제에서는 주 서버의 **WAL sender** 프로세스가 WAL 바이트를 네트워크로 보내고, 복제본의 **WAL receiver** 가 받아 pg_wal에 기록한다. 복제본의 startup/recovery 과정은 그 WAL을 관계 파일에 재생한다. 이 프로세스들의 수명은 연결과 서버 실행 기간이며, 진행 상태는 LSN으로 보고된다.
 
-비동기 복제에서 primary는 replica flush를 기다리지 않고 ACK할 수 있다. 장애와 failover가 LSN 960 replica에서 일어나면 961~1000의 최근 ACK 변경을 잃을 가능성을 계약에 포함해야 한다. 동기 복제는 정한 quorum의 특정 단계 ACK를 기다려 범위를 강화하지만 지연과 가용성 비용이 있다. quorum 2-of-3은 어느 두 replica인지, flush인지 replay인지, 장애 시 정책이 어떻게 바뀌는지까지 정의해야 한다.
+**replication** 은 변경을 다른 사본으로 전달하는 기작이고, **failover** 는 기존 주 서버가 고장 났을 때 복제본 하나를 새 주 서버로 승격해 쓰기를 받게 하는 운영 전환이다. 복제가 존재한다고 자동으로 안전한 failover가 완성되는 것은 아니다. 어느 복제본을 선택하는지, 옛 주 서버를 확실히 차단하는지, 클라이언트 연결을 어디로 돌리는지, 손실 구간을 어떻게 판정하는지가 더 필요하다.
 
-read-after-write가 필요한 요청을 replay 900 replica로 즉시 보내면 방금 쓴 LSN 1000 결과를 보지 못한다. primary로 라우팅하거나, replica가 세션의 최소 LSN까지 replay하기를 기다리거나, stale 허용을 사용자 계약으로 둔다. lag=0이라는 한 시점 관측도 다음 요청까지 최신임을 영구 보장하지 않는다.
+## 2. sent, write, flush, replay는 같은 말이 아니다
 
-## 2PC와 shard 경계
+주 서버가 복제 연결마다 보고하는 네 위치를 실제 행동에 연결하자.
 
-주문은 shard A, 재고는 shard B에 있다고 하자. coordinator가 각 participant에 local 변경을 실행시키고 prepare를 요청한다. A와 B가 모두 prepare하면 각자는 잠금과 복구 정보를 durable하게 유지한다. coordinator가 commit 결정을 기록한 뒤 두 곳에 알린다. B가 commit 메시지를 받기 전에 네트워크가 끊기면 B는 마음대로 abort할 수 없는 in-doubt 상태로 결정을 조회한다. 이 동안 잠금이 다른 작업을 막을 수 있다.
+- **sent LSN**: WAL sender가 그 연결로 전송한 마지막 로그 위치다. 네트워크 반대편에서 받았다는 뜻은 아니다.
+- **write LSN**: 복제본이 받은 WAL을 자신의 파일 시스템에 쓴 마지막 위치다. 운영체제 캐시에만 있을 수 있다.
+- **flush LSN**: 복제본이 저장장치 장애 뒤에도 복구할 수 있도록 동기화를 완료했다고 보고한 위치다.
+- **replay LSN**: 복제본이 WAL을 데이터 페이지에 적용한 마지막 위치다. 이 위치까지의 커밋이 hot standby 질의에 보일 기반이 된다.
 
-| 단계 | shard A | shard B | coordinator |
+교육용 상태를 다음처럼 두자.
+
+| 위치 | LSN | 뜻 |
+|---|---:|---|
+| primary 현재 끝 | 1000 | 주 서버가 만든 WAL 끝 |
+| sent | 980 | 네트워크로 보낸 끝 |
+| write | 970 | 복제본 파일 시스템에 쓴 끝 |
+| flush | 960 | 복제본에 내구적으로 확정된 끝 |
+| replay | 900 | 복제본 질의가 적용된 상태의 끝 |
+
+차이 100은 100ms도 100개 행도 아니다. LSN은 바이트 위치다. commit 레코드가 LSN 950인 주문 Q라면 복제본은 그 바이트를 flush했지만 아직 replay하지 않았을 수 있다. 이 순간 복제본 SELECT는 Q를 반환하지 않는다. 반면 복제본 프로세스가 재시작하면 로컬에 확정된 WAL 960까지 재생해 Q를 살릴 수 있다. **내구적 복제** 와 **읽기 가시성** 이 다르다는 뜻이다.
+
+LSN 990의 주문 R은 아직 sent 980보다 뒤다. 주 서버가 완전히 소실되면 현재 복제본에는 R을 복원할 바이트가 없다. 클라이언트가 R의 성공 응답을 받았는지는 주 서버의 커밋 대기 정책에 달려 있다.
+
+## 3. 비동기 복제와 손실 창
+
+**비동기 복제** 는 주 서버가 복제본의 완료 응답을 기다리지 않고 로컬 커밋 조건만 만족하면 클라이언트에 성공을 돌려주는 방식이다. 네트워크 지연이 주 서버 커밋 지연에 직접 더해지지 않지만, 주 서버 전체를 잃으면 아직 복제되지 않은 성공 트랜잭션이 사라질 수 있다.
+
+주 서버가 LSN 1000까지 로컬 flush하고 모두 ACK했지만 선택한 복제본의 flush가 960이라고 하자. 주 서버와 그 저장장치를 잃고 이 복제본을 승격하면 LSN 961~1000 구간의 WAL은 없을 수 있다. 이 구간 안에 커밋 레코드가 있는 거래는 클라이언트가 성공을 보았어도 새 주 서버에 없다. 이를 **RPO**, 허용 데이터 손실 범위의 문제로 표현한다.
+
+복제 지연을 단순히 시간 하나로만 보면 안 된다. 생성률이 초당 1MiB일 때 100MiB 지연은 약 100초 작업량이지만, 초당 100MiB 급증 중에는 약 1초 작업량이다. 반대로 한 트랜잭션이 매우 큰 가치를 가질 수 있다. LSN 바이트 차이, 시간 지연, 포함된 업무 트랜잭션을 함께 본다.
+
+## 4. 동기 복제는 무엇을 기다리는가
+
+**동기 복제** 는 선택한 복제본의 특정 단계까지 완료 응답을 기다린 뒤 커밋 성공을 반환한다. “동기”라는 이름만으로 어느 단계인지 정해지지 않는다. PostgreSQL 18의 synchronous_commit 모드는 다음처럼 경계를 다르게 잡는다.
+
+| 모드 | 주 서버가 기다리는 핵심 경계 |
+|---|---|
+| remote_write | 복제본 파일 시스템에 write |
+| on | 동기 복제본의 durable flush |
+| remote_apply | 동기 복제본의 replay와 질의 가시성 |
+| local | 주 서버 로컬 flush, 복제 응답은 기다리지 않음 |
+| off | 이 트랜잭션의 로컬 flush도 기다리지 않고 응답 가능 |
+
+remote_write는 복제본 PostgreSQL 프로세스 장애에는 WAL이 남을 수 있지만, 복제본 운영체제나 전원이 함께 죽으면 캐시 데이터가 사라질 수 있다. on은 복제본 flush를 기다리지만 복제본 읽기가 즉시 새 값을 보리라는 보장은 없다. remote_apply는 적용까지 기다려 읽기-후-쓰기 요구에 더 가까우나 지연이 커진다.
+
+세 복제본 A, B, C 중 **2-of-3 quorum** 을 요구한다고 말하려면 어느 단계의 응답 두 개를 뜻하는지 명시해야 한다. flush ACK 두 개라면 A와 B가 flush한 시점에 성공할 수 있고 C는 뒤처져도 된다. 이후 A와 주 서버가 동시에 소실되고 C를 잘못 승격하면 성공 데이터를 잃을 수 있다. failover 후보는 확인된 커밋을 가진 집합에서 골라야 한다. quorum 수와 승격 규칙은 한 계약이다.
+
+## 5. 읽기 일관성과 replica lag
+
+주 서버에 쓰자마자 아무 복제본에서 읽는 응용은 **read-after-write**, 즉 자신의 쓰기를 뒤따르는 읽기 보장을 원할 수 있다. 앞의 주문 Q가 commit LSN 950이고 replica replay가 900이면 그 읽기는 옛 결과를 반환한다. 해결 방법은 요구에 따라 다르다.
+
+- 쓰기 세션의 후속 읽기를 주 서버로 보낸다.
+- 필요한 LSN을 요청 문맥에 담고 replica replay가 그 위치에 도달할 때까지 기다린다.
+- remote_apply 같은 더 강한 커밋 경계를 사용한다.
+- 오래된 읽기를 허용하고 UI에 반영 지연을 표현한다.
+
+복제본이 “healthy”라는 상태만으로 최신 읽기를 보장하지 않는다. 연결은 살아 있으나 replay가 멈출 수 있고, 긴 복제본 질의와 vacuum 충돌 때문에 재생이 지연되거나 질의가 취소될 수 있다. sent-write, write-flush, flush-replay 차이를 나누면 네트워크, 저장장치, 재생 병목을 구별할 수 있다.
+
+## 6. failover와 split brain
+
+**promotion, 승격** 은 복제본을 recovery 모드에서 벗어나 새 WAL을 만드는 주 서버로 전환하는 동작이다. 이때 가장 위험한 상황은 옛 주 서버도 여전히 쓰기를 받는 것이다. 두 서버가 서로 다른 변경을 각자 커밋하면 자동으로 합칠 수 없는 **split brain**, 즉 두 개의 주 상태가 된다.
+
+**fencing, 차단** 은 옛 주 서버가 공유 저장장치나 클라이언트 쓰기에 접근하지 못하게 만드는 조치다. 전원 차단 장치, 클라우드 인스턴스 격리, 저장소 lease, 세대 번호를 확인하는 프록시 등을 사용할 수 있다. health check가 잠시 실패했다는 사실만으로 옛 주 서버가 죽었다고 증명하지 못한다. 네트워크가 양쪽을 갈라놓았을 수도 있다.
+
+PostgreSQL의 **timeline** 은 승격 뒤 새 WAL 역사를 구별한다. 옛 primary가 돌아왔다고 단순히 다시 연결하면 안 된다. 새 timeline을 따라 재동기화하거나 base backup에서 다시 구성해야 한다. failover 자동화는 “누가 가장 최신인가”, “옛 writer는 차단됐는가”, “새 endpoint가 한 곳만 가리키는가”를 하나의 상태 전이로 다뤄야 한다.
+
+## 7. 복제와 백업의 실패 범위
+
+복제는 주 서버의 저장장치 고장과 서버 중단에서 빠른 대체본을 제공한다. 그러나 사용자가 실수로 테이블을 삭제하면 정상 WAL이 복제본에도 재생된다. 애플리케이션 버그가 잔액을 0으로 만들면 그 변경도 정확히 복제된다. 랜섬웨어가 동일 권한으로 모든 노드를 지울 수도 있다. 시점 복구용 base backup과 별도 보관 WAL, 접근 권한 분리가 여전히 필요하다.
+
+동기 복제도 모든 노드가 같은 전원·랙·리전에 있으면 공통 장애에 취약하다. 멀리 둘수록 왕복 시간이 커져 커밋 지연이 늘어난다. 가용성, 지연, 손실 허용 범위를 업무별로 정해 거래 원장과 분석 이벤트에 다른 정책을 쓸 수 있다.
+
+## 8. 여러 데이터베이스의 한 업무
+
+복제는 한 데이터베이스의 변경을 사본으로 전달한다. **분산 트랜잭션** 은 서로 독립적으로 커밋하는 여러 자원 관리자에 걸친 한 업무를 모두 성공시키거나 모두 취소하려는 문제다. 예를 들어 주문 데이터베이스 A에 주문을 만들고 재고 데이터베이스 B에서 수량을 1 줄여야 한다. A만 커밋되고 B가 실패하면 팔 수 없는 주문이 생긴다.
+
+**coordinator, 조정자** 는 전체 거래 ID G42와 참여자 A·B를 기억하고 최종 결정을 내리는 프로세스 또는 서비스다. **participant, 참여자** 는 자신의 로컬 트랜잭션과 잠금을 관리하는 데이터베이스다. **2PC(two-phase commit, 2단계 커밋)** 는 준비 투표와 최종 결정의 두 단계로 나눈다.
+
+## 9. 2PC 전체 시간표
+
+초기 상태는 A의 orders에 G42가 없고 B의 stock(book)=1이다.
+
+| 시각 | 조정자 | A 주문 DB | B 재고 DB |
 |---|---|---|---|
-| 실행 | 주문 준비 | 재고 차감 준비 | transaction id 배정 |
-| prepare | YES, resource 유지 | YES, resource 유지 | 응답 수집 |
-| 결정 | 대기 | 대기 | COMMIT durable 기록 |
-| 전파 장애 | commit 수신 | in-doubt | 재전송 필요 |
+| t0 | G42 시작을 내구적으로 기록 | 로컬 TX 시작 | 로컬 TX 시작 |
+| t1 | 작업 지시 | order G42 삽입, 아직 비가시 | stock 1→0, 아직 비가시 |
+| t2 | PREPARE 요청 | prepare 성공, YES, 잠금 유지 | prepare 성공, YES, 잠금 유지 |
+| t3 | 두 YES를 확인하고 COMMIT 결정을 내구적으로 기록 | prepared 대기 | prepared 대기 |
+| t4 | COMMIT PREPARED 전송 | 커밋, 주문 가시 | 응답 유실로 계속 in-doubt |
+| t5 | 재시도 | 이미 commit이면 결과 확인 | commit prepared, 재고 0 가시 |
 
-shard key를 잘 고르면 많은 트랜잭션을 한 shard 안에 가둘 수 있어 2PC 경계를 줄인다. 그러나 사용자별 shard에 있는 두 사용자의 송금처럼 업무 경계가 shard 경계를 넘으면 분산 조정이 다시 필요하다. Saga의 보상은 이미 일어난 외부 효과를 의미상 상쇄하는 새 작업이며 데이터베이스 rollback처럼 과거를 지우지 않는다.
+**prepared state, 준비 상태** 는 참여자가 세션과 분리된 채 나중의 commit 또는 rollback 명령을 수행할 수 있도록 트랜잭션 상태를 내구적으로 보관한 상태다. PostgreSQL에서는 PREPARE TRANSACTION 뒤 효과가 아직 일반 질의에 가시하지 않지만 잠금과 트랜잭션 관련 자원을 계속 붙잡을 수 있다. 짧게 끝내야 하며 pg_prepared_xacts로 감시한다.
 
-failover에서는 옛 primary를 **fencing**해 더는 write를 받지 못하게 해야 한다. 새 primary와 옛 primary가 동시에 권위를 주장하면 split brain이 되고 서로 다른 로그가 생긴다. client retry도 첫 요청이 commit되었지만 응답만 잃은 경우를 고려해 idempotency key로 중복 효과를 막는다.
+t3 이후 조정자가 죽어도 복구된 조정자는 자신의 내구적 COMMIT 결정을 읽어 두 참여자에게 같은 명령을 재전송해야 한다. 참여자 B는 네트워크가 끊겼다고 임의로 rollback하면 A와 불일치한다. 최종 결정을 모르는 동안 기다리는 상태가 **in-doubt** 이고, 이 때문에 고전적 2PC는 조정자나 통신 장애 동안 막힐 수 있는 blocking protocol이다.
 
-### 문제 5개
+## 10. prepare와 prepared statement를 구분한다
 
-1. flushed 960, replayed 900의 뜻은? **해설:** 로그는 960까지 durable하지만 질의 상태 적용은 900까지만 끝났다.
-2. 2-of-3 quorum이면 모든 replica 완료인가? **해설:** 아니다. 정한 두 응답 단계만 충족하며 세 번째는 뒤처질 수 있다.
-3. prepare 뒤 coordinator 장애 시 왜 block하는가? **해설:** participant가 durable한 최종 결정을 몰라 resource를 임의 해제할 수 없다.
-4. replication이 exactly-once를 주는가? **해설:** client가 ACK를 잃고 재시도하면 중복될 수 있어 idempotency가 별도다.
-5. shard를 늘리면 항상 확장되는가? **해설:** cross-shard transaction, 재분배, hot shard와 fan-out query 비용이 늘 수 있다.
+PostgreSQL의 PREPARE TRANSACTION은 2PC 참여자의 변경과 잠금을 내구적인 준비 상태로 만든다. SQL PREPARE name AS statement는 같은 SQL의 분석·계획 비용을 줄이려고 세션 안에 문장을 보관하는 **prepared statement** 다. 이름에 prepare가 들어가지만 원자적 분산 커밋과 관계가 없다.
 
-## 1. 단어와 위치
+PostgreSQL의 prepared transaction 기능은 max_prepared_transactions가 0이면 비활성화된다. 외부 transaction manager 없이 장시간 방치하면 vacuum 진행과 트랜잭션 ID 수명에 영향을 주고 잠금을 오래 잡으므로, 단순 애플리케이션 코드가 임의로 사용해서는 안 된다. 조정자는 전체 거래 ID와 결정 로그, 재시도, 운영 경보를 책임져야 한다.
 
-| 용어 | 뜻 |
-| --- | --- |
-| Primary | Write를 받아 authoritative log를 생성하는 node role |
-| Replica | Primary log를 받아 replay하는 copy |
-| Replication lag | Primary progress와 replica replay progress의 차이 |
-| Synchronous replication | 정한 replica acknowledgment를 commit 조건에 포함하는 방식 |
-| Asynchronous replication | Local commit 뒤 replica가 나중에 따라오는 방식 |
-| Failover | 새 primary role로 service를 전환하는 절차 |
-| Split brain | 둘 이상의 node가 동시에 primary라고 행동하는 위험 |
-| 2PC | Two-Phase Commit, prepare와 commit/abort 두 단계 protocol |
-| Coordinator | Distributed transaction 결정을 모으고 알리는 주체 |
-| Participant | Local resource를 prepare하고 결정에 따르는 node |
+## 11. 2PC의 장애 경계
 
-## 2. 실제 객체
+### prepare 전 참여자 실패
 
-- Primary WAL position
+B가 재고 UPDATE 도중 실패해 prepare YES를 주지 못했다. 조정자는 ABORT를 결정하고 A와 B를 rollback한다. 아직 어느 참여자도 최종 커밋 약속을 하지 않았으므로 전체 취소가 가능하다.
 
-- Replica receive/write/flush/replay positions
+### 모두 prepare한 뒤 조정자 실패
 
-- Consensus 또는 fencing metadata
+A와 B는 prepared 상태와 잠금을 유지한다. 조정자의 결정 로그가 없다면 복구된 조정자는 정책에 따라 abort를 결정할 수 있지만, 이미 commit 결정을 외부에 내구적으로 기록했는지를 먼저 판별해야 한다. 결정 기록과 참여자 명령의 순서가 중요하다.
 
-- Coordinator transaction record
+### 한 참여자만 commit 응답
 
-- Participant prepared transaction
+A의 COMMIT PREPARED 성공 응답을 받고 B 응답이 끊겼다. 조정자는 G42를 실패로 바꾸면 안 된다. 내구적 결정은 COMMIT이며 B에 같은 결정을 재시도한다. 명령 처리는 거래 ID로 멱등적이어야 한다. 응답 유실과 실행 실패를 구분할 수 없기 때문이다.
 
-- Client retry/idempotency key
+### prepared 상태를 수동 삭제
 
-## 3. 입력에서 결과까지
+운영자가 근거 없이 A를 commit하고 B를 rollback하면 2PC가 지키려던 원자성을 사람이 깨뜨린다. 인시던트 대응은 조정자의 결정 로그와 모든 참여자의 상태를 수집한 뒤 한 결정을 적용해야 한다.
 
-```mermaid
-flowchart LR
- I["입력"] --> X["실행 주체"]
- X --> S["중간 상태"]
- S --> O["결과 또는 오류"]
-```
+## 12. 2PC가 모든 분산 문제의 답은 아니다
 
-1. Client write가 primary transaction을 시작한다.
+2PC는 여러 참여자의 원자성을 제공하지만, 준비 상태의 잠금과 조정자 의존 때문에 긴 업무 흐름에는 부담이 크다. 사용자 배송처럼 수시간 걸리는 절차는 각 단계의 로컬 트랜잭션을 커밋하고 실패 시 환불·예약 해제 같은 **보상 동작** 을 실행하는 saga를 사용할 수 있다. 보상은 과거를 지우는 rollback과 같지 않다. 이미 발송한 알림이나 외부 결제는 정확히 되돌릴 수 없으므로 업무 의미에 맞는 반대 동작과 중복 방지가 필요하다.
 
-2. Primary가 WAL과 commit decision을 만든다.
+outbox 패턴은 업무 데이터와 “보낼 이벤트” 행을 한 로컬 트랜잭션에 기록하고 별도 전달기가 이벤트를 반복 전송한다. 수신자는 event ID를 기억해 중복 효과를 막는다. 이것은 모든 시스템이 한순간에 원자 커밋된다는 보장을 주지 않지만, 메시지 발행 누락을 줄이고 장애 재시도를 명시적으로 다룬다.
 
-3. Log sender가 replica로 bytes를 전송한다.
+## 13. 숫자로 보는 지연과 가용성
 
-4. Replica가 receive·write·flush·replay 단계를 진행한다.
+주 서버 로컬 flush 2ms, 같은 리전 replica 왕복과 flush 4ms, 원거리 replica 왕복과 flush 80ms라는 교육용 가정을 두자. 로컬 모드는 약 2ms 경계, 같은 리전 동기 flush는 적어도 약 4ms 이상, 원거리 동기 flush는 약 80ms 이상이 커밋 경로에 들어갈 수 있다. 큐잉과 처리 시간 때문에 실제 값은 더 크며, 이 숫자는 측정 결과가 아니다.
 
-5. Sync policy가 요구한 acknowledgment를 primary가 기다린다.
+동기 replica가 모두 중단되었을 때 커밋을 계속 받으면 정책을 비동기로 낮춰 RPO를 늘리는 것이고, 멈추면 쓰기 가용성을 포기해 내구성 계약을 유지하는 것이다. 자동화는 이 선택을 숨기면 안 된다. 언제 정책을 낮췄고 어느 LSN 구간이 비동기가 되었는지 감사 가능하게 남겨야 한다.
 
-6. Client가 commit success를 받는다.
 
-7. 2PC에서는 coordinator가 participants에 prepare를 요청한다.
+## 14. 물리 복제와 논리 복제의 단위
 
-8. 모두 prepare이면 durable commit decision을 기록한다.
+앞의 sent·flush·replay 설명은 PostgreSQL 물리 스트리밍 복제의 진행 경계다. **물리 복제** 는 테이블 행의 업무 의미가 아니라 WAL의 저장 구조 변경을 전달한다. 그래서 주 서버와 복제본의 주요 버전·저장 형식 호환 조건이 중요하고, 복제본은 주 서버의 클러스터 상태를 물리적으로 따라간다.
 
-9. Coordinator가 commit을 전파한다.
+**논리 복제** 는 publication에 포함한 테이블 변경을 행 수준의 논리 메시지로 해석해 subscriber가 적용한다. 일부 테이블만 보내거나 다른 용도로 소비할 수 있지만, 모든 DDL과 시퀀스 상태가 자동으로 같은 방식으로 복제된다고 가정해서는 안 된다. 논리 subscriber의 “받음·로컬 커밋·업무 가시성” 경계와 물리 standby의 replay LSN을 같은 지표로 섞지 않는다. 어떤 방식이든 schema 변경, 충돌, 초기 복사, slot 보존 공간을 별도로 시험한다.
 
-10. Recovery는 in-doubt participant가 결정을 다시 확인하게 한다.
+## 15. 연쇄 복제와 장애 영역
 
-## 4. 숫자 시간표
+primary가 A에 보내고 A가 B에 다시 보내는 **cascading replication, 연쇄 복제** 는 주 서버의 네트워크 연결 수를 줄일 수 있다. 그러나 B의 최신성은 primary→A와 A→B 두 구간의 지연을 합친 결과다. A 장애 때 B가 새 upstream에 연결하는 절차도 필요하다. 별 모양과 연쇄 모양은 단순 그림 차이가 아니라 장애 전파와 승격 후보의 WAL 보유량을 바꾼다.
 
-- primary LSN 1,000
+같은 건물에 세 복제본을 두면 서버 한 대 장애에는 강하지만 건물 전원 장애에는 함께 멈춘다. **failure domain, 장애 영역** 은 하나의 원인으로 동시에 실패할 수 있는 자원의 범위다. 디스크, 호스트, 랙, 가용 영역, 리전을 구분해 사본을 배치한다. 동기 사본을 먼 리전에 놓을 때의 커밋 지연과 가까운 곳에 놓을 때의 공통 장애 위험을 실제 측정과 업무 RPO로 결정한다.
 
-- replica received 980, flushed 960, replayed 900
+## 16. 조정자 로그의 최소 상태 기계
 
-- replay lag = 100 LSN units
+2PC 조정자가 메모리 변수 하나만 갖고 있으면 조정자 재시작 뒤 결정을 잃는다. G42에 대해 최소한 STARTED, COMMIT_DECIDED 또는 ABORT_DECIDED, DONE 같은 상태를 내구 저장해야 한다. 참여자에게 최종 명령을 보내기 전에 결정부터 내구적으로 기록해야 한다. 그래야 A에 commit을 보낸 직후 죽어도 재시작 후 같은 결정을 B에 보낼 수 있다.
 
-- read-after-write를 replica에서 즉시 하면 old value 가능
+상태 전이는 한 방향이어야 한다. COMMIT_DECIDED를 기록한 G42를 timeout 때문에 ABORT_DECIDED로 바꾸면 안 된다. DONE은 모든 참여자가 최종 결과를 확인했거나 운영 정책상 충분한 증거를 모은 뒤 기록한다. 오래된 미완료 G42 수, prepared 참여자 수, 가장 오래 잡힌 잠금 시간을 함께 경보로 둔다.
 
-- 2PC 3 participants 중 1개 unreachable이면 prepared lock이 남을 수 있음
 
-## 5. 조건과 경계
+## 17. 완전 풀이 문제
 
-Async replica는 primary crash에서 acknowledged transaction 일부를 잃을 수 있다.
+### 문제 1. flush 960, replay 900에서 LSN 950을 읽을 수 있는가?
 
-Sync replica도 application-level exactly-once를 만들지 않는다.
+**풀이:** 복제본 저장장치에는 950까지 내구적으로 존재하지만 데이터 페이지에는 900까지만 적용됐다. 현재 hot standby 질의는 950 커밋 결과를 아직 보지 못한다. replay가 950 이상이 된 뒤 읽거나 주 서버로 보내야 한다. 복제본 재시작 뒤에는 로컬 WAL을 재생해 살릴 가능성이 있다.
 
-Replica read는 stale할 수 있어 consistency routing이 필요하다.
+### 문제 2. async failover의 손실
 
-Failover에는 old primary fencing이 중요하다.
+주 서버가 1000까지 ACK했고 후보 복제본 flush는 960이다.
 
-2PC prepare는 local resource를 잠근 채 coordinator 결정을 기다릴 수 있다.
+**풀이:** 961~1000 사이 커밋은 새 주 서버에 없을 수 있다. 정확한 업무 손실은 그 구간의 commit 레코드와 요청 ID를 조사해야 한다. 단순 LSN 차이 40을 “40건 손실”이라고 말하면 안 된다.
 
-Saga는 compensating action을 쓰지만 원래 side effect가 사라지는 rollback과 다르다.
+### 문제 3. remote_write면 전원 장애에도 안전한가?
 
-## 6. 실패를 읽는 순서
+**풀이:** remote_write는 복제본 운영체제의 파일 시스템에 쓴 응답을 기다리지만 durable flush까지 기다리는 모드는 아니다. 복제본 프로세스만 죽는 경우와 OS·전원이 함께 죽는 경우의 보장이 다르다. 전원 상실 내구성을 원하면 동기 standby flush를 기다리는 on 등의 계약을 검토한다.
 
-1. 어느 transaction·snapshot·LSN·stage인지 identity를 적는다.
+### 문제 4. 2-of-3인데 아무 replica나 승격해도 되는가?
 
-2. Client 성공과 storage·replica 완료를 구분한다.
+A와 B가 flush ACK하여 커밋했고 C는 뒤처졌다.
 
-3. Estimate와 actual을 분리한다.
+**풀이:** C에 그 커밋이 없을 수 있으므로 임의 승격은 손실을 만든다. 확인된 커밋 경계를 포함한 후보 중 하나를 선택하고 옛 writer를 fencing해야 한다. quorum write 규칙과 read/failover quorum 규칙을 함께 설계한다.
 
-4. Retry가 전체 operation인지 일부 request인지 확인한다.
+### 문제 5. 2PC에서 B 응답 유실
 
-5. External side effect와 orphan object를 찾는다.
+조정자는 COMMIT을 기록했고 A는 commit 응답, B는 응답 없음이다.
 
-6. Version별 공식 보장을 확인한다.
+**풀이:** 전체 결정을 abort로 바꿀 수 없다. B 상태를 조회하고 G42에 COMMIT PREPARED를 재시도한다. B가 이미 commit했는데 응답만 유실됐을 수 있으므로 거래 ID 기준 멱등 처리가 필요하다.
 
-## 7. 오해와 반례
+### 문제 6. prepared transaction을 일주일 방치
 
-- Replica가 둘이면 data loss가 불가능하다.
+**풀이:** 트랜잭션이 잡은 잠금이 다른 쓰기를 막고 오래된 트랜잭션 경계가 vacuum의 정리를 방해할 수 있다. 조정자 로그로 commit/rollback 결정을 복구해 즉시 종료해야 한다. 근거 없는 수동 선택은 분산 원자성을 깨뜨린다.
 
-- Replication lag는 network latency 하나다.
+### 문제 7. 복제가 백업을 대신하는가?
 
-- Read replica는 항상 read-your-writes를 제공한다.
+운영자가 14:00에 DELETE를 잘못 실행했고 replica replay도 14:00을 지났다.
 
-- 2PC는 failure에도 절대 block하지 않는다.
+**풀이:** 삭제 WAL이 정상 복제되어 replica에도 반영된다. 삭제 전 base backup과 연속 WAL로 13:59 시점까지 별도 복구하거나 논리 복구 절차가 필요하다. 고가용 사본과 과거 보존은 다른 목적이다.
 
-- Compensation은 database rollback과 같다.
+### 문제 8. saga는 rollback과 같은가?
 
-## 8. 문제
+결제 뒤 배송 예약이 실패해 환불 API를 호출했다.
 
-1. Flushed 960, replayed 900의 차이는?
+**풀이:** 환불은 이미 커밋된 결제를 지우는 데이터베이스 rollback이 아니라 새 반대 업무다. 수수료, 환율, 알림처럼 완전히 되돌릴 수 없는 효과가 남을 수 있다. 각 단계와 보상에 동일 요청 ID를 사용하고, 중복 호출 결과와 수동 개입 상태를 정의해야 한다.
 
-2. Failover 때 fencing이 필요한 이유는?
+## 18. 운영 점검표
 
-3. 2PC participant가 prepare 뒤 coordinator를 잃으면?
+- pg_stat_replication의 sent, write, flush, replay LSN 차이를 각각 경보화한다.
+- 동기 커밋 모드와 synchronous standby 선택 규칙을 문서로 고정한다.
+- ACK한 마지막 거래 ID와 failover 후보의 flush/replay 경계를 대조한다.
+- promotion 전에 옛 primary fencing을 증명한다.
+- failover 뒤 timeline과 재가입 절차를 시험한다.
+- pg_prepared_xacts의 수와 최고 나이를 감시한다.
+- 조정자 결정 로그 백업과 재전송을 장애 주입으로 검증한다.
+- 복제 장애와 잘못된 사용자 변경 복구를 별도 훈련한다.
 
-## 9. 해설
+## 근거와 더 읽을 자료
 
-1. Log는 durable하지만 data state 적용은 900까지일 수 있다.
-
-2. Old primary가 계속 write해 split brain을 만드는 것을 막기 위해서다.
-
-3. 결정을 알 수 없는 in-doubt 상태로 lock/resource를 유지할 수 있다.
-
-## 10. 공식 자료
-
-- [공식 문서](https://www.postgresql.org/docs/current/warm-standby.html)
-
-- [공식 문서](https://www.postgresql.org/docs/current/two-phase.html)
-
-- [CMU 15-445/645 Fall 2024](https://15445.courses.cs.cmu.edu/fall2024/syllabus.html)
-
-다음 장에서는 이 계약을 더 큰 execution 또는 재현 모델에 연결한다.
-
-
-## 보강: primary LSN에서 replica 적용까지
-
-Replication은 primary의 변경 기록을 replica가 받아 사본에 재생하는 과정이다. primary가 WAL LSN 9000까지 만들고 replica receiver가 8900까지 수신했지만 replay process가 8700까지만 적용했다면 send lag는 없더라도 replay lag가 200 LSN만큼 남는다. replica SELECT는 적용된 8700 상태까지만 볼 수 있다. 네트워크 수신 완료와 질의에 보이는 적용 완료를 구별해야 한다.
-
-2PC(Two-Phase Commit)는 coordinator가 참여자에게 prepare를 요청하고 모두 준비되면 commit 결정을 알리는 프로토콜이다. Prepared state는 참여자가 필요한 잠금과 복구 정보를 보관해 최종 결정을 기다리는 상태다. coordinator 장애 시 참여자가 결정을 모르면 오래 대기할 수 있으므로 2PC가 가용성을 자동 해결하지는 않는다.
+- [PostgreSQL 18: Log-Shipping Standby Servers](https://www.postgresql.org/docs/18/warm-standby.html)
+- [PostgreSQL 18: pg_stat_replication](https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW)
+- [PostgreSQL 18: synchronous_commit](https://www.postgresql.org/docs/18/runtime-config-wal.html)
+- [PostgreSQL 18: Two-Phase Transactions](https://www.postgresql.org/docs/18/two-phase.html)
+- [PostgreSQL 18: PREPARE TRANSACTION](https://www.postgresql.org/docs/18/sql-prepare-transaction.html)

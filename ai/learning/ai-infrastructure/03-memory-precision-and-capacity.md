@@ -2,8 +2,7 @@
 
 [이전: 가속기 소프트웨어와 실행](02-accelerator-software-and-execution.md) · [다음: 훈련과 입력 파이프라인](04-training-and-input-pipelines.md) · [하드웨어 메모리](../../../hardware/learning/server-hardware/02-cpu-memory-numa.md) · [Linux OOM](../../../linux/learning/linux-kernel/04-virtual-memory-and-reclaim.md)
 
-“이 모델이 GPU에 들어가나요?”라는 질문은 단순히 weight 파일 크기만 묻는 것이 아니다.
-훈련인지 추론인지, batch와 sequence 길이가 얼마인지, dtype이 무엇인지, optimizer 상태가 있는지, KV cache를 얼마나 잡는지에 따라 답이 달라진다.
+“이 모델이 GPU에 들어가나요?”라는 질문은 저장한 모델 파일의 크기만 묻는 것이 아니다. 학습할 때와 예측할 때 필요한 저장 공간이 다르고, 한 번에 처리할 입력의 개수와 길이에 따라서도 달라진다. 어떤 숫자를 어떤 방식으로 보관하는지부터 아래에서 하나씩 계산한다.
 이 장은 메모리를 구성요소로 나누어 계산한다.
 
 **Weight(가중치)**는 모델이 학습해 저장한 파라미터 값이다. **Batch(배치)**는 한 번의 계산에 함께 넣는 샘플 묶음이고, **sequence length(문맥 길이)**는 샘플마다 처리하는 token 자리 수다. **dtype(data type, 자료형)**은 숫자 하나를 어떤 형식과 byte 수로 저장하는지 정한다. **KV cache(키·값 캐시)**는 생성 추론에서 과거 token의 attention 중간값을 요청별로 보관하는 공간이다.
@@ -339,41 +338,43 @@ dtype 이름만으로 품질과 속도를 단정하지 않는다.
 - OOM은 하나의 원인이 아니다. capacity, peak, fragmentation, external, host OOM을 나누어 본다.
 - PyTorch allocated와 reserved memory는 같은 지표가 아니다.
 
-## 연습 문제와 해설
+## 연습 문제와 완전 해설
 
-문제 1.
-3B parameters 모델을 BF16 weight로 저장하면 payload는 몇 GiB인가?
+### 문제 1. 가중치 payload와 실행 가능성
 
-해설.
-BF16은 2 bytes로 계산한다.
-`3,000,000,000 × 2 = 6,000,000,000 bytes`.
-`6,000,000,000 ÷ 1,073,741,824 ≈ 5.59 GiB`다.
+30억 개 파라미터를 BF16 가중치로 저장하면 payload는 몇 GiB인가? 8 GiB GPU에 들어간다고 결론 내릴 수 있는가?
 
-문제 2.
-Batch 2, context 8192, layers 40, KV heads 8, head dim 128, FP16인 KV cache payload는?
+**해설.** BF16 값 하나를 2바이트로 두면 `3,000,000,000×2=6,000,000,000 bytes`다. GiB로 바꾸면 `6,000,000,000÷1,073,741,824≈5.59 GiB`다. 8 GiB보다 작다는 것은 가중치 payload에 대한 필요조건만 만족한다는 뜻이다. 실행 중 activation, KV cache, workspace, allocator 예약분, framework 상태와 다른 프로세스가 쓸 공간이 남아야 한다. 따라서 “가중치 payload는 약 5.59 GiB”까지 결론 내리고 실제 runtime에서 peak를 측정한다.
 
-해설.
-Per layer는 `2 × 8192 × 8 × 128 × 2 × 2 = 67,108,864 bytes = 64 MiB`다.
-All layers는 `64 MiB × 40 = 2560 MiB = 2.5 GiB`다.
-이 값이 total인지 per-device인지는 구현의 sharding 정책을 확인해야 한다.
+### 문제 2. KV cache의 전체와 장치별 값
 
-문제 3.
-GPU memory가 80 GiB이고 4장이 있다.
-총 320 GiB라고만 적으면 왜 부족한가?
+Batch 2, context 8192, layer 40, KV head 8, head dimension 128, FP16인 dense KV payload를 구하라. 두 GPU가 layer 20개씩 맡는 pipeline 분할이라면 이상적인 장치별 payload는 얼마인가?
 
-해설.
-모델과 KV cache가 어떻게 나뉘는지 모르기 때문이다.
-Per-device peak가 80 GiB를 넘으면 총합이 충분해도 실패한다.
-통신 buffer와 replicated state도 별도로 봐야 한다.
+**해설.** layer 하나는 `2×8192×8×128×2(K,V)×2 bytes=67,108,864 bytes=64 MiB`다. 40개 layer 전체는 `64 MiB×40=2,560 MiB=2.5 GiB`다. 각 GPU가 정확히 20개 layer의 KV만 보관한다면 약 1.25 GiB씩이다. 실제 엔진이 KV를 복제하거나 stage별 layer 수가 다르거나 block 빈칸을 갖는다면 달라진다. 전체 2.5 GiB와 장치별 peak를 따로 적어야 한다.
 
-문제 4.
-Reserved memory가 높고 allocated memory는 낮은데 OOM이 났다.
-가능한 원인 두 가지는?
+### 문제 3. 네 GPU의 총용량 함정
 
-해설.
-첫째, fragmentation 때문에 큰 연속 block을 얻지 못했을 수 있다.
-둘째, 다른 프로세스나 allocator가 장치 memory를 잡고 있어 실제 free memory가 부족할 수 있다.
-Shape 변화와 allocator 설정, 프로세스별 GPU memory 사용량을 확인한다.
+80 GiB GPU가 네 장이면 총 320 GiB다. 장치 0의 peak가 86 GiB이고 나머지는 60 GiB씩이라면 실행되는가?
+
+**해설.** 실행되지 않는다. GPU allocation은 장치별 물리 메모리 제한을 받으므로 장치 0이 80 GiB를 넘는 순간 OOM이다. 총합은 `86+60×3=266 GiB`라 320 GiB보다 작지만 불균형을 숨긴다. 큰 layer, replicated buffer, rank 0 전용 gather가 장치 0에 몰렸는지 조사하고 분할을 바꿔야 한다.
+
+### 문제 4. allocated와 reserved
+
+Tensor가 참조하는 live bytes는 12 GiB, allocator reserved는 20 GiB, 장치 총용량은 24 GiB다. 새 연산이 6 GiB 연속 block을 요구해 OOM이 났다. “12+6<24이므로 버그”라고 말할 수 있는가?
+
+**해설.** 말할 수 없다. reserved 20 GiB 안의 빈 공간이 여러 작은 block으로 흩어졌거나 즉시 재사용할 수 없는 stream 수명에 묶였을 수 있다. 장치 밖의 다른 process 사용량도 확인해야 한다. live, reserved, largest free block, 다른 process, allocation timeline을 함께 본다. 단편화라면 shape 안정화나 pool 정책이 도움이 될 수 있지만 payload 자체가 큰 capacity OOM과 구분한다.
+
+### 문제 5. 훈련 상태와 activation checkpointing
+
+1억 파라미터 교육 구성에서 파라미터 관련 상태가 16 bytes/parameter이고 저장 activation peak가 1.5 GiB다. checkpointing이 장기 저장 activation을 절반으로 줄인다고 가정하면 단순 감소량과 변하지 않는 항목은 무엇인가?
+
+**해설.** 파라미터 상태는 `100,000,000×16=1.6GB≈1.49GiB`로 그대로다. 저장 activation의 단순 감소량은 `1.5÷2=0.75GiB`다. 가중치, master weight, gradient, Adam moment는 이 정책만으로 줄지 않는다. backward 재계산 때 activation과 workspace가 다시 생기므로 실제 peak가 정확히 0.75 GiB 줄어든다고 보장할 수 없다. 재계산 구간의 timeline을 측정해야 한다.
+
+### 문제 6. 4-bit 계산의 metadata
+
+130억 파라미터를 4-bit로 packing한 순수 payload는 약 6.05 GiB다. 64개 값마다 FP16 scale 하나를 저장하고 zero point가 없다고 단순 가정하면 scale metadata는 몇 바이트이며 왜 여전히 최종 사용량이 아닌가?
+
+**해설.** group 수는 `13,000,000,000÷64=203,125,000`이고 scale은 2바이트이므로 `406,250,000 bytes≈0.378 GiB`다. payload와 scale만 더하면 약 6.43 GiB다. 실제 저장 형식에는 정렬과 header가 붙을 수 있고 실행 중에는 dequantization buffer, activation, KV cache, kernel workspace가 필요하다. 또한 마지막 group 처리와 지원 kernel의 packing 단위를 확인해야 한다.
 
 ## 공식 자료와 원전
 

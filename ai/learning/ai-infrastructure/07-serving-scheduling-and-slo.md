@@ -121,6 +121,15 @@ Deadline이 500ms 남았고 예상 queue 400ms, prefill 300ms라면 실행 전�
 
 Queue 길이 100이라는 숫자만으로 대기 시간을 알 수 없다. 앞선 요청 100개가 짧은 embedding인지, 각각 긴 prefill과 2,000 token 출력을 가진 생성 요청인지 비용이 다르다. 최소한 waiting requests와 waiting tokens를 나누고, prompt/output 길이 분포와 함께 본다.
 
+## p50·p99와 load shedding을 같은 시간표로 읽기
+
+**p50**은 요청 절반이 그 값 이하에서 끝난 중앙 경계이고 **p99**는 약 99%가 그 값 이하인 꼬리 경계다. 평균이 200 ms여도 요청 100개 중 99번째가 3초라면 일부 사용자는 긴 멈춤을 겪는다. 측정 구간, 성공·실패 포함 규칙, prompt/output 길이 구간을 같이 적어야 두 백분위수를 비교할 수 있다.
+
+다섯 요청의 TTFT가 `[100,110,120,130,1040] ms`이면 p50을 단순 순서 통계로 볼 때 120 ms다. 요청 대부분은 빠르지만 마지막 한 개가 길어 평균은 300 ms다. 실제 p99 계산은 도구의 보간법과 표본 수에 따라 달라지므로, 작은 표본에서는 원자료도 함께 본다.
+
+**Load shedding(부하 차단)**은 시스템이 감당하기 어려운 요청 일부를 실행 전에 거절해 이미 받은 요청의 SLO와 자원을 보호하는 정책이다. 예를 들어 queue deadline이 지난 요청 20개를 GPU에 넣으면 처리량 숫자는 늘 수 있지만 뒤의 유효 요청까지 늦어진다. 거절은 성공이 아니지만 과부하에서 무한 대기보다 예측 가능한 실패를 만든다. Tenant quota, 예상 token 비용, 남은 deadline을 기준으로 삼고 429·503 같은 응답과 재시도 시간을 명확히 한다.
+
+
 ## Timeout과 재시도
 
 timeout은 한 숫자가 아니다.
@@ -349,16 +358,46 @@ device 시간이 나빠졌다면 batch shape, prompt 길이, cache miss, kernel 
 - vLLM metrics는 TTFT, ITL, per-request latency 경계를 문서화한다: <https://docs.vllm.ai/en/latest/design/metrics/>
 - Kubernetes DRA는 장치 요청과 할당을 구조화하는 새 경로다: <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
 
-## 연습문제
+## 연습문제와 완전 해설
 
-1. 요청 600개 중 570개가 성공했고, 그중 510개만 TTFT와 E2E SLO를 만족했다. 5분 구간 goodput은?
-   답: `510 / 300 = 1.7 req/s`다. 성공 처리량은 `570 / 300 = 1.9 req/s`지만 SLO 위반 60개는 goodput에서 빠진다.
+### 문제 1. 요청 한 개의 전체 시간
 
-2. TTFT p99가 나빠졌는데 GPU kernel 시간 p50/p99가 그대로다. 먼저 볼 지표 두 개는?
-   답: queue wait와 tokenization/front-end time이다. device 시간이 그대로면 GPU 계산 전 대기나 CPU/네트워크 경로가 원인일 수 있다.
+인증 6 ms, tokenization 9 ms, queue 85 ms, prefill과 첫 token 선택 70 ms다. 출력은 모두 6 token이고 이후 간격은 12 ms다. TTFT와 E2E는?
 
-3. tenant A와 tenant B가 같은 prompt prefix를 보냈다. prefix cache를 공유해도 된다고 바로 말할 수 있는가?
-   답: 아니다. cache key와 접근 정책, tenant 격리, prompt 존재 여부 노출 위험을 먼저 정해야 한다.
+**해설.** TTFT는 `6+9+85+70=170 ms`다. 첫 token 뒤에는 5개의 간격이 있으므로 `5×12=60 ms`를 더해 E2E는 약 230 ms다. Proxy flush와 네트워크가 빠진 엔진 내부 시간이라면 client E2E와 구분한다.
 
-4. batch를 키웠더니 tokens/s는 30% 올랐지만 ITL p99가 2배가 되었다. 좋은 변경인가?
-   답: SLO에 달려 있다. interactive streaming 서비스라면 goodput이 줄었을 수 있으므로 TTFT, ITL, E2E 기준으로 다시 판정한다.
+### 문제 2. goodput
+
+5분에 600개가 도착해 570개가 성공했고 그중 510개만 TTFT와 E2E SLO를 만족했다. 성공 처리량과 goodput은?
+
+**해설.** 5분은 300초다. 성공 처리량은 `570/300=1.9 req/s`, goodput은 `510/300=1.7 req/s`다. 성공했지만 늦은 60개는 처리량에는 들어가고 goodput에서는 빠진다.
+
+### 문제 3. p50과 tail
+
+TTFT가 `[100,110,120,130,1040] ms`다. 중앙값과 평균을 구하고 무엇을 놓치면 안 되는가?
+
+**해설.** p50에 해당하는 중앙값은 120 ms, 평균은 `(1500/5)=300 ms`다. 중앙값만 보면 1040 ms의 긴 꼬리를 숨긴다. 표본이 작아 p99 추정은 불안정하므로 원자료와 더 긴 기간의 percentile을 함께 제시한다.
+
+### 문제 4. GPU 시간이 그대로인 p99 악화
+
+TTFT p99는 1초에서 3초로 늘었지만 GPU kernel p50·p99는 같다. 먼저 볼 경계는?
+
+**해설.** 인증·tokenization 시간, queue wait, admission 지연, proxy flush를 본다. Device 시간이 같다는 증거는 계산 전후 경로를 좁혀 주지만 원인을 하나로 확정하지 않는다. Request ID로 gateway와 engine timestamp를 연결한다.
+
+### 문제 5. Admission과 KV 용량
+
+남은 KV slot이 12,000이다. 실행 중 요청 예약분이 7,000이고 새 요청의 prompt+최대 출력이 6,000이면 받을 수 있는가?
+
+**해설.** 최악 상한은 `7,000+6,000=13,000`이라 12,000을 넘는다. 보수 정책은 대기나 거절을 선택한다. 평균 출력이 짧다는 이유로 받으려면 실행 중 부족할 때 선점·offload·실패 중 무엇을 할지 정해야 한다.
+
+### 문제 6. Tenant 사이 prefix cache
+
+Tenant A와 B가 같은 prompt prefix를 보냈다. 바로 같은 KV block을 공유해도 되는가?
+
+**해설.** 안 된다. Tokenizer·model·adapter revision과 위치 조건뿐 아니라 tenant 권한을 확인해야 한다. Hash만 같아도 prompt 존재 여부가 새어 나갈 수 있다. 공개 공통 prefix처럼 정책이 허용한 범위에서만 공유한다.
+
+### 문제 7. 과부하 재시도
+
+서버가 503을 반환하자 1,000 client가 즉시 동시에 재시도한다. 어떤 문제가 생기며 계약은 무엇이어야 하는가?
+
+**해설.** 회복 중인 queue에 새 도착이 몰리는 retry storm이 생긴다. 서버는 `Retry-After`나 명확한 overload 응답을 주고, client는 지수 backoff와 무작위 jitter, 최대 횟수를 사용한다. 부분 token을 이미 받은 생성 요청은 자동 재시도가 중복 출력을 만들 수 있어 별도 정책이 필요하다.

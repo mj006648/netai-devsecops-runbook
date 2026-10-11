@@ -1,25 +1,10 @@
 # 08. 카탈로그와 여러 엔진
 
-## 이름·파일·commit의 세 경로
-
-catalog는 table 이름을 metadata 위치와 UUID에 연결하고 commit 충돌을 중재한다. FileIO는 metadata·manifest·Parquet·Puffin 바이트를 저장소에서 읽고 쓴다. catalog 인증 성공과 S3 권한 성공은 다르다.
-
-Spark가 prod.lab.orders를 요청하면 catalog가 metadata v10을 준다. engine은 v10→snapshot50→manifest list→manifest→A.parquet와 DV를 읽는다. Trino가 다른 local 이름을 써도 같은 service·UUID·snapshot50을 고정해야 결과를 비교할 수 있다.
-
-W1과 W2가 v10을 읽고 W1이 v11을 게시하면 W2 expected-v10 commit은 실패한다. W2 data file upload는 이미 끝났을 수 있어 refresh·conflict check 뒤 재사용하거나 orphan으로 관리한다.
-
-RESTCatalog는 HTTP client/server 계약이고 설정 한 줄이 server를 시작하지 않는다. credential vending은 제한된 storage credential을 발급하는 선택 기능이다. catalog migration은 폴더 복사가 아니며 UUID·snapshot·branch·경로와 단일 권위 writer를 보존한다. 두 catalog가 독립 GC하면 상대가 참조한 파일을 지울 수 있다.
-
-### 추가 문제 5개
-1. list 성공 뒤 S3 403 가능? **해설:** 권한 경로가 다르다.
-2. W2 실패 이유? **해설:** pointer가 v11로 변했다.
-3. REST 설정이 server 설치? **해설:** 아니다.
-4. warehouse 같으면 같은 table? **해설:** UUID를 본다.
-5. 독립 GC 위험? **해설:** 공유 파일 오판 삭제.
-
 [이 책의 목차](README.md) · [이전 장](07-latest-and-compatibility.md)
 
 카탈로그를 설치한다고 데이터 처리 엔진이나 객체 저장소가 함께 생기는 것은 아니다. 이 장에서는 이름 조회, 커밋, 파일 읽기, 권한을 실제 연결 관계로 나눈다.
+
+**UUID**는 이름 변경과 구별하여 테이블 자체를 식별하는 값이다. **warehouse**는 파일을 둘 기본 저장 위치다. **REST 카탈로그**는 HTTP라는 요청·응답 통신 규칙을 통해 테이블 조회와 관리를 제공하는 계약이다. 같은 파일 경로와 같은 테이블의 현재 상태는 서로 다른 질문이다.
 
 ## 1. 같은 테이블을 찾는 데 필요한 정보
 
@@ -142,6 +127,78 @@ flowchart LR
 
 두 카탈로그가 독립적으로 같은 파일을 관리하고 서로를 모르면서 쓰고 정리하는 상태는 위험하다. “하나의 파일을 여러 엔진이 읽음”과 “독립된 두 테이블 수명주기가 같은 파일을 관리함”을 구별한다.
 
+## 조회와 확정은 서로 다른 API 작업이다
+
+**API(Application Programming Interface)**는 두 프로그램 사이의 입력·출력·오류 계약이다. **HTTP**는 요청과 응답을 교환하는 통신 규칙이고, **REST Catalog**는 HTTP를 통해 이름 조회와 테이블 관리·확정 기능을 제공하는 Iceberg의 카탈로그 계약이다. REST는 그 서버의 내부 저장소가 무엇인지까지 하나로 정하는 제품명이 아니다.
+
+**UUID**는 테이블의 정체성을 구별하는 식별자다. 표시 이름을 바꿔도 같은 테이블을 추적하는 데 사용한다. **namespace**는 lab처럼 테이블 이름들을 묶는 이름 공간이다. **warehouse**는 데이터와 메타데이터를 둘 기본 저장 위치를 뜻하는 설정으로 사용된다. 같은 warehouse 경로를 썼다는 사실만으로 두 카탈로그가 같은 현재 상태를 관리한다고 볼 수 없다.
+
+### 테이블 이름 하나가 읽기로 이어지는 전체 요청
+
+아래 이름·상태 번호는 개념 추적용이며 REST 요청 본문의 정확한 스키마 전체를 표현한 것이 아니다. **인증(authentication)**은 호출자의 신원을 확인하고, **인가(authorization)**는 그 호출자가 이 테이블의 특정 작업을 해도 되는지 판단한다.
+
+| 순서 | 요청 주체와 대상 | 전달하는 정보 | 결과의 의미 |
+| --- | --- | --- | --- |
+| 1 | Spark 설정→카탈로그 클라이언트 | prod 이름과 서버 주소 | prod를 어느 서비스로 해석할지 결정 |
+| 2 | 클라이언트→카탈로그 | 호출자 자격 증명, lab.orders | 이름과 권한 검사 |
+| 3 | 카탈로그→클라이언트 | 테이블 UUID, metadata V10 | 이번에 읽을 상태와 설정 |
+| 4 | FileIO→저장소 | V10 위치, 저장소 자격 증명 | 메타데이터 바이트 |
+| 5 | reader→저장소 | snapshot 50의 목록과 파일 경로 | 이번 상태의 읽기 작업 |
+| 6 | 엔진 계산 | 행 필터와 삭제 적용, 집계 | 사용자 쿼리 결과 |
+
+**FileIO**는 저장소에서 파일의 바이트를 읽고 쓰는 인터페이스다. 카탈로그 클라이언트는 테이블을 찾고 확정 요청을 보내며, FileIO는 데이터·메타데이터 파일을 전송한다. S3는 여기서 파일과 비슷한 객체를 키로 보관하는 객체 저장소의 예다. 카탈로그의 HTTP 인증이 성공해도 S3 자격 증명에 읽기 권한이 없으면 단계 4나 5가 실패한다. 반대로 저장소 파일을 쓸 수 있어도 테이블 변경 권한이 없으면 확정할 수 없다.
+
+**credential vending**은 지원하는 카탈로그가 이번 작업 범위에 맞는 저장소 접근 자격 증명을 발급하는 기능이다. 임시 자격 증명의 만료 시각과 허용 경로, 읽기·쓰기 권한은 호출자의 테이블 권한과 연결해야 한다. 모든 REST 카탈로그가 같은 발급 방식이나 기능을 제공한다고 가정하지 않는다. 발급 기능이 없다면 클라이언트의 저장소 자격 증명을 별도로 구성해야 한다.
+
+### 두 writer의 충돌을 객체별로 구분한다
+
+W1과 W2가 모두 V10, main snapshot 50을 읽었다고 하자. **동시성 제어**는 이처럼 겹친 변경이 현재 상태를 잃어버리지 않도록 확정 순서를 검사하는 규칙이다. **낙관적 제어(OCC)**는 먼저 작업을 준비하고, 게시 시점에 기준 상태와 충돌 여부를 검사한다.
+
+| 시점 | W1 | W2 | 카탈로그의 현재 상태 |
+| --- | --- | --- | --- |
+| t0 | V10 조회 | V10 조회 | V10 / snapshot 50 |
+| t1 | 새 파일 B와 후보 상태 51 준비 | 새 파일 C와 후보 상태 52 준비 | V10 / 50 |
+| t2 | 기준 50에 대해 51 확정 요청 | 아직 준비 중 | 요청의 요구 조건 검사 |
+| t3 | 확정 성공 | 기준 50에 대해 52 확정 요청 | 새 metadata / 51 |
+| t4 | 완료 | 요구 조건 불일치로 충돌 | W1의 변경 유지 |
+| t5 | 없음 | 새 상태 조회, C 재사용 가능성 및 변경 검증 | 새 기준 51 |
+| t6 | 없음 | 적합하면 새 후보로 다시 확정 | B와 C를 포함한 이후 상태 |
+
+REST 확정 계약은 테이블 UUID나 브랜치의 현재 스냅샷 같은 **요구 조건(requirements)**과 수행할 **변경(updates)**을 전달한다. 조건이 맞지 않으면 준비된 파일이 이미 존재해도 이전 기준의 결과를 무조건 덮어쓰면 안 된다. 어떤 비교를 하고 어떤 변경을 원자적으로 확정할지는 카탈로그 계약에 따른다. 모든 구현에서 expected_metadata라는 동일한 필드를 보내는 것으로 단순화하면 실제 API와 어긋날 수 있다.
+
+W2가 재시도할 때 C의 바이트를 다시 업로드해야 하는지는 작업 종류에 달려 있다. 독립적인 추가라면 파일을 재사용할 수 있지만, W1이 바꾼 행·파일을 W2도 수정했다면 다시 읽고 새 결과를 만들어야 할 수 있다. **refresh**는 최신 테이블 메타데이터를 다시 불러오는 동작이지 충돌을 무시하는 허가가 아니다. 확정의 응답만 유실된 경우에는 현재 상태를 확인해 중복 변경을 막는 규칙도 필요하다.
+
+### reader 호환성도 상태별로 검사한다
+
+한 엔진은 파일을 읽고 다른 엔진은 오류를 내는 경우가 있다. 테이블 포맷 버전, 열 타입, 삭제 표현, 파일 형식, 카탈로그 인증을 각각 이해해야 하기 때문이다. **삭제 벡터(DV)**는 특정 데이터 파일의 제외할 물리 행 위치를 나타내며, 이를 읽지 않는 reader는 삭제 전 행을 반환하거나 지원 오류를 낼 수 있다. DV를 담는 Puffin이라는 보조 형식과 행을 담는 Parquet의 역할도 구별한다.
+
+공정한 비교는 두 엔진이 같은 UUID와 같은 스냅샷을 읽는지부터 시작한다. 그 다음 같은 SQL 의미, NULL 처리, 시각·소수 타입, 필터와 삭제 적용을 비교한다. 이름이 같거나 조회 행 수가 우연히 같다는 사실은 충분한 근거가 아니다.
+
+### 이전과 장애 복구에서 권위 있는 상태를 하나로 유지한다
+
+카탈로그 이전은 주소록 복사만이 아니다. 테이블의 UUID·현재 메타데이터·브랜치·태그·파일 경로를 옮기는 동안 누가 변경을 확정할 수 있는지를 통제해야 한다. 옛 서비스와 새 서비스가 독립적으로 writer를 받아 서로 다른 현재 상태를 만들면 같은 파일 경로를 공유하면서도 서로 다른 테이블 역사를 갖게 된다.
+
+이를 **분리된 권위(split authority)** 문제라고 볼 수 있다. 한쪽 유지보수가 자신의 메타데이터에서 보이지 않는 파일을 삭제하면 다른 쪽이 읽어야 할 파일을 지울 수 있다. 쓰기를 통제한 전환 지점, 단일 확정 권위, 참조 이력, 필요한 저장소 자격 증명, reader 전환 순서를 함께 계획해야 한다. 카탈로그 캐시도 새 상태를 재조회하는 시점을 바꾸므로 전환 직후 오래된 상태를 읽는지 관측한다.
+
+이 책의 로컬 파일 기반 예제는 단일 작성자의 개념 학습용이다. 로컬 파일 이름 변경 실험을 여러 writer가 쓰는 객체 저장소의 원자적 확정 보장으로 확대하지 않는다. 저장소의 파일 연산과 카탈로그의 확정 계약은 각각 확인해야 하는 조건이다.
+
+## 이름·파일·commit의 세 경로
+
+catalog는 table 이름을 metadata 위치와 UUID에 연결하고 commit 충돌을 중재한다. FileIO는 metadata·manifest·Parquet·Puffin 바이트를 저장소에서 읽고 쓴다. catalog 인증 성공과 S3 권한 성공은 다르다.
+
+Spark가 prod.lab.orders를 요청하면 catalog가 metadata v10을 준다. engine은 v10→snapshot50→manifest list→manifest→A.parquet와 DV를 읽는다. Trino가 다른 local 이름을 써도 같은 service·UUID·snapshot50을 고정해야 결과를 비교할 수 있다.
+
+W1과 W2가 v10을 읽고 W1이 v11을 게시하면 W2 expected-v10 commit은 실패한다. W2 data file upload는 이미 끝났을 수 있어 refresh·conflict check 뒤 재사용하거나 orphan으로 관리한다.
+
+RESTCatalog는 HTTP client/server 계약이고 설정 한 줄이 server를 시작하지 않는다. credential vending은 제한된 storage credential을 발급하는 선택 기능이다. catalog migration은 폴더 복사가 아니며 UUID·snapshot·branch·경로와 단일 권위 writer를 보존한다. 두 catalog가 독립 GC하면 상대가 참조한 파일을 지울 수 있다.
+
+### 추가 문제 5개
+1. list 성공 뒤 S3 403 가능? **해설:** 권한 경로가 다르다.
+2. W2 실패 이유? **해설:** pointer가 v11로 변했다.
+3. REST 설정이 server 설치? **해설:** 아니다.
+4. warehouse 같으면 같은 table? **해설:** UUID를 본다.
+5. 독립 GC 위험? **해설:** 공유 파일 오판 삭제.
+
 ## 8. 확인 질문과 해설
 
 **질문.** RESTCatalog 설정을 넣었는데 연결 거절이 난다. 무엇이 빠졌을 수 있는가?
@@ -156,7 +213,7 @@ flowchart LR
 
 **해설.** 서로 다른 계층의 버전 참조다. 서비스 수준의 카탈로그 참조와 테이블 안의 snapshot reference를 구별한다.
 
-## 근거와 더 읽기
+## 공식 출처
 
 공식 [Spark configuration](https://iceberg.apache.org/docs/latest/spark-configuration/), [REST catalog specification](https://iceberg.apache.org/rest-catalog-spec/), [AWS integration](https://iceberg.apache.org/docs/latest/aws/), [JDBC catalog](https://iceberg.apache.org/docs/latest/jdbc/), [Nessie integration](https://iceberg.apache.org/docs/latest/nessie/)를 참고한다. HadoopCatalog의 저장소 전제는 [Java API의 catalog 설명](https://iceberg.apache.org/docs/latest/java-api-quickstart/)과 구현 문서를 확인한다.
 

@@ -41,6 +41,57 @@ flowchart LR
 - **Amdahl 법칙:** 일부만 빨라질 때 전체 속도 향상 한계를 계산하는 모델이다.
 - **Little 법칙:** 안정 상태에서 평균 동시성은 도착률 × 평균 체류 시간이라는 관계다.
 
+## 관측값은 어떤 객체를 어떻게 누적했는가
+
+**Observation(관측)**은 시스템의 특정 경계에서 상태나 사건을 기록하는 일이다. **Metric(지표)**은 그 관측을 이름, 값, 단위, label과 시간으로 표현한 자료다. Metric 객체는 보통 application process나 exporter가 만들고 monitoring backend가 일정 기간 저장한다. 이름이 같아도 측정 위치와 집계 규칙이 다르면 같은 숫자가 아니다.
+
+**Counter(누적 계수기)**는 process 시작 뒤 요청 수나 전송 byte처럼 사건이 생길 때 증가하는 값이다. 재시작하면 0으로 돌아갈 수 있으므로 두 시점의 차이와 시간 간격으로 rate를 계산한다. Counter가 감소했다면 실제 사건이 취소된 것이 아니라 process 재시작이나 overflow를 먼저 의심한다.
+
+**Gauge(현재값 계기)**는 queue 길이, 사용 중 KV block, 온도처럼 오르내리는 순간 상태다. Scrape 사이의 짧은 peak를 놓칠 수 있다. “메모리 gauge가 70%였다”는 관측 순간의 값이며 그 사이 99%에 도달하지 않았다는 증명이 아니다.
+
+**Histogram(구간 분포)**은 지연 값을 미리 정한 bucket 경계별 누적으로 센다. 예를 들어 100 ms 이하 80개, 500 ms 이하 98개, 1초 이하 100개라면 99번째 요청이 500 ms와 1초 사이임은 알지만 정확한 99번째 값은 원자료 없이 모른다. 여러 replica histogram을 합칠 수 있지만 bucket 경계와 관측 범위가 같아야 한다.
+
+**Profiler(프로파일러)**는 일정 구간의 함수, GPU kernel, memory transfer와 하드웨어 counter를 더 상세히 수집하는 도구다. Metric은 장기 감시에 유리하고 profiler는 짧은 원인 분석에 유리하다. Profiler 자체가 실행을 느리게 하거나 여러 pass로 workload를 재생할 수 있으므로 일반 latency benchmark와 분리한다.
+
+## 같은 세 요청을 끝까지 측정하는 시간표
+
+세 요청 A, B, C가 각각 0, 10, 20 ms에 gateway에 도착한다고 하자. 인증·tokenization 후 engine enqueue는 10, 25, 35 ms다. GPU는 순서대로 prefill하고 첫 token을 60, 100, 150 ms에 만든다. 마지막 응답은 160, 140, 250 ms다.
+
+| 요청 | 도착 | engine enqueue | 첫 token | 완료 | gateway TTFT | queue+engine TTFT | E2E |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A | 0 | 10 | 60 | 160 | 60 | 50 | 160 |
+| B | 10 | 25 | 100 | 140 | 90 | 75 | 130 |
+| C | 20 | 35 | 150 | 250 | 130 | 115 | 230 |
+
+Gateway 기준 TTFT는 첫 token 시각에서 도착 시각을 뺀다. Engine 지표가 enqueue부터 재면 각각 50, 75, 115 ms라 더 작다. 두 metric 이름이 모두 `ttft`여도 시작점이 다르므로 직접 비교하면 안 된다.
+
+측정 창은 t=0부터 t=250 ms까지다. 완료 요청은 3개라 raw throughput은 `3/0.25=12 req/s`다. SLO가 TTFT 100 ms 이하, E2E 200 ms 이하라면 A와 B만 통과해 goodput은 `2/0.25=8 req/s`다. C를 성공 응답이라는 이유로 goodput에 넣지 않는다.
+
+Counter는 창 시작·끝의 `requests_completed_total` 차이 3을 제공한다. Gauge `queue_depth`는 매 순간 바뀐다. Histogram은 세 TTFT를 bucket에 넣는다. Request trace는 A의 인증, queue, GPU 구간을 한 ID로 연결한다. 같은 사건을 서로 다른 자료 구조로 본 것이며 하나가 다른 하나를 자동으로 대체하지 않는다.
+
+## 비동기 타이밍 반례
+
+CPU 시계 t=0에 kernel launch를 호출하고 t=0.1 ms에 API가 반환됐다고 하자. GPU는 queue의 앞 작업을 기다리다 t=2 ms에 kernel을 시작해 t=7 ms에 끝낸다. CPU 호출 앞뒤는 0.1 ms지만 실제 장치 실행은 5 ms이고 제출부터 완료까지는 7 ms다.
+
+```text
+CPU: 0.0 launch ─ 0.1 return ───────────────── 7.0 completion 확인
+GPU: ───────────── 앞 작업 ─ 2.0 kernel 시작 ─ 7.0 종료
+```
+
+CPU timer에 완료 synchronization을 넣으면 제출부터 완료 7 ms를 잴 수 있다. 같은 stream의 CUDA event를 kernel 직전·직후에 기록하면 장치 구간 약 5 ms를 잴 수 있다. 두 값은 모두 맞을 수 있고 질문이 다르다. 매 반복 전체 장치를 synchronize하면 원래 겹칠 복사와 계산을 직렬화할 수 있으므로 측정이 workload 자체를 바꾸지 않는지도 확인한다.
+
+## 비용은 사용 시간과 유효 결과를 연결한다
+
+시간당 12달러인 replica 2개를 30분 실행했다고 하자. Compute 비용은 `12×2×0.5=12달러`다. 이 동안 output token 12,000,000개가 완성됐지만 SLO를 만족한 token은 9,000,000개다.
+
+```text
+raw cost per 1M output tokens = 12 / 12 = $1.00
+goodput cost per 1M tokens    = 12 / 9  = $1.333...
+```
+
+Storage 1달러, network egress 2달러가 같은 실험에 귀속되면 총비용 15달러이고 goodput 비용은 `15/9≈1.667달러/백만 token`이다. 가격은 지역·계약·시각에 따라 변하므로 실제 보고서는 출처와 날짜를 기록한다. Idle standby와 실패 재시도도 사용 시간에는 포함된다.
+
+
 ## Utilization, throughput, memory는 다르다
 
 GPU utilization이 95%라고 해서 좋은 서비스라고 말할 수 없다.
@@ -254,16 +305,46 @@ timeout count와 censored latency를 함께 보고한다.
 - vLLM metrics 정의: <https://docs.vllm.ai/en/latest/design/metrics/>
 - Triton metrics 정의: <https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/metrics.html>
 
-## 연습문제
+## 연습문제와 완전 해설
 
-1. 전체 요청 1,000개 중 100개가 timeout으로 30초에 끊겼다. 성공 요청만으로 p99를 내도 되는가?
-   답: 안 된다. timeout은 censored sample이다. timeout 수를 따로 보고하고 SLO goodput에도 반영해야 한다.
+### 문제 1. Counter rate
 
-2. 가상 비용이 시간당 6달러, goodput이 3,000 output token/s다. 백만 token당 비용은?
-   답: 시간당 10,800,000 token이므로 `6 / 10.8 = 0.5556달러`다.
+완료 counter가 12:00에 1,000, 12:05에 1,900이다. 평균 완료율은?
 
-3. CPU timer로 CUDA kernel 호출 전후만 쟀더니 0.1 ms가 나왔다. 실제 kernel 시간이 0.1 ms라고 말할 수 있는가?
-   답: 없다. CUDA 호출은 비동기일 수 있으므로 synchronization이나 CUDA event 경계를 확인해야 한다.
+**해설.** 차이는 900건, 시간은 300초이므로 `900/300=3 req/s`다. 중간에 process가 재시작해 counter가 reset됐다면 두 값만 빼면 안 되고 reset 구간을 따로 처리한다.
 
-4. 평균 E2E가 4초이고 초당 12 요청을 안정적으로 받는다. 평균 동시성 추정은?
-   답: Little 법칙의 단순 가정에서 `12 × 4 = 48` 요청이다. 안정 상태가 아니라면 적용하지 않는다.
+### 문제 2. Histogram p99 한계
+
+TTFT histogram에서 500 ms 이하 98개, 1초 이하 100개다. 요청은 100개다. p99를 정확히 700 ms라고 말할 수 있는가?
+
+**해설.** 없다. 99번째와 100번째가 500 ms 초과 1초 이하라는 범위만 안다. 정확한 값에는 더 촘촘한 bucket이나 원시 표본이 필요하다.
+
+### 문제 3. Censoring
+
+1,000개 중 100개가 30초 timeout으로 끊겼다. 성공 900개만으로 p99를 계산하면 무엇이 사라지는가?
+
+**해설.** 가장 느린 censored 요청이 분포에서 빠져 tail이 좋아 보인다. 성공 latency와 함께 timeout 수·비율을 보고하고 goodput에서는 실패로 처리한다. 실제 완료 시간은 30초 이상이라는 것만 안다.
+
+### 문제 4. 비동기 kernel
+
+CPU launch 호출이 0.1 ms, GPU event 구간이 5 ms, 제출부터 완료가 7 ms다. “kernel latency”로 무엇을 보고해야 하는가?
+
+**해설.** 장치 실행을 묻는다면 event 5 ms, 사용자 호출부터 결과 사용 가능까지라면 7 ms다. 0.1 ms는 enqueue 비용이다. 시작·끝 경계를 이름과 함께 기록한다.
+
+### 문제 5. Goodput 비용
+
+시간당 6달러이고 goodput이 3,000 output token/s다. 백만 유효 token당 비용은?
+
+**해설.** 시간당 `3,000×3,600=10,800,000` token이다. `6/10.8≈0.5556달러/백만 token`이다. Storage·network·idle 비용을 포함하면 분자는 늘어난다.
+
+### 문제 6. Little 법칙
+
+평균 E2E 4초, 안정된 도착률 12 req/s이면 평균 동시성은?
+
+**해설.** `L=λW=12×4=48 requests`다. 도착률이 처리 능력을 넘어 queue가 계속 자라는 비정상 상태에는 이 평균 관계를 그대로 용량 보장으로 쓰지 않는다.
+
+### 문제 7. Amdahl 한계
+
+전체 1,000 ms 중 GPU decode 600 ms를 3배 빠르게 했다. 새 전체 시간과 speedup은?
+
+**해설.** 다른 400 ms는 그대로고 decode는 200 ms가 되어 총 600 ms다. Speedup은 `1000/600≈1.67배`다. GPU 구간만 3배여도 queue·CPU·network가 남아 전체는 3배가 아니다.

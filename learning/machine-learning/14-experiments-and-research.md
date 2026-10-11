@@ -1,12 +1,67 @@
 # 14. 실험과 연구 설계
 
+![14. 실험과 연구 설계 도식](assets/operational-evaluation.svg)
+
 [← 이전](13-local-models.md) · [목차](README.md) · [다음 →](15-exercises-glossary-and-sources.md)
+## 연구 계획에 쓰는 말부터 정의한다
+
+**가설**은 관측으로 지지하거나 반박할 수 있도록 쓴 예상이다. **기준군(baseline)**은 새 방법과 비교할 기존 방법이다. **변수**는 실험에서 달라질 수 있는 조건이며 의도적으로 바꾸는 독립 변수, 결과로 측정하는 종속 변수, 같게 유지하는 통제 변수를 구별한다. **표본**은 연구 대상 전체에서 실제로 관측한 일부 사례이고, 같은 입력으로 두 방법을 비교하는 것을 **대응 비교(paired comparison)**라고 한다.
+
+**지표(metric)**는 오답 비율·응답 시간 등 결과를 숫자로 나타낸 것이다. **p99 지연**은 관측 지연의 약 99%가 그 값 이하가 되는 백분위다. **마감시간(deadline)**은 결과가 유효하려면 끝나야 하는 시각이다. **seed**는 난수 수열을 재현하기 위한 초기값이며, seed를 고정해도 모든 하드웨어 실행 순서가 결정되는 것은 아니다. 아래 숫자는 계산 이해를 위한 가상 예이며 실제 장비에서 측정했다는 주장이 아니다.
+
+## 실행 가능한 연구 계획 예시
+
+질문은 “후보 B가 baseline A보다 같은 10 ms deadline 아래 RAN action 오류를 줄이는가”다. 독립변수는 model 종류 하나, 종속변수는 action error·p99 latency·deadline miss, 통제변수는 dataset split, hardware, batch, precision, seed, traffic trace다.
+
+시간 순서로 day1~60 train, 61~80 validation, 81~100 test를 고정한다. 같은 UE와 cell의 겹치는 window가 split을 가로지르지 않게 group도 묶는다. Preprocessing 평균과 표준편차는 train에서만 계산한다.
+
+후보별 seed 5개를 실행하고 각 seed의 정확도·p99·전력을 보존한다. 평균만 쓰지 않고 median, 범위, confidence interval을 기록한다. 실패 run과 OOM도 제외하지 않고 원인과 포함 규칙을 사전에 정한다.
+
+공정 비교는 같은 input, 동일 warm-up, 같은 측정 window와 power cap을 쓴다. B에만 더 큰 GPU와 tuning budget을 주면 architecture 효과와 자원 효과가 섞인다. Ablation은 B의 구성요소 하나를 제거해 기여를 본다.
+
+사전 기각 기준은 p99>10 ms, deadline miss>0.1%, NaN, 안전 범위 위반이다. Accuracy가 올라도 하나를 넘으면 운영 가설을 지지하지 않는다. 결과가 가설과 다르면 실패를 숨기지 않고 조건을 수정한 새 실험으로 분리한다.
+
+### 추가 완전 풀이
+
+1. Test를 보고 lr을 바꾸면? **해설:** test가 선택에 사용돼 독립성을 잃는다.
+2. A 5회,B 1회 비교가 공정한가? **해설:** seed·tuning budget이 달라 불공정하다.
+3. 평균 latency 5,p99 15,deadline10이면? **해설:** tail deadline을 위반한다.
+4. OOM run 삭제는? **해설:** 사전 제외 규칙이 없다면 성공만 고르는 편향이다.
 
 실험은 한 조건을 바꾸고 결과 차이를 측정해 주장에 근거를 만든다.
 
 연구 설계는 질문, 비교 기준, metric, 중단 조건을 실행 전에 고정한다.
 
 좋은 결과만 고르는 사후 선택은 결론을 과장한다.
+
+## 하나의 연구 질문을 20회 paired 실험으로 완성한다
+
+연구 질문은 “같은 10 ms AI-RAN 제어 주기에서 후보 B가 현재 운영 모델 A보다 deadline miss를 늘리지 않으면서 action error를 줄이는가?”다. **모집단(population)**은 앞으로 이 망에서 만날 모든 UE·채널·traffic 주기다. 전부 관측할 수 없어 20개의 독립 traffic trace를 **표본(sample)**으로 뽑는다. **실험 단위(unit)**는 같은 trace와 같은 시간 구간에서 A와 B를 각각 실행한 한 쌍이다.
+
+**독립 변수**는 연구자가 바꾸는 원인 후보이며 model A/B다. **종속 변수**는 결과로 측정하는 action error와 p99 latency다. **통제 변수**는 비교 사이에 같게 유지할 GPU, precision, batch, traffic trace, power cap, warm-up, measurement window다. Seed는 data 순서와 초기화 난수를 재현하는 시작값이다. Seed 자체를 성능 좋은 값으로 고르지 않고 1~20을 미리 고정한다.
+
+Paired 비교는 같은 trace i에서 `difference_i=B_i-A_i`를 계산한다. Trace 난이도가 양쪽에 같이 작용해 단순히 서로 다른 20개를 비교하는 것보다 잡음을 줄인다. Action error가 낮을수록 좋으므로 음수 차이가 B 개선이다.
+
+다음 20개 값은 평균·효과크기·신뢰구간 계산을 설명하기 위해 만든 **가상 관측값**이며, 실제 장비나 클러스터에서 실험을 수행해 얻은 결과가 아니다.
+
+20개 action-error 차이(percentage point)를 다음처럼 얻었다고 하자.
+
+```text
+-1.2,-0.8,-1.0,-0.4,-0.7,-1.5,-0.6,-0.9,-1.1,-0.5,
+-0.3,-0.8,-0.7,-1.4,-0.2,-0.6,-1.0,-0.9,-0.5,-0.8
+```
+
+합은 -15.9, 평균 효과는 `-15.9/20=-0.795 percentage point`다. **효과크기(effect size)**는 단순히 p-value가 아니라 실제 변화량이다. A의 평균 error가 5.0%였다면 B는 평균 약 4.205%이고 상대 감소는 `0.795/5.0≈15.9%`다. Percentage point와 상대 percent를 구분한다.
+
+위 20개 차이의 표본 표준편차를 평균에서 벗어난 값의 제곱합을 19로 나눠 구하면 약 0.3441이다. 평균의 표준오차는 `0.3441/√20≈0.07694`다. 정규 근사를 쓴 95% **신뢰구간(confidence interval)**은 `-0.795±1.96×0.07694`, 약 `[-0.9458,-0.6442]`다. 이 계산은 독립적인 대응 차이와 정규 근사 가정을 사용한다. 작은 표본에서 분산을 추정할 때 t 분포의 임계값 약 2.093을 쓰면 약 `[-0.9560,-0.6340]`로 조금 넓어진다. 이는 절차와 가정 아래 평균 차이의 불확실 범위다. 미래 run 95%가 이 안에 든다는 뜻은 아니다.
+
+Latency paired 차이가 평균 +0.4 ms이고 B의 p99 절대값이 9.6 ms라면 10 ms 기각 문턱 안이다. 그러나 20회 중 두 회가 10.3,10.5 ms로 deadline을 넘었다면 “평균 p99”만으로 통과시키지 않는다. 사전 기각 조건을 `어느 반복에서도 p99>10ms`, `deadline miss>0.1%`, `NaN`, `안전 범위 위반`으로 정했다면 가설은 기각된다.
+
+**강한 기준군(baseline)**은 임의 상수만 내는 약한 방법이 아니라 현재 운영 A와 동일 자원에서 충분히 튜닝한 기존 모델이다. B에만 더 큰 GPU나 더 많은 search budget을 주면 model 효과와 자원 효과가 섞인다.
+
+**Ablation**은 B의 구성요소 하나를 제거한 B-no-feature, B-no-regularizer 등을 같은 paired protocol로 평가한다. Full B가 -0.795pp, B-no-feature가 -0.10pp라면 그 feature가 개선과 연관됐다는 근거지만 다른 interaction 가능성은 남는다.
+
+누출 방지는 trace를 시간·UE·cell 단위로 분할하고, normalization 통계와 threshold를 train/validation에서만 정하는 것이다. Test 20회를 보며 B 설정을 다시 바꾸면 이 20회는 독립 test가 아니며 새 holdout이 필요하다.
 
 ## 주장을 측정 문장으로 바꾸기
 
@@ -80,47 +135,6 @@ FlashAttention-3는 2024 preprint에서 Hopper의 비동기 TMA, Tensor Core, wa
 **문제 5.** Ablation에서 두 요소를 함께 제거해 -9%p면 각 기여는?
 
 **해설.** 개별 기여를 바로 절반씩 나눌 수 없다. 각각 제거한 조건과 상호작용 조건을 별도로 측정해야 한다.
-
-## 이 장의 목표
-
-1. 처음 나오는 단어와 기호를 설명한다.
-2. 작은 입력의 모든 중간값을 계산한다.
-3. 계산 결과와 실제 system 주장을 구분한다.
-
-![14. 실험과 연구 설계 도식](assets/operational-evaluation.svg)
-
-## 기본 단어와 기호
-
-**hypothesis**는 검증 가능한 예상이다.
-
-**independent variable**는 연구자가 바꾸는 조건이다.
-
-**dependent variable**는 결과로 측정하는 값이다.
-
-**control**는 기존 조건을 유지한 비교군이다.
-
-**confounder**는 원인 해석을 섞는 다른 요인이다.
-
-**randomization**는 배정 편향을 줄이는 무작위화이다.
-
-**replication**는 독립 반복이다.
-
-**seed**는 난수 sequence 시작값이다.
-
-**confidence interval**는 추정 불확실성 구간이다.
-
-**effect size**는 차이의 실제 크기이다.
-
-**ablation**는 구성요소를 제거해 기여를 보는 실험이다.
-
-**pre-registration**는 실행 전 질문과 분석을 기록이다.
-
-## 왜 필요한가
-
-- Metric을 결과 뒤 고르면 우연히 좋은 수치를 선택할 수 있다.
-- Seed 하나는 random variation을 대표하지 않는다.
-- 통계적 차이와 운영상 중요한 차이는 다르다.
-- 재현에는 code뿐 아니라 data version과 환경이 필요하다.
 
 ## 입력에서 결과까지
 
@@ -221,14 +235,6 @@ Seed를 여러 개 쓰는 이유는?
 Guardrail metric이 필요한 이유는?
 
 **해설:** 주요 metric 개선이 accuracy, power, QoS 악화로 얻어진 것은 아닌지 확인하기 위해서다.
-
-## 학습 체크리스트
-
-- 용어를 자신의 말로 설명할 수 있는가?
-- 중간 숫자를 계산할 수 있는가?
-- 누가 값을 바꾸는지 말할 수 있는가?
-- 반례와 실패 조건을 말할 수 있는가?
-- 독립 test와 운영 평가를 구분하는가?
 
 ## 공식 자료
 

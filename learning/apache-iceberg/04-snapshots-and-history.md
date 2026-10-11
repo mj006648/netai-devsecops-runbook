@@ -1,13 +1,5 @@
 # 04. 스냅샷·시간 여행·브랜치
 
-## snapshot ID와 sequence number를 함께 읽기
-
-snapshot ID는 커밋 상태 식별자이고 sequence number는 변화 적용 순서를 비교한다. snapshot 100, sequence 7이 data-A를, 101과 8이 data-B를 추가하며 102와 9가 A의 delete를 추가했다고 하자. 현재 reader는 A에서 삭제 대상을 빼고 B를 읽는다. snapshot 101 시간 여행은 delete 전이라 A와 B 원래 행을 읽는다.
-
-rollback은 data file을 덮지 않고 현재 reference가 과거 snapshot을 가리키도록 metadata를 게시한다. audit branch가 101, main이 102를 가리키면 이후 독립적으로 전진할 수 있다. Write-Audit-Publish 검증 중 main이 104로 전진했다면 ancestry와 충돌을 다시 판정한다.
-
-expire snapshots는 history와 참조를, orphan removal은 어떤 metadata에도 없는 파일을, compaction은 살아 있는 data file 배치를 바꾼다. 세 작업의 삭제 대상과 안전 조건은 다르다.
-
 [이 책의 목차](README.md) · [이전 장](03-schema-and-partition-evolution.md)
 
 이 장에서는 “어제 읽었던 데이터를 다시 읽는다”를 실제 참조와 보존 조건으로 해석한다. 스냅샷은 파일의 복사본을 매번 만드는 방식과 다르다.
@@ -136,6 +128,69 @@ Branch·tag는 snapshot expiration에 영향을 주는 retention 규칙을 갖�
 
 Row lineage와 업무 이벤트 추적까지 필요한지는 별도의 요구다. Iceberg snapshot이 전체 데이터 처리 파이프라인의 모든 원천과 변환을 자동 기록한다는 뜻은 아니다.
 
+## 현재 상태, 파일 보존, 다음 변경을 한 시간표로 연결한다
+
+이 절의 **참조(reference)**는 특정 스냅샷을 가리키는 이름 또는 연결이다. main은 쓰기 작업의 기본 브랜치이고, tag는 보존할 상태에 붙이는 이름이다. **브랜치(branch)**는 이후 새 상태로 전진할 수 있는 참조이며 **태그(tag)**는 이름 붙인 특정 상태를 선택하는 데 사용한다. 브랜치와 태그를 만든다고 데이터 파일이 복사되지는 않는다.
+
+### 스냅샷 하나를 고정한 reader는 중간에 새 상태로 뛰지 않는다
+
+다음은 위 연표 S1·S2·S3에 대한 교육용 실행 순서다. **계획(plan)**은 엔진이 이번 요청에서 읽을 파일과 수행할 작업을 정한 결과다.
+
+| 시점 | writer/main | reader R의 선택 | 실제로 해야 할 읽기 |
+| --- | --- | --- | --- |
+| t0 | main=S2, A+B | 아직 조회 전 | 없음 |
+| t1 | main=S2 | S2 선택, A+B 경로 확보 | A와 B |
+| t2 | 주문 102를 뺀 A′ 저장 | 계속 S2 | A와 B |
+| t3 | main=S3, A′+B 확정 | 계속 S2 | A와 B |
+| t4 | 새 reader R2가 S3 선택 | R은 S2, R2는 S3 | R은 A+B, R2는 A′+B |
+
+R이 이미 정한 A를 읽는 도중 main이 S3가 되었다고 A′로 바꾸면 서로 다른 확정 상태를 섞는다. 엔진은 이번 요청이 선택한 상태를 일관되게 읽어야 한다. 오래 실행되는 reader를 보존하는 정책도 필요하다. 과거 스냅샷을 만료시키면서 해당 파일까지 제거하면 진행 중인 요청이 확보했던 경로를 더는 읽지 못할 수 있다. 보존 참조, 최대 실행 시간과 유지보수 유예를 함께 설계한다.
+
+### 롤백은 다음 번호를 과거로 되돌리는 일이 아니다
+
+**롤백(rollback)**은 현재 참조를 보존된 과거 상태로 돌리는 작업이다. 위 연표에서 S3까지 만든 뒤 main을 S1으로 돌리면 현재 읽기 상태는 snapshot 9001, sequence 1이다. 그러나 테이블이 이미 사용한 최대 sequence 3을 잊어서는 안 된다. 이후 새 스냅샷을 만드는 쓰기는 sequence 4를 사용하여 논리적 순서가 재사용되지 않게 한다.
+
+| 사건 | main의 스냅샷 | 해당 스냅샷 sequence | 테이블이 사용한 최대 sequence |
+| --- | --- | ---: | ---: |
+| S1 생성 | 9001 | 1 | 1 |
+| S2 생성 | 4127 | 2 | 2 |
+| S3 생성 | 7812 | 3 | 3 |
+| S1으로 롤백 | 9001 | 1 | 3 |
+| 새 S4 생성 | 교육용 새 ID | 4 | 4 |
+
+스냅샷 ID의 크기, 현재 참조, 스냅샷 sequence, 테이블의 최대 sequence는 각각 다른 질문에 답한다. 속성 하나만 바꾸는 메타데이터 작업마다 반드시 새 스냅샷과 새 sequence가 생기는 것도 아니다. 어떤 작업이 새 데이터 상태를 만드는지 구별해야 한다.
+
+### 브랜치 검증과 게시 사이에도 다른 쓰기가 일어난다
+
+**WAP(Write-Audit-Publish)**는 쓰기를 준비하고 내용을 검토한 다음 공개하는 절차다. **audit**은 여기서 행 수·중복·품질 등을 검사하는 단계다. **게시(publish)**는 검토 결과를 main에서 볼 수 있게 만드는 확정 작업이다. 다음 순서는 기능 이름만으로 원자적 병합이 해결되지 않는 이유를 보여준다.
+
+1. main=S2에서 audit 브랜치를 만들고 새 상태 U를 쓴다.
+2. U에서 주문 번호 중복, 행 수, 금액 범위를 검사한다.
+3. 검사 중 다른 writer가 main을 S3로 전진시킨다.
+4. U를 게시할 때는 U와 S3의 공통 출발점과 변경 내용을 다시 확인한다.
+5. 서로 독립적인 추가라면 지원하는 병합·재적용 절차를 사용할 수 있다. 같은 행이나 파일을 바꾸었다면 충돌을 처리해야 한다.
+6. 최종 게시가 확정된 뒤 새 reader가 선택하는 상태를 확인한다.
+
+**조상 관계(ancestry)**는 새 스냅샷이 어느 이전 스냅샷에서 이어졌는지 나타내는 연결이다. 검증 성공은 U 안의 데이터 조건을 확인한 사건이고 게시 성공은 현재 main과 결합한 사건이다. 둘은 같은 결과가 아니다. 검사 결과를 기록할 때도 입력 스냅샷과 출력 스냅샷을 식별해야 한다.
+
+### 논리 파일 집합과 물리 사용량은 다르다
+
+교육용 크기를 A=64MiB, B=8MiB, A′=48MiB라고 하자. **MiB(메비바이트)**는 1,048,576바이트다. 현재 S3가 읽는 데이터는 A′+B=56MiB지만, S1·S2가 보존되면 A도 필요해 데이터 파일의 물리 합계는 64+8+48=120MiB다. 세 스냅샷의 크기를 단순히 64+72+56으로 더하면 공유되는 A와 B를 중복 계산한다. 여기서는 메타데이터와 저장소 부가 비용을 빼고 데이터 파일만 센다.
+
+보존 비용을 줄이는 작업은 세 가지 질문으로 나눈다. 스냅샷 만료는 어떤 역사와 참조를 남길지, 고아 파일 제거는 어떤 확정 상태에도 포함되지 않은 파일을 정리해도 되는지, 압축·파일 재배치는 현재 행을 어떤 새 파일에 담을지 묻는다. **compaction**은 이 마지막 목적의 파일 병합·재작성이다. 현재 상태를 작은 파일에서 큰 파일로 바꾸더라도 과거 스냅샷이 작은 파일을 참조하면 당장 지울 수 없다.
+
+### 두 반례를 직접 해석한다
+
+“main에 A가 없으니 A를 삭제한다”는 판단은 S1·S2의 참조와 진행 중인 reader를 놓친다. “tag를 만들었으니 모든 미래 쿼리가 그때와 같다”는 판단도 부족하다. 입력 상태 외에 SQL, 엔진 버전, 시간대·타입 해석, 외부 함수가 같아야 같은 실험을 비교할 수 있다. 스냅샷은 중요한 재현 입력이지만 계산 환경 전체의 복사본은 아니다.
+
+## snapshot ID와 sequence number를 함께 읽기
+
+snapshot ID는 커밋 상태 식별자이고 sequence number는 변화 적용 순서를 비교한다. snapshot 100, sequence 7이 data-A를, 101과 8이 data-B를 추가하며 102와 9가 A의 delete를 추가했다고 하자. 현재 reader는 A에서 삭제 대상을 빼고 B를 읽는다. snapshot 101 시간 여행은 delete 전이라 A와 B 원래 행을 읽는다.
+
+rollback은 data file을 덮지 않고 현재 reference가 과거 snapshot을 가리키도록 metadata를 게시한다. audit branch가 101, main이 102를 가리키면 이후 독립적으로 전진할 수 있다. Write-Audit-Publish 검증 중 main이 104로 전진했다면 ancestry와 충돌을 다시 판정한다.
+
+expire snapshots는 history와 참조를, orphan removal은 어떤 metadata에도 없는 파일을, compaction은 살아 있는 data file 배치를 바꾼다. 세 작업의 삭제 대상과 안전 조건은 다르다.
+
 ## 9. 확인 질문과 해설
 
 **질문.** Snapshot ID 9001과 4127 중 9001이 최신인가?
@@ -150,7 +205,7 @@ Row lineage와 업무 이벤트 추적까지 필요한지는 별도의 요구다
 
 **해설.** 보존된 스냅샷·branch·tag에서 참조할 수 있다. 지원되는 retention·정리 도구를 사용한다.
 
-## 근거와 더 읽기
+## 공식 출처
 
 공식 [Spark queries](https://iceberg.apache.org/docs/latest/spark-queries/), [Branching and tagging](https://iceberg.apache.org/docs/latest/branching/), [Spark procedures](https://iceberg.apache.org/docs/latest/spark-procedures/), [Maintenance](https://iceberg.apache.org/docs/latest/maintenance/)가 기능과 조건을 설명한다.
 

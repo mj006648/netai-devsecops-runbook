@@ -2,204 +2,198 @@
 
 [이 책 목차](README.md) · [이전: Isolation과 concurrency](08-isolation-and-concurrency.md) · [다음: Replication과 distributed transaction](10-replication-and-distributed-transactions.md)
 
-WAL(Write-Ahead Log)은 data page 변경 내용을 복구할 log로 먼저 기록한다. 관련 WAL이 durable하기 전에 data page를 durable storage에 쓰지 않는 순서가 핵심이며 COMMIT은 모든 data page flush를 뜻하지 않는다.
-
-모든 출력과 수치는 교육용이며 실제 PostgreSQL·Spark·Iceberg 실행 결과가 아니다.
-
-## LSN과 세 종류의 진행 위치
-
-**LSN**은 WAL byte stream 안의 순서 위치다. WAL buffer는 메모리에 있고, segment file은 지속 저장소에 있다. dirty page는 버퍼 풀의 변경된 사본이며 page LSN은 그 페이지에 반영된 최신 로그 위치를 나타낸다. backend가 변경을 만들고 WAL writer가 로그를 flush하며, background writer/checkpointer가 데이터 페이지를 쓴다. recovery process는 checkpoint 정보에서 출발해 WAL stream을 순서대로 읽는다.
-
-초기 디스크 page42가 value=50,pageLSN=100이라고 하자. UPDATE가 WAL 120과 메모리 value=60,pageLSN=120을 만든다. commit record는 140이고 WAL이 140까지 durable해진 뒤 ACK가 나간다. 데이터 page는 여전히 50일 수 있다. crash 뒤 recovery는 pageLSN 100을 보고 WAL 120의 physical redo를 적용해 60으로 만든다. 이미 pageLSN 120인 사본에는 같은 변경을 다시 적용하지 않는 조건이 반복 안전성을 돕는다.
-
-체크포인트는 모든 작업을 멈추고 완전한 파일 복사본을 만드는 사건이 아니다. 복구 시작 정보를 기록하고 dirty page 쓰기를 진행해 재시작 때 스캔할 로그 범위를 제한한다. 너무 드물면 복구할 WAL과 dirty 집합이 커지고, 너무 잦으면 정상 실행 중 쓰기 압력이 커질 수 있다. WAL 보존은 checkpoint뿐 아니라 replica, archive, backup 복구 지점의 요구를 받는다.
-
-WAL stream의 physical redo와 MVCC visibility를 구분한다. redo는 페이지에 필요한 바이트 변화를 재구성하지만, 어떤 튜플 버전이 특정 snapshot에 보이는지는 creator/ended XID와 commit 상태 규칙이 결정한다. 로그를 재생했다고 모든 버전이 모든 독자에게 보이는 것은 아니다.
-
-이 책의 WAL 모델이 committed transaction의 record만 골라 최종 값을 만드는 방식이라면 실제 crash recovery의 모든 동작을 표현하지 않는다. 실제 엔진은 미커밋 변경이 페이지에 존재할 가능성, commit/abort 상태, page LSN, full-page image를 함께 다룬다. `commit-filtered` 결과 모형은 트랜잭션 의미 확인용이지 물리 redo 검증기가 아니다.
-
-### 문제 5개
-
-1. durable WAL=140, disk pageLSN=100이면 commit 가능한가? **해설:** 계약이 WAL 140 durable을 요구한다면 가능하고 crash 뒤 redo한다.
-2. pageLSN=120에 WAL120을 다시 적용해야 하는가? **해설:** 일반 모형에서는 이미 반영되어 건너뛴다. 실제 레코드 규칙을 따른다.
-3. checkpoint 뒤 WAL을 모두 지워도 되는가? **해설:** replica·archive·backup과 미완료 복구 범위가 필요할 수 있어 아니다.
-4. WAL만 있으면 빈 디스크에서 복구 가능한가? **해설:** 시작 base data와 연속된 필요한 WAL chain이 필요하다.
-5. redo와 visibility 차이는? **해설:** redo는 물리 상태 복원, visibility는 snapshot별 논리 버전 선택이다.
-
 ![09. WAL, checkpoint와 recovery 흐름](assets/wal-recovery.svg)
 
-## 1. 단어와 위치
+데이터베이스가 행 하나를 바꿀 때 실제로는 한 장소만 바뀌지 않는다. 실행 중인 서버의 메모리에는 변경된 데이터 페이지가 생기고, 저장장치에는 아직 예전 페이지가 남을 수 있으며, 변경 내용을 설명하는 별도의 로그 바이트도 만들어진다. 전원이 끊기는 순간 이 세 상태가 서로 다를 수 있다. 이 장은 “커밋 성공 응답을 받은 변경은 장애 뒤에도 남아 있어야 한다”는 약속을 어떻게 지키는지, 어느 바이트가 어디까지 갔는지를 따라가며 설명한다.
 
-| 용어 | 뜻 |
-| --- | --- |
-| WAL | Write-Ahead Log, data page보다 먼저 durable하게 기록하는 변경 log |
-| LSN | Log Sequence Number, WAL 위치를 나타내는 순서 값 |
-| WAL record | Page·transaction 변경을 재현하거나 판단하는 log entry |
-| WAL buffer | Log record가 storage flush 전 머무는 memory |
-| Commit record | Transaction commit을 나타내는 WAL state |
-| Checkpoint | Recovery 시작점을 앞으로 옮기기 위한 consistency 지점 |
-| Redo | Durable WAL을 다시 적용해 page를 최신 상태로 만드는 작업 |
-| Crash recovery | 정상 shutdown 없이 재시작할 때 log와 page를 복구하는 절차 |
-| Full-page image | 일부 조건에서 page 전체 image를 WAL에 담는 record |
-| Torn page | Storage write 일부만 반영되어 page가 찢어진 상태 |
+## 1. 먼저 실제 객체를 구분한다
 
-## 2. 실제 객체
+**페이지(page)** 는 테이블과 인덱스 내용을 저장하는 고정 크기 블록이다. PostgreSQL의 보통 페이지는 8KiB이며, 데이터 디렉터리의 관계 파일 안에 있다. 서버는 필요한 페이지를 저장장치에서 공유 버퍼라는 메모리 영역으로 읽는다. 공유 버퍼의 페이지를 수정했지만 그 새 바이트를 아직 관계 파일에 쓰지 않았다면 그 페이지를 **더티 페이지(dirty page)** 라고 한다. 더티는 오류라는 뜻이 아니라 “메모리 사본이 저장장치 사본보다 새롭다”는 상태다. 버퍼 관리기와 체크포인터가 이 상태를 관리하며, 페이지가 기록되거나 버퍼에서 제거될 때까지 지속된다.
 
-- Shared WAL buffer
+페이지를 매번 커밋 때 저장장치에 쓰면 서로 멀리 떨어진 테이블·인덱스 페이지를 작은 트랜잭션마다 동기화해야 한다. 그래서 데이터베이스는 변경을 더 작고 순차적인 기록으로 먼저 남긴다. **WAL(Write-Ahead Log, 선행 기록 로그)** 레코드는 “페이지 42의 어떤 바이트를 이렇게 바꾸었다” 같은 물리적 변경 정보와 트랜잭션 커밋 정보를 담는 바이트열이다. 서버 프로세스가 공유 메모리의 WAL 버퍼에 만들고, WAL writer 또는 커밋을 처리하는 프로세스가 데이터 디렉터리의 pg_wal 아래 세그먼트 파일에 쓴다. 오래된 세그먼트는 복구·복제·아카이브에 더 필요 없을 때 재활용되거나 삭제된다.
 
-- WAL segment files
+**LSN(Log Sequence Number, 로그 순서 위치)** 은 트랜잭션 번호가 아니라 WAL 바이트 스트림 안의 위치다. LSN 120의 레코드 다음에 20바이트짜리 레코드가 있다면 다음 위치가 140처럼 증가할 수 있다. 숫자 차이는 시간 20ms나 트랜잭션 20개를 뜻하지 않는다. 로그의 어느 지점까지 생성·기록·확정·재생되었는지를 한 축에서 비교할 수 있게 하는 주소다.
 
-- Data file dirty page
+“메모리에서 파일 쓰기 호출이 끝났다”와 “갑작스러운 전원 상실 뒤에도 남는다”도 다르다. 운영체제는 쓰기 데이터를 페이지 캐시에 보관할 수 있고, 저장장치도 휘발성 캐시를 가질 수 있다. **flush 또는 동기화** 는 특정 LSN까지의 WAL을 복구 가능한 안정 저장소에 내렸다고 데이터베이스가 판단하는 절차다. PostgreSQL은 플랫폼과 설정에 따라 fsync, fdatasync, 동기식 open 같은 방식을 쓴다. **내구성(durability)** 은 성공한 커밋이 이후 장애에도 사라지지 않는다는 관찰 가능한 약속이다. fsync 호출 하나가 내구성과 같은 단어는 아니다. 커널, 장치 드라이버, RAID 제어기, 전원 보호 캐시까지 동기화 계약을 정직하게 지켜야 그 호출이 약속의 근거가 된다.
 
-- Page LSN
+## 2. write-ahead라는 순서 규칙
 
-- Checkpoint record와 control metadata
+WAL의 핵심은 단순히 로그 파일이 존재한다는 사실이 아니라 순서다.
 
-- Recovery process의 redo position
+> 어떤 데이터 페이지의 새 바이트를 관계 파일에 기록하기 전에, 그 새 바이트를 복원할 수 있는 WAL 레코드가 먼저 안정 저장소에 확정되어야 한다.
 
-## 3. 입력에서 결과까지
+페이지 안에는 보통 그 페이지에 마지막으로 반영된 로그 위치를 나타내는 **pageLSN** 이 있다. pageLSN은 “이 페이지 전체가 이 시각에 만들어졌다”는 시계가 아니라, 이 페이지에 반영한 최신 WAL 레코드의 위치다. 복구기가 WAL 레코드 LSN 120을 만났을 때 디스크 페이지의 pageLSN이 100이면 반영이 빠졌을 수 있으므로 redo한다. 이미 pageLSN이 120 이상이면 그 변경은 반영된 것으로 보고 반복 적용을 피할 수 있다. 이 비교가 복구 작업을 재시작 가능하게 만든다.
 
-```mermaid
-flowchart LR
- I["입력"] --> X["실행 주체"]
- X --> S["중간 상태"]
- S --> O["결과 또는 오류"]
-```
+### 하나의 UPDATE를 끝까지 추적한다
 
-1. Transaction update가 buffer page를 dirty하게 만든다.
+다음 숫자는 장치 성능을 측정한 값이 아니라 순서를 이해하기 위한 교육용 모형이다.
 
-2. 변경을 설명하는 WAL record와 LSN을 생성한다.
+초기 상태는 디스크의 페이지 42가 값 50, pageLSN 100이고 메모리에도 같은 사본이 있다고 하자. 트랜잭션 T1이 값을 60으로 바꾼 뒤 커밋한다.
 
-3. Page는 그 record LSN을 기억한다.
+| 단계 | WAL 생성 끝 | 운영체제에 쓴 끝 | 안정 저장소에 확정된 끝 | 메모리 페이지 42 | 디스크 페이지 42 | 클라이언트 |
+|---|---:|---:|---:|---|---|---|
+| 0 시작 | 100 | 100 | 100 | 값 50, pageLSN 100 | 값 50, pageLSN 100 | 요청 전 |
+| 1 UPDATE | 120 | 100 | 100 | 값 60, pageLSN 120, dirty | 값 50, pageLSN 100 | 대기 |
+| 2 WAL write | 120 | 120 | 100 | 값 60, pageLSN 120, dirty | 값 50, pageLSN 100 | 대기 |
+| 3 COMMIT 생성 | 140 | 120 | 100 | 값 60, pageLSN 120, dirty | 값 50, pageLSN 100 | 대기 |
+| 4 WAL flush | 140 | 140 | 140 | 값 60, pageLSN 120, dirty | 값 50, pageLSN 100 | 대기 |
+| 5 ACK | 140 | 140 | 140 | 값 60, pageLSN 120, dirty | 값 50, pageLSN 100 | 성공 수신 |
+| 6 나중의 page write | 140 | 140 | 140 | 값 60, clean | 값 60, pageLSN 120 | 이미 완료 |
 
-4. Commit은 commit record까지 WAL flush를 요구한다.
+단계 4에서 데이터 페이지는 여전히 옛 값 50이다. 그런데도 단계 5에서 성공을 응답할 수 있는 이유는 WAL 120으로 값을 60으로 재구성할 수 있고, 커밋 레코드 140으로 T1이 성공한 트랜잭션임을 알 수 있기 때문이다. 커밋 때 필요한 것은 모든 데이터 페이지의 동기화가 아니라 필요한 WAL의 동기화다. 여러 세션의 커밋 레코드를 한 번의 동기화로 확정하는 **그룹 커밋** 은 이 원리를 이용해 처리량을 높인다.
 
-5. Client에 commit success를 보낼 수 있다.
+## 3. 장애 경계는 응답과 함께 읽는다
 
-6. Data page는 이후 background writer/checkpoint가 flush한다.
+### 장애 A: UPDATE 레코드도 확정되기 전
 
-7. Crash가 나면 마지막 checkpoint 정보를 읽는다.
+단계 1 뒤 전원이 끊기면 메모리의 값 60은 사라지고 디스크에는 값 50이 남는다. T1은 성공 응답을 받지 않았다. 다시 시작한 서버는 안정 저장소에 없는 바이트를 복구 대상으로 삼지 않는다. 결과 50은 약속을 위반하지 않는다.
 
-8. Recovery가 WAL record를 순서대로 scan한다.
+### 장애 B: 변경 WAL은 있지만 커밋 레코드는 없다
 
-9. Page LSN이 뒤처진 record를 redo한다.
+LSN 120까지 확정된 뒤 140 커밋 전에 장애가 났다고 하자. 물리적 복구가 페이지 변경 일부를 재현할 수 있어도 T1은 커밋한 트랜잭션이 아니다. PostgreSQL의 다중 버전 행에는 트랜잭션 상태가 연결되므로 정상 질의는 중단된 T1의 행 버전을 보지 않는다. “redo가 바이트를 만들었다”와 “독자가 그 행을 본다”는 서로 다른 판단이다.
 
-10. Consistent end에 도달하면 normal service를 시작한다.
+### 장애 C: 커밋은 확정됐지만 ACK가 유실됨
 
-## 4. 숫자 시간표
+단계 4 직후 서버가 죽어 응답이 네트워크를 통과하지 못했다면, 클라이언트는 실패인지 성공인지 알 수 없다. 복구 후 값은 60이어야 한다. 클라이언트가 무조건 같은 결제를 다시 보내면 두 번 실행될 수 있다. 요청 식별자와 고유 제약을 이용한 멱등 처리, 또는 결과 조회가 필요한 이유다. 데이터베이스 내구성은 네트워크가 클라이언트에게 결과를 전달했다는 보장까지 포함하지 않는다.
 
-- page change WAL LSN=120
+### 장애 D: ACK 뒤, 데이터 페이지 기록 전
 
-- commit record LSN=140
+단계 5 뒤 장애가 나면 디스크 페이지는 값 50, pageLSN 100이다. 복구기는 커밋된 WAL 120을 읽고 pageLSN 100 < 120이므로 변경을 redo하여 값 60, pageLSN 120으로 만든다. 이 사례가 WAL이 해결하는 대표 문제다.
 
-- WAL durable through 140
+## 4. redo, rollback, undo를 섞지 않는다
 
-- data page on disk LSN=90여도 commit 가능
+**redo** 는 로그에 기록된 변경을 데이터 파일에 다시 적용하는 물리적 복구 작업이다. SQL UPDATE 문을 다시 실행하는 것이 아니며, 당시의 실행 계획을 다시 고르지도 않는다. 페이지 수준 정보와 LSN을 이용해 장애 직전의 일관된 물리 상태로 전진한다.
 
-- recovery가 91~140 관련 record를 redo
+**rollback** 은 진행 중인 트랜잭션이 스스로 취소되거나 오류로 중단될 때 그 트랜잭션의 결과가 사용자에게 커밋된 것으로 보이지 않게 만드는 논리적 효과다. **undo** 는 어떤 시스템에서는 이전 값을 로그에 기록해 미완료 변경을 역방향으로 되돌리는 별도 복구 단계를 뜻한다. PostgreSQL은 MVCC 행 버전과 트랜잭션 커밋 상태를 이용하므로, 전통적 ARIES 설명처럼 모든 미완료 사용자 변경을 일반적인 crash-recovery undo 단계로 역재생한다고 이해하면 틀린다. 중단된 버전은 가시성 검사에서 제외되고 나중에 vacuum이 회수한다. 제품마다 로그 형식과 복구 알고리즘이 다르므로 “모든 WAL 시스템은 redo와 undo를 같은 방식으로 한다”고 일반화할 수 없다.
 
-## 5. 조건과 경계
+## 5. checkpoint가 하는 일과 하지 않는 일
 
-WAL-first rule은 data page보다 관련 WAL durability가 먼저라는 순서다.
+WAL을 처음부터 끝까지 재생하면 데이터베이스가 커질수록 재시작 시간이 끝없이 늘어난다. **checkpoint** 는 “이 지점 이전 변경은 필요한 데이터 파일에 반영되었다”고 복구기의 출발점을 앞으로 옮기는 절차다. PostgreSQL의 checkpointer 프로세스는 더티 버퍼를 일정 시간에 걸쳐 쓰고, 안전한 redo 시작 위치를 나타내는 체크포인트 레코드를 WAL에 남긴다.
 
-Commit flush는 WAL이며 모든 dirty data page를 즉시 flush하지 않을 수 있다.
+checkpoint는 실행 중인 데이터베이스 전체를 한순간 멈추고 복사한 완전한 스냅샷이 아니다. 쓰기가 계속되는 동안 페이지를 점진적으로 내린다. 그래서 “checkpoint 시작 시각 이후 WAL은 전부 필요하고 이전 것은 전부 즉시 삭제 가능하다”처럼 한 시각으로 단순화하면 안 된다. 완료된 체크포인트 레코드와 그 안의 redo 위치가 복구 기준이며, 아카이브·복제 슬롯·백업이 더 오래된 WAL을 요구하면 그 세그먼트도 유지해야 한다.
 
-Checkpoint는 WAL을 모두 지우는 event가 아니다. Replication·backup·recovery horizon이 보존을 결정한다.
+교육용으로 redo 시작 LSN이 90이고 디스크 페이지 42의 pageLSN이 100이라고 하자. 복구는 90부터 레코드를 훑지만, 페이지 42에 대한 95 레코드는 이미 반영됐으므로 건너뛴다. 120 레코드는 100보다 새로우므로 적용한다. “스캔 시작 위치”와 “각 페이지에 실제 적용하는 위치”가 다르다.
 
-Long checkpoint interval은 recovery WAL 양을 늘릴 수 있고 잦은 checkpoint는 write pressure를 높일 수 있다.
+checkpoint 간격을 짧게 하면 장애 후 재생할 WAL이 줄 수 있지만, 더티 페이지 기록 횟수와 I/O가 늘 수 있다. PostgreSQL에서 full_page_writes가 켜져 있으면 체크포인트 뒤 처음 수정되는 페이지의 전체 이미지를 WAL에 기록할 수 있어서 체크포인트가 너무 잦으면 WAL 양도 늘어난다. 따라서 복구 시간 목표, 쓰기 지연, WAL 발생률, 저장 공간을 함께 측정해야 한다.
 
-WAL archive는 base backup과 함께 복구 chain을 이룬다.
+## 6. 찢어진 페이지와 full-page image
 
-Filesystem와 device가 flush contract를 지켜야 durability 가정이 성립한다.
+8KiB 페이지 쓰기가 저장장치에서 하나의 원자 동작이라는 보장은 일반적으로 없다. 전원이 끊길 때 앞부분은 새 바이트이고 뒷부분은 옛 바이트인 **torn page**, 즉 찢어진 페이지가 생길 수 있다. 단순한 “필드 A를 3으로 바꿔라” WAL만으로는 어느 나머지 바이트가 손상됐는지 복원하기 어렵다.
 
-## 6. 실패를 읽는 순서
+PostgreSQL의 full_page_writes가 활성화된 일반 구성에서는 체크포인트 뒤 그 페이지의 첫 변경에 전체 페이지 이미지를 WAL에 포함해 이런 위험을 복구할 기반을 만든다. 이것은 매 UPDATE마다 전체 페이지를 기록한다는 뜻이 아니다. 또한 체크섬은 손상을 탐지하는 데 도움을 주지만, 올바른 바이트를 스스로 만들어 내는 복구 원본은 아니다. 탐지와 복원이 다른 역할임을 구분해야 한다.
 
-1. 어느 transaction·snapshot·LSN·stage인지 identity를 적는다.
+## 7. WAL 보존과 시점 복구
 
-2. Client 성공과 storage·replica 완료를 구분한다.
+**base backup** 은 데이터 파일 집합의 물리 백업이고, **WAL archive** 는 이후 로그 세그먼트를 별도 안전 장소에 계속 보관한 것이다. 백업이 복사되는 동안 파일들이 서로 다른 시점의 상태여도, 그 구간의 WAL이 완전하면 복구 과정이 내부 불일치를 고칠 수 있다. 특정 목표 시각 직전까지 WAL을 재생하는 것을 point-in-time recovery, 즉 시점 복구라고 한다.
 
-3. Estimate와 actual을 분리한다.
+WAL 보존량은 checkpoint 하나로만 정해지지 않는다. 다음 중 가장 오래된 요구가 경계를 잡는다.
 
-4. Retry가 전체 operation인지 일부 request인지 확인한다.
+- 아직 소비하지 못한 물리 복제본 또는 replication slot
+- 아직 보관소로 옮기지 못한 archive 작업
+- base backup과 시점 복구 정책
+- 현재 crash recovery에 필요한 redo 위치
 
-5. External side effect와 orphan object를 찾는다.
+느린 복제본이나 실패한 archive 명령 때문에 pg_wal이 계속 커질 수 있다. “max_wal_size가 있으니 디스크 사용량은 그 값을 절대 넘지 않는다”는 해석은 틀리다. 운영자는 WAL 생성 바이트/초, archive 지연, slot이 붙잡은 바이트, checkpoint 빈도와 시간을 함께 관찰해야 한다.
 
-6. Version별 공식 보장을 확인한다.
+## 8. 가시성과 물리 복구의 두 판정표
 
-## 7. 오해와 반례
+복구 뒤 행을 반환하려면 두 질문을 모두 통과해야 한다.
 
-- COMMIT은 table file의 모든 변경 page를 sync한다.
+| 질문 | 판단 자료 | 예 |
+|---|---|---|
+| 필요한 페이지 바이트가 있는가 | WAL 레코드 LSN과 pageLSN | 100 < 120이므로 redo |
+| 그 행 버전을 이 독자가 볼 수 있는가 | 만든 트랜잭션의 커밋 상태와 독자의 snapshot | T1 commit이면 보임, abort면 안 보임 |
 
-- Checkpoint 뒤 WAL은 즉시 모두 삭제된다.
+장난감 모델에서 commit된 WAL만 골라 값을 합산할 수는 있다. 실제 PostgreSQL 복구를 그런 “커밋된 SQL만 재실행” 모델로 이해해서는 안 된다. 물리 레코드 재생, 트랜잭션 상태 복구, MVCC 가시성 판단이 서로 협력한다.
 
-- WAL만 있으면 base data 없이 언제나 복구한다.
+## 9. 운영에서 답해야 할 질문
 
-- Redo는 SQL statement를 그대로 다시 실행한다.
+1. 성공 ACK는 어느 저장 계층의 어느 LSN 확정 뒤 나가는가?
+2. 비동기 커밋 설정을 쓰면 허용하는 데이터 손실 창은 얼마인가?
+3. 최근 checkpoint의 redo 위치와 현재 WAL 끝 사이가 몇 바이트인가?
+4. archive와 복제 slot 중 무엇이 가장 오래된 WAL을 붙잡는가?
+5. 장애 복구 시험에서 실제 재시작 시간과 reader 결과가 요구 조건을 만족하는가?
+6. 저장장치가 flush 명령과 전원 상실 보호 계약을 실제로 지키는가?
 
-- Replica WAL이 backup을 자동 대체한다.
+## 10. 완전 풀이 문제
 
-## 8. 문제
+### 문제 1. 어느 순서가 write-ahead 규칙을 깨는가?
 
-1. WAL durable LSN 140, data page LSN 90에서 commit 가능한가?
+페이지 P의 pageLSN을 220으로 바꾼 뒤 관계 파일을 먼저 확정하고, WAL은 200까지만 확정했다.
 
-2. Checkpoint의 목적은?
+**풀이:** P의 새 바이트를 복원하는 레코드 220이 안정 저장소에 없는데 데이터 파일에 pageLSN 220이 먼저 기록됐다. 장애로 페이지가 찢어지면 복구 원본이 없다. WAL 220을 먼저 확정한 뒤 P를 기록해야 한다. 데이터 페이지가 먼저 “write 호출”만 되었더라도 실제 저장 순서가 바뀔 수 있으므로 데이터베이스는 필요한 로그 flush를 강제한다.
 
-3. WAL만 보관하면 충분한 backup인가?
+### 문제 2. pageLSN 비교
 
-## 9. 해설
+디스크 P의 pageLSN은 310이다. 복구가 P 대상 WAL 280, 310, 350을 순서대로 만났다.
 
-1. WAL-first와 recovery contract가 충족되면 가능하며 crash recovery가 redo한다.
+**풀이:** 280과 310은 페이지가 이미 그 지점 이상을 반영했으므로 다시 적용할 필요가 없다. 350은 310보다 새로우므로 적용하고 pageLSN을 350으로 올린다. 단, 실제 redo 가능 여부에는 레코드 유형과 페이지 유효성 검사도 관여한다. 이 비교는 핵심 원리를 단순화한 것이다.
 
-2. Recovery가 scan해야 할 시작점과 dirty-page 상태를 관리해 recovery 범위를 제한하는 것이다.
+### 문제 3. ACK가 없으면 abort인가?
 
-3. 아니다. 시작 base backup과 필요한 WAL chain, restore 검증이 필요하다.
+커밋 LSN 500이 확정된 직후 서버가 죽었고 ACK는 클라이언트에 도착하지 않았다.
 
-## 10. 공식 자료
+**풀이:** ACK 부재만으로 abort라고 결론 낼 수 없다. 복구 후 트랜잭션은 커밋으로 나타날 수 있다. 클라이언트는 요청 ID로 결과를 조회하거나 같은 ID의 재시도를 중복 실행하지 않게 해야 한다. 이는 “결과 미상” 상태이며 데이터베이스 내부 커밋 상태와 네트워크 관찰이 다르다.
 
-- [공식 문서](https://www.postgresql.org/docs/16/wal-intro.html)
+### 문제 4. checkpoint가 끝났는데 왜 옛 WAL이 남는가?
 
-- [CMU 15-445/645 Fall 2024](https://15445.courses.cs.cmu.edu/fall2024/syllabus.html)
+redo에는 LSN 800 이후만 필요하지만 복제 slot이 620부터 요구하고 archive는 700까지 완료됐다.
 
-다음 장에서는 이 계약을 더 큰 execution 또는 재현 모델에 연결한다.
+**풀이:** crash recovery만 보면 800 이전을 버릴 수 있지만, 복제본은 620 이후를 아직 받아야 한다. 가장 오래된 요구 620이 보존 경계가 된다. 이 상태가 길어지면 pg_wal 공간이 증가하므로 slot 소비자 상태를 조사해야 한다.
 
+### 문제 5. dirty page가 많으면 커밋이 모두 느린가?
 
-## 보강: LSN별 WAL, dirty page, checkpoint, crash
+T1이 서로 다른 1,000개 페이지를 바꾸지만 WAL은 순차적으로 기록된다.
 
-WAL(Write-Ahead Log)은 데이터 페이지를 저장 장치에 쓰기 전에 그 변경을 설명하는 로그를 먼저 내구화하는 방식이다. LSN(Log Sequence Number)은 WAL 안의 위치·순서를 나타내는 번호다. **dirty page**는 버퍼 풀에서 바뀌었지만 데이터 파일에는 아직 기록되지 않은 페이지다.
+**풀이:** 동기식 커밋의 직접 조건은 보통 커밋 레코드까지 필요한 WAL 확정이다. 1,000개 데이터 페이지를 모두 그 순간 동기화할 필요는 없다. 그러나 WAL 양 증가, 버퍼 압박, 이후 checkpoint 쓰기와 full-page image 때문에 전체 지연은 커질 수 있다. “커밋 경로의 필수 동기화”와 “나중에 치르는 I/O 비용”을 분리해야 한다.
 
-![WAL 선행 기록과 충돌 복구](assets/wal-recovery.svg)
+### 문제 6. redo가 됐는데 SELECT에 행이 없다
 
-account page 42의 디스크 값이 50이고 `pageLSN=10`인 상태에서 60으로 갱신한다고 하자.
+중단된 T2가 만든 행 바이트가 WAL 재생으로 페이지에 존재한다.
 
-| 시각 | 사건과 실행 주체 | WAL 상태 | 버퍼 풀 page 42 | 디스크 page 42 |
-|---:|---|---|---|---|
-| t0 | backend가 UPDATE 시작 | durable LSN≤10 | value=50, clean | value=50, pageLSN=10 |
-| t1 | WAL manager가 변경 레코드 생성 | buffer에 LSN 11 | value=60, dirty, pageLSN=11 | 여전히 50 |
-| t2 | COMMIT 레코드 생성·WAL flush | LSN 12까지 durable | 여전히 dirty 60 | 여전히 50일 수 있음 |
-| t3 | checkpoint가 대상 페이지 쓰기 시작 | LSN 12 durable | dirty 또는 write 중 | 성공하면 60, pageLSN=11 |
-| t4 | crash | 메모리 WAL buffer 소실 | 버퍼 풀 소실 | 쓰기 완료 여부에 따라 50 또는 60 |
-| t5 | startup recovery가 redo | LSN 11부터 검사 | 복구 버퍼에 60 | pageLSN이 10이면 redo 후 11 |
+**풀이:** 물리적으로 바이트가 있다는 사실만으로 가시하지 않다. snapshot과 트랜잭션 상태 검사에서 T2가 커밋되지 않았으므로 독자는 그 버전을 제외한다. 이후 vacuum이 더 이상 누구에게도 필요 없는 버전을 회수할 수 있다.
 
-COMMIT 성공은 관련 WAL이 요구된 수준으로 내구화되었다는 뜻이지 모든 데이터 페이지가 flush되었다는 뜻이 아니다. 그래서 t2 직후 디스크 데이터 페이지가 50이어도 WAL 11을 사용해 복구할 수 있다.
+### 문제 7. 더 짧은 checkpoint 간격은 언제 손해인가?
 
-```mermaid
-sequenceDiagram
- participant B as Backend
- participant W as WAL writer/storage
- participant P as Buffer page 42
- participant D as Data file
- B->>W: UPDATE record LSN 11
- B->>P: value=60, pageLSN=11, dirty
- B->>W: COMMIT LSN 12 flush 요청
- W-->>B: LSN 12 durable
- Note over P,D: 이때 D는 value=50, pageLSN=10일 수 있음
- B--xP: crash로 메모리 상태 소실
- W->>D: recovery가 LSN 11 redo
- D-->>D: value=60, pageLSN=11
-```
+장애 복구 목표는 이미 충족하지만 checkpoint를 두 배 자주 수행했다. 쓰기 지연과 WAL 양이 늘었다.
 
-체크포인트는 “그 순간 모든 쓰기가 멈추고 완전한 데이터 파일 복사본을 만든다”는 뜻이 아니다. 복구가 살펴볼 시작 범위를 정하고 dirty page 쓰기를 진행하는 사건이다. crash가 체크포인트 도중 나도 WAL과 page LSN을 비교해 필요한 기록을 재생한다.
+**풀이:** 더티 페이지를 더 자주 내리고, full_page_writes 조건에서는 각 checkpoint 뒤 첫 페이지 변경의 전체 이미지가 다시 발생할 수 있다. 복구할 WAL 감소가 필요하지 않다면 쓰기 증폭만 커질 수 있다. 변경 전후 checkpoint 시간, WAL bytes/s, p95 커밋 지연, 실제 복구 시간을 같은 부하에서 비교해야 한다.
 
-page LSN이 이미 11이면 같은 LSN 11을 다시 적용하지 않는 식의 조건이 redo의 반복 안전성에 도움을 준다. 실제 엔진은 레코드 종류, full-page image, 손상 검출 등 더 복잡한 규칙을 사용한다.
+### 문제 8. checksum 성공이면 내구성이 증명되는가?
 
-**오해: commit은 변경 데이터 페이지를 모두 디스크에 썼다는 뜻이다.** WAL이 먼저 내구화되면 dirty page는 나중에 기록될 수 있다. **오해: checkpoint가 있으면 WAL이 필요 없다.** 마지막 체크포인트 뒤 변경과 체크포인트 도중 미완료 페이지를 복구하려면 WAL이 필요하다. **오해: LSN이 크면 무조건 모든 페이지에 적용한다.** WAL 레코드의 대상 페이지와 page LSN, 트랜잭션·레코드 규칙을 함께 본다.
+재시작 뒤 읽은 페이지의 checksum이 맞는다.
+
+**풀이:** 그 페이지 바이트가 내부적으로 일관돼 보인다는 근거일 뿐, ACK한 최신 트랜잭션이 모두 존재한다는 증거는 아니다. 오래된 완전한 페이지도 checksum은 맞을 수 있다. 내구성은 커밋 LSN, WAL flush 계약, 복구 결과와 애플리케이션 불변식을 함께 확인해야 한다.
+
+
+## 11. 로그가 지나가는 각 경계의 측정값
+
+운영 화면에서 WAL 위치 하나만 보고 “안전하다”고 말할 수 없다. 생성 위치는 서버가 새 레코드용 바이트 범위를 예약하고 내용을 만든 끝이다. write 위치는 그 바이트를 커널에 넘긴 끝이고, flush 위치는 데이터베이스가 안정 저장 계약을 완료했다고 보는 끝이다. archive 위치는 별도 보관소로 성공적으로 옮긴 세그먼트의 끝이며, 복제본의 replay 위치는 복제본 데이터 페이지에 실제 적용한 끝이다. 같은 LSN 축을 쓰지만 질문이 다르다.
+
+예를 들어 현재 생성 10,000, write 9,900, flush 9,800, archive 9,000이라고 하자. 생성과 flush의 200바이트 차이는 로컬 장애 때 아직 내구적이지 않을 수 있는 구간이고, flush와 archive의 800바이트 차이는 주 서버 전체를 잃고 archive만으로 복구할 때의 위험 구간이다. 이 수치는 교육용이며 실제 LSN 차이는 레코드 수나 행 수와 같지 않다. 또한 비동기 커밋을 허용하면 클라이언트가 받은 ACK 경계가 flush보다 앞설 수 있으므로 설정도 함께 읽어야 한다.
+
+**RPO(Recovery Point Objective, 복구 시 허용할 최대 데이터 손실 범위)** 는 “백업이 하루 한 번” 같은 일정만으로 정해지지 않는다. 실제 장애 종류별로 이용 가능한 가장 최신 WAL이 어디까지인지가 결정한다. **RTO(Recovery Time Objective, 서비스를 되살리는 데 허용할 시간)** 는 base backup 복원 시간, 읽어야 할 WAL 양, 저장장치 속도, 페이지 접근 패턴에 좌우된다. checkpoint를 조정할 때 RTO만 줄이고 정상 쓰기 지연이나 RPO를 악화시키지 않았는지 함께 본다.
+
+## 12. 단일 행 변경도 여러 페이지와 여러 로그 레코드를 만든다
+
+SQL 한 줄이 WAL 레코드 한 개와 일대일로 대응한다고 생각하면 용량과 복구를 잘못 예측한다. 행 UPDATE는 새 행 버전을 담는 heap 페이지, 인덱스 키가 바뀌면 여러 인덱스 페이지, 트랜잭션 상태 자료, 필요하면 full-page image에 영향을 줄 수 있다. 반대로 하나의 WAL flush가 여러 트랜잭션 커밋을 함께 확정할 수도 있다. SQL 문 수, 수정 행 수, WAL 바이트, 저장장치 동기화 횟수는 각각 다른 측정량이다.
+
+T3가 page 7의 행을 바꾸고 인덱스 page 90에도 새 항목을 넣었다고 하자. heap 변경 LSN 610, index 변경 LSN 650, commit LSN 670이라면 관계 파일의 page 7과 90을 쓰기 전에 각각 필요한 WAL 610과 650이 먼저 확정되어야 한다. T3에 성공 ACK를 내보내려면 동기식 커밋 가정에서 670까지 확정해야 한다. page 7만 디스크에 최신이고 page 90은 옛 상태인 채 장애가 나도, 복구가 650을 적용해 둘의 물리 상태를 맞춘다. 이것이 “행을 다시 UPDATE한다”가 아니라 각 저수준 변경을 redo한다는 뜻이다.
+
+## 13. 복구 시험에서 흔히 놓치는 반례
+
+첫째, 프로세스만 정상 종료한 뒤 다시 켜는 시험은 부족하다. 정상 종료 과정은 버퍼와 제어 정보를 정리하므로 갑작스러운 장애 경로와 다르다. 둘째, 한 번의 장애 성공은 저장장치 flush 계약을 통계적으로 입증하지 않는다. 전원 상실, 커널 중단, 저장장치 교체 같은 실패 유형을 구분해야 한다. 셋째, 데이터베이스가 열린다는 사실만 검사하면 업무 불변식 손상을 놓친다. ACK 목록과 실제 주문·잔액·재고를 대조해야 한다.
+
+넷째, 복구 시간이 짧았다는 결과를 데이터가 안전했다는 결과로 바꾸어 읽으면 안 된다. 필요한 WAL이 유실돼 옛 checkpoint에서 빨리 열렸을 수도 있다. 복구 시작·종료 LSN, 마지막 성공 ACK의 트랜잭션, archive 연속성을 같이 기록한다. 다섯째, replica가 있으니 archive가 불필요하다고 단정할 수 없다. 운영 실수로 삭제된 행은 변경 로그를 정상적으로 복제해 replica에서도 삭제될 수 있다. 별도 보존과 시점 복구는 가용 복제와 다른 실패를 다룬다.
+
+
+## 14. 직접 검증하는 작은 실험
+
+PostgreSQL에서 별도 테스트 인스턴스를 준비해 큰 UPDATE를 실행하고 pg_current_wal_lsn, pg_stat_wal, pg_stat_checkpointer를 전후 비교하면 생성된 WAL과 checkpoint 활동을 관찰할 수 있다. 운영 서버에서 강제 종료를 시도해서는 안 된다. 저장장치 장애 실험은 폐기 가능한 환경에서 전원 상실과 동등한 차단을 재현하고, 성공 ACK한 요청 목록과 재시작 후 결과를 대조해야 한다. 정상 종료만 반복하면 crash recovery 경로를 검증하지 못한다.
+
+## 근거와 더 읽을 자료
+
+- [PostgreSQL 18: Write-Ahead Logging](https://www.postgresql.org/docs/18/wal-intro.html)
+- [PostgreSQL 18: WAL Configuration](https://www.postgresql.org/docs/18/wal-configuration.html)
+- [PostgreSQL 18: Continuous Archiving and Point-in-Time Recovery](https://www.postgresql.org/docs/18/continuous-archiving.html)
+- [PostgreSQL 18: Data Page Layout](https://www.postgresql.org/docs/18/storage-page-layout.html)
