@@ -1,24 +1,5 @@
 # 04. DNS, HTTP, TLS
 
-## 추가 전체 추적: 이름, 암호 키, HTTP 의미는 서로 다른 상태다
-
-브라우저가 `https://example.test/a`를 열면 resolver가 DNS cache의 TTL을 확인한다. cache miss면 recursive resolver가 authoritative 정보까지 조회해 IP를 돌려준다. DNS 성공은 그 IP의 서버가 HTTP를 제공하거나 신뢰할 인증서를 가진다는 뜻이 아니다.
-
-TLS 1.3 handshake에서 client와 server는 지원 매개변수와 ephemeral key share를 교환해 같은 handshake secret을 유도한다. server는 인증서와 CertificateVerify로 자신이 인증서 private key를 가졌음을 보인다. client는 인증서 체인, hostname, 유효 기간과 정책을 검증한다. 키 교환은 암호 키를 만들고, 인증서 검증은 상대 identity를 확인하는 서로 다른 역할이다.
-
-그 뒤 HTTP request line·headers·body가 암호화된 TLS record 안에서 전달된다. HTTP 200은 HTTP handler가 만든 응답 상태이며, 데이터베이스 후속 비동기 작업이나 클라이언트 디스크 저장까지 자동 증명하지 않는다.
-
-| 단계 | 입력 | 중간 상태 | 성공이 뜻하는 범위 |
-|---|---|---|---|
-| DNS | 이름 | TTL cache·질의 | IP 후보 획득 |
-| 연결 | IP·port | TCP 또는 QUIC 상태 | transport 경로 |
-| TLS | key share·인증서 | traffic keys | 암호화·검증된 identity |
-| HTTP | method·path·headers | 앱 처리 | HTTP response |
-
-### 추가 문제 5
-
-DNS cache TTL이 남아 있어도 서버 인증서가 교체되거나 만료될 수 있다. DNS cache hit은 TLS identity 검증을 생략하는 근거가 아니다. 각 계층은 자기 입력과 수명에 따라 다시 검증한다.
-
 범위: 이 장은 사용자가 URL을 입력했을 때 DNS(Domain Name System, 이름으로 주소와 여러 record를 찾는 분산 체계), TCP/QUIC(서버 process까지 데이터를 운반하는 transport), TLS(Transport Layer Security, 상대 인증·암호화·무결성을 제공하는 보호 계층), HTTP(웹 요청과 응답의 의미 규칙)가 어떻게 이어지는지 설명한다.
 recursive DNS(답을 대신 찾아 주는 재귀 resolver), authoritative DNS(해당 zone의 원본 record를 답할 권한 서버), TTL(cache가 답을 믿는 시간), negative cache(없다는 답의 저장), URL parsing을 다룬다. TLS에서는 certificate(공개키와 이름을 신뢰 체인으로 묶은 인증서), handshake(사용할 암호 방식과 키·상대 신원을 합의하는 초기 교환), SNI(접속하려는 서버 이름 전달), ALPN(HTTP 같은 상위 프로토콜 협상)을 설명한다. 이어서 HTTP/1.1·2·3, proxy, L4/L7 load balancing, 계층별 오류를 연결한다.
 실습 명령이나 packet capture는 포함하지 않는다.
@@ -463,6 +444,21 @@ HTTP/3은 반례를 만든다. TCP state가 생기는 대신 UDP 위 QUIC connec
 | L4 LB도 path routing이 가능하다 | path는 HTTP L7 정보다 |
 | 502는 항상 backend app 버그다 | proxy에서 upstream 연결/TLS/DNS 실패도 502가 될 수 있다 |
 
+## 이름 조회부터 암호화된 웹 응답까지의 상태 추적
+
+브라우저가 `https://example.test/a`를 열면 resolver가 DNS cache의 TTL을 확인한다. cache miss면 recursive resolver가 authoritative 정보까지 조회해 IP를 돌려준다. DNS 성공은 그 IP의 서버가 HTTP를 제공하거나 신뢰할 인증서를 가진다는 뜻이 아니다.
+
+TLS 1.3 handshake에서 client와 server는 지원 매개변수와 ephemeral key share를 교환해 같은 handshake secret을 유도한다. server는 인증서와 CertificateVerify로 자신이 인증서 private key를 가졌음을 보인다. client는 인증서 체인, hostname, 유효 기간과 정책을 검증한다. 키 교환은 암호 키를 만들고, 인증서 검증은 상대 identity를 확인하는 서로 다른 역할이다.
+
+그 뒤 HTTP request line·headers·body가 암호화된 TLS record 안에서 전달된다. HTTP 200은 HTTP handler가 만든 응답 상태이며, 데이터베이스 후속 비동기 작업이나 클라이언트 디스크 저장까지 자동 증명하지 않는다.
+
+| 단계 | 입력 | 중간 상태 | 성공이 뜻하는 범위 |
+|---|---|---|---|
+| DNS | 이름 | TTL cache·질의 | IP 후보 획득 |
+| 연결 | IP·port | TCP 또는 QUIC 상태 | transport 경로 |
+| TLS | key share·인증서 | traffic keys | 암호화·검증된 identity |
+| HTTP | method·path·headers | 앱 처리 | HTTP response |
+
 ## 25. 해설 문제
 
 ### 문제 1
@@ -512,7 +508,12 @@ SNI는 맞는데 HTTP Host header가 다른 값이면 어떤 일이 생길 수 �
 TLS certificate 선택은 기대대로 되었지만, HTTP virtual host routing은 다른 site나 backend로 갈 수 있다.
 계층이 다르기 때문이다.
 
-## 26. 1차 출처와 더 읽기
+### 문제 5: 단계별 성공의 범위
+
+
+DNS cache TTL이 남아 있어도 서버 인증서가 교체되거나 만료될 수 있다. DNS cache hit은 TLS identity 검증을 생략하는 근거가 아니다. 각 계층은 자기 입력과 수명에 따라 다시 검증한다.
+
+## 26. 공식 출처
 
 - DNS concepts, recursive/iterative, resolver, authoritative server, TTL/caching 개념: [RFC 1034](https://www.rfc-editor.org/rfc/rfc1034.html)
 - DNS implementation and message/resource record specification: [RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html)

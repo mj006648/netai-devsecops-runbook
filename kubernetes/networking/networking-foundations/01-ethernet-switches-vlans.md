@@ -1,17 +1,5 @@
 # 01. Ethernet, Switch, VLAN
 
-## 추가 전체 추적: 주소는 계층마다 다른 대상을 가리킨다
-
-MAC 주소는 한 링크에서 다음 interface를 찾는 식별자이고 IP 주소는 여러 network를 지나 최종 interface를 찾는 논리 주소다. 같은 subnet의 목적지에는 ARP로 IPv4→MAC을 찾는다. 다른 subnet 목적지에는 최종 서버 MAC이 아니라 default gateway MAC을 찾는다.
-
-PC A가 192.0.2.10에서 198.51.100.20으로 보낼 때 IP 목적지는 끝까지 198.51.100.20이지만 첫 Ethernet 목적지는 router의 192.0.2.1 interface MAC이다. router는 frame을 벗기고 route를 고른 뒤 다음 링크의 새 MAC header를 만든다.
-
-IPv6의 NDP는 ICMPv6 메시지로 이웃 주소 해석과 router discovery를 수행한다. “IPv6 ARP”라고만 부르면 multicast 사용과 NDP 역할 범위를 놓친다.
-
-### 추가 문제 5
-
-스위치가 목적 MAC을 모르면 같은 VLAN의 관련 포트로 unknown-unicast flood한다. source MAC은 들어온 포트에 학습한다. router처럼 IP longest-prefix match를 수행하는 과정은 아니다.
-
 범위: 이 장은 Ethernet(이더넷, 유선 LAN에서 널리 쓰는 링크 계층 규칙)으로 연결된 같은 LAN(Local Area Network, 가까운 범위의 논리 네트워크) 안에서 frame(목적지·출발지 MAC과 payload·검사값을 담아 한 링크가 전달하는 묶음)이 어떻게 움직이는지 설명한다.
 핵심은 MAC(Media Access Control, 현재 링크의 인터페이스 식별) 주소, Ethernet frame, switch의 FDB(Forwarding Database, MAC 주소가 어느 포트에 있는지 기억하는 표) 학습, broadcast domain(한 broadcast frame이 퍼지는 범위), VLAN(Virtual LAN, 하나의 물리망을 여러 논리 LAN으로 분리하는 기능) tag, loop 방지다.
 호스트 설정이나 네트워크 진단 명령 실습은 하지 않는다.
@@ -324,6 +312,14 @@ pod의 inner IP는 underlay switch가 직접 routing하지 않을 수 있다.
 | LACP 4개 링크면 단일 flow도 4배 빨라진다 | flow hashing 때문에 단일 flow는 member 하나에 묶일 수 있다 |
 | MLAG는 두 switch를 완전한 한 장비로 만든다 | 제한된 동기화와 장애 모델을 가진 설계다 |
 
+## 한 패킷의 링크별 주소 추적
+
+MAC 주소는 한 링크에서 다음 interface를 찾는 식별자이고 IP 주소는 여러 network를 지나 최종 interface를 찾는 논리 주소다. 같은 subnet의 목적지에는 ARP로 IPv4→MAC을 찾는다. 다른 subnet 목적지에는 최종 서버 MAC이 아니라 default gateway MAC을 찾는다.
+
+PC A가 192.0.2.10에서 198.51.100.20으로 보낼 때 IP 목적지는 끝까지 198.51.100.20이지만 첫 Ethernet 목적지는 router의 192.0.2.1 interface MAC이다. router는 frame을 벗기고 route를 고른 뒤 다음 링크의 새 MAC header를 만든다.
+
+IPv6의 NDP는 ICMPv6 메시지로 이웃 주소 해석과 router discovery를 수행한다. “IPv6 ARP”라고만 부르면 multicast 사용과 NDP 역할 범위를 놓친다.
+
 ## 19. 해설 문제
 
 ### 문제 1
@@ -371,7 +367,12 @@ VLAN 20에서도 `aa`가 port1이라고 단정할 수 있는가?
 단정하면 안 된다.
 FDB는 VLAN별로 분리해 이해해야 한다.
 
-## 20. 1차 출처와 더 읽기
+### 문제 5: 단계별 성공의 범위
+
+
+스위치가 목적 MAC을 모르면 같은 VLAN의 관련 포트로 unknown-unicast flood한다. source MAC은 들어온 포트에 학습한다. router처럼 IP longest-prefix match를 수행하는 과정은 아니다.
+
+## 20. 공식 출처
 
 - IP over Ethernet, Ethernet data field, padding, IPv4 EtherType, Ethernet broadcast mapping: [RFC 894](https://www.rfc-editor.org/rfc/rfc894.html)
 - ARP가 Ethernet과 IPv4 주소를 매핑하는 동기: [RFC 826](https://www.rfc-editor.org/rfc/rfc826.html)

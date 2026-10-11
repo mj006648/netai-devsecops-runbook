@@ -2,297 +2,173 @@
 
 [이 책 목차](README.md) · [이전: io_uring ordering, error와 fsync](11-io-uring-ordering-errors-and-fsync.md) · [다음: Container, Kubernetes, GPU와 RAN](13-containers-kubernetes-gpu-and-ran.md)
 
-Network server에서 `recv()`와 `send()`만 보면 packet이 NIC에서 socket buffer, application buffer, protocol parser로 이동하는 중간 상태를 놓친다. epoll과 io_uring은 readiness와 completion이라는 서로 다른 관찰 모델을 제공한다. Deadline, short I/O, backpressure, buffer lifetime을 application protocol까지 연결해야 한다.
+네트워크 서버의 recv()와 send()만 보면 패킷이 NIC queue, kernel packet object, socket queue와 application buffer를 지나는 동안 어느 CPU에서 복사·전환·대기가 생겼는지 놓친다. 이 장의 packet trace와 수치는 실행 결과가 아닌 교육용 가상 모형이다. eBPF program을 attach하거나 network·kernel 설정을 바꾸지 않았다.
 
-이 장의 packet trace와 명령 이름은 교육용 관찰 모형이다. eBPF program을 attach하거나 network·kernel 설정을 변경하지 않았다.
+## socket은 process가 network endpoint를 다루는 kernel object다
 
-## 1. Receive path의 큰 흐름
+**socket(소켓)**은 TCP·UDP 같은 통신 endpoint의 상태를 kernel이 보관하는 객체다. process는 fd로 socket을 참조한다. local·remote address, protocol state, receive/send queue는 kernel memory에 있고 close와 reference 종료 뒤 해제된다. application이 byte stream을 읽고 쓰려면 hardware packet과 process buffer 사이의 경계가 필요해 socket이 존재한다.
 
-```mermaid
+NIC(Network Interface Controller)는 frame을 송수신하는 hardware다. RX는 receive, TX는 transmit이다. NIC의 RX descriptor ring은 driver가 제공한 host memory buffer와 hardware ownership을 기록하는 원형 queue다. packet이 오면 NIC는 **DMA(Direct Memory Access)**로 CPU가 byte마다 복사하지 않고 host memory에 frame을 기록한다.
+
+driver는 NIC register, queue, interrupt와 DMA buffer를 다루는 kernel software다. NIC가 새 일이 있음을 CPU에 알리는 signal이 interrupt다. packet마다 interrupt하면 전환 비용이 커지므로 Linux는 **NAPI**라는 network event 처리 mechanism으로 interrupt와 polling을 조합한다. 현재 공식 문서에서 NAPI라는 이름은 특정 영어 구절을 풀어 쓴 약어로 취급하지 않는다. driver가 NAPI instance를 schedule하면 poll method가 budget 수만큼 RX packet을 처리하고 TX completion도 회수한다.
+
+packet을 kernel network stack이 전달할 때 대표적으로 **skb(socket buffer 또는 struct sk_buff)**라는 metadata 객체를 사용한다. skb는 packet data 자체와 항상 한 덩어리 복사본인 것이 아니라 header, 길이, protocol, fragment 참조와 queue 연결 정보를 가진다. kernel이 할당·수정·해제하고 socket delivery나 drop 뒤 수명이 끝난다.
+
+~~~mermaid
 flowchart LR
-    N["NIC RX queue"] --> D["driver/NAPI"]
-    D --> S["kernel network stack"]
-    S --> Q["socket receive queue"]
-    Q --> A["recv 또는 io_uring buffer"]
-    A --> P["protocol parser"]
-    P --> W["application work"]
-```
+ N[NIC RX queue] -->|DMA| B[driver buffer]
+ B -->|interrupt then poll| P[NAPI]
+ P --> S[skb와 network stack]
+ S --> Q[socket receive queue]
+ Q -->|recv copy 또는 지원 경로| U[application buffer]
+ U --> A[protocol parser]
+~~~
 
-- **NIC(Network Interface Controller)**: packet을 host memory와 kernel에 전달하는 hardware
-- **NAPI(New API)**: Linux network driver가 interrupt와 polling을 조합하는 mechanism
-- **Socket receive queue**: TCP/UDP stack이 application이 읽을 data를 보관하는 queue
-- **Backpressure**: 소비자가 느릴 때 producer가 계속 밀어 넣지 못하도록 속도가 전달되는 현상
+### 문제 1: receive 경로의 copy와 context를 구분하기
 
-TCP에서는 packet segment가 그대로 application `recv()` 경계가 되지 않는다. Byte stream이므로 한 message가 여러 read로 나뉘거나 여러 message가 한 read에 들어올 수 있다.
+frame 1500바이트가 도착해 일반 TCP recv로 사용자 buffer에 전달됐다. DMA와 CPU copy, 실행 context를 설명하라.
 
-## 2. epoll은 readiness를 알린다
+NIC는 DMA로 driver가 준비한 host buffer에 frame을 기록한다. interrupt는 처리할 일이 있음을 알리고 NAPI poll은 보통 softirq context에서 descriptor를 회수한다. kernel stack은 skb metadata로 Ethernet/IP/TCP를 처리하고 payload를 socket receive queue에 연결한다. recv가 진행되면 payload byte가 application buffer로 copy될 수 있다. DMA가 있었으므로 전체가 zero-copy라는 결론은 틀리다. 조건을 바꾸어 page fragment, GRO, XDP, io_uring zero-copy 지원 경로를 쓰면 copy 위치가 달라질 수 있어 측정과 feature 조건이 필요하다.
 
-`epoll`은 fd가 read/write를 시도할 준비가 되었음을 알린다. Completion result를 미리 주는 것은 아니다.
+## RSS와 RPS는 서로 다른 시점에 CPU를 고른다
 
-```mermaid
-sequenceDiagram
-    participant A as "application"
-    participant E as "epoll"
-    participant S as "socket"
-    A->>E: "EPOLLIN 관심 등록"
-    S-->>E: "receive queue에 data"
-    E-->>A: "fd readable"
-    A->>S: "recv()"
-    S-->>A: "bytes, EOF 또는 EAGAIN"
-```
+**RSS(Receive Side Scaling)**는 multi-queue NIC가 packet header hash와 indirection table로 hardware RX queue를 선택하는 기능이다. queue별 IRQ affinity를 통해 어느 CPU가 초기 receive 처리를 맡을지 분산한다. NIC와 driver가 관리하며 장치가 multi-queue와 RSS를 지원해야 한다.
 
-다른 thread가 먼저 data를 읽거나 edge-triggered loop가 queue를 모두 drain하지 않으면 예상이 달라질 수 있다. Readable event 뒤에도 nonblocking `recv()`가 `EAGAIN`을 반환할 수 있으므로 syscall result를 처리한다.
+**RPS(Receive Packet Steering)**는 hardware queue 이후 Linux software가 flow hash로 protocol 처리를 수행할 CPU를 고르는 기능이다. 선택한 CPU backlog에 skb를 넣고 필요하면 inter-processor interrupt로 깨운다. CONFIG_RPS가 필요하고 queue별 rps_cpus가 0이면 기본적으로 비활성이다. RSS는 hardware queue와 interrupt CPU를, RPS는 이후 stack CPU를 고른다는 위치 차이가 있다.
 
-## 3. io_uring은 request completion을 돌려준다
+**per-CPU data(퍼CPU 데이터)**는 각 logical CPU가 자기 복사본이나 queue를 갖게 해 공유 lock과 cache-line 경쟁을 줄이는 kernel 구조다. network backlog와 통계가 per-CPU일 수 있다. 합계를 얻으려면 CPU별 값을 안전하게 모아야 하며 thread가 CPU를 이동하면 locality가 달라진다.
 
-io_uring receive SQE를 제출하면 CQE `res`에 받은 byte 수나 negative errno가 온다.
+### 문제 2: RSS와 RPS가 만든 두 번의 CPU 이동
 
-```text
+RSS가 flow를 RX queue 2, IRQ CPU 2로 보냈고 RPS가 CPU 6을 선택했다. 어떤 일이 추가되고 언제 유리한가?
+
+NIC DMA completion과 초기 interrupt/NAPI는 CPU 2와 연결된다. RPS는 skb를 CPU 6 backlog에 enqueue하고 CPU 6을 깨워 상위 protocol 처리를 이어가게 한다. CPU 사이 queueing과 IPI, cache 이동 비용이 추가된다. CPU 2가 포화됐거나 application이 CPU 6 근처에서 실행돼 locality가 좋아지면 이득일 수 있다. 조건을 바꾸어 queue 수와 CPU mapping이 이미 균형 잡힌 RSS라면 RPS가 중복 비용만 만들 수 있다. packet rate, queue drop, CPU load와 NUMA locality로 판단한다.
+
+## XDP와 tc는 packet path의 서로 다른 hook이다
+
+**XDP(eXpress Data Path)**는 지원 driver의 receive 경로에서 skb를 만들기 전 이른 시점에 BPF program을 실행해 PASS, DROP, TX, REDIRECT 같은 결정을 내리는 hook이다. NIC driver와 kernel이 program을 실행하며 mode는 native·generic·offload 등 지원 조건이 다르다. XDP가 있다는 말만으로 hardware offload나 zero-copy를 보장하지 않는다.
+
+**tc(traffic control)**는 Linux qdisc와 ingress·egress hook에서 packet 분류, shaping, policing과 BPF action을 적용하는 subsystem이다. tc BPF는 일반적으로 XDP보다 stack의 뒤쪽에서 skb를 볼 수 있다. 둘은 “빠른 packet program”이라는 이유로 교환 가능한 한 지점이 아니다.
+
+**eBPF(extended Berkeley Packet Filter)**는 verifier가 검사한 bytecode program을 kernel hook에서 실행하고 map으로 상태를 공유하는 기술이다. program과 map은 fd·pin/reference가 유지되는 동안 kernel에 존재한다. attach는 관찰 목적이어도 kernel runtime state를 바꾸며 권한, verifier, overhead, payload privacy 검토가 필요하다.
+
+### 문제 3: XDP drop과 socket drop을 구별하기
+
+XDP program이 packet 100개를 DROP했다. socket receive queue drop과 application recv count에는 어떻게 보일 수 있는가?
+
+XDP_DROP은 skb 생성과 socket lookup 이전의 이른 경로에서 packet을 버릴 수 있어 socket queue까지 도달하지 않는다. application recv byte에는 나타나지 않고 socket drop counter도 해당 지점을 세지 않을 수 있다. XDP program·driver 통계가 필요하다. 조건을 바꾸어 tc ingress나 socket queue에서 drop되면 skb는 이미 만들어졌고 다른 counter가 증가할 수 있다. “packet이 사라졌다”만으로 drop hook을 정하지 않는다.
+
+## TCP byte stream과 readiness·completion을 분리한다
+
+epoll은 fd에서 blocking 없이 read·write를 시도할 준비가 되었음을 알리는 **readiness(준비 상태)** 모델이다. EPOLLIN 뒤 application이 recv를 호출해 실제 byte 수, EOF, EAGAIN을 받는다. 다른 thread가 먼저 읽거나 edge-triggered loop가 queue를 끝까지 비우지 않으면 event 해석이 달라진다.
+
+io_uring은 제출한 receive operation의 결과가 CQE로 오는 **completion(완료)** 모델이다.
+
+~~~text
 RECV SQE len=8192, user_data=connection_42
-CQE res=1460  → 1460 bytes 처리, message complete 여부는 parser가 판단
+CQE res=1460  → 1460 bytes 수신
 CQE res=0     → TCP peer orderly shutdown 가능
-CQE res=-11   → -EAGAIN, mode와 flags에 따라 다시 대기/제출
-```
-
-Completion API여도 application message가 완료됐다는 뜻은 아니다. Header에 body length가 32KiB이면 CQE 여러 개의 byte를 누적해야 한다.
-
-## 4. Multishot accept와 receive
-
-Multishot request는 SQE 하나로 accept 또는 receive CQE 여러 개를 만들 수 있다. `IORING_CQE_F_MORE`가 terminal 여부를 알려 준다.
-
-```mermaid
-flowchart TD
-    M["multishot ACCEPT SQE"] --> C1["CQE client fd 101, MORE"]
-    M --> C2["CQE client fd 102, MORE"]
-    M --> C3["CQE -ECANCELED, no MORE"]
-    C1 --> S1["connection state 101"]
-    C2 --> S2["connection state 102"]
-```
+CQE res=-11   → -EAGAIN, mode·flag에 따라 처리
+~~~
 
-Accept CQE마다 새 socket의 nonblocking flag, credentials, address, resource limit을 처리한다. Terminal CQE 전 request context를 해제하지 않는다.
+TCP는 message가 아니라 순서 있는 byte stream을 제공한다. 32 KiB body가 CQE 여러 개로 나뉘거나 header와 다음 message 일부가 한 recv에 들어올 수 있다. parser가 length와 누적 byte로 경계를 복원한다.
 
-## 5. Provided buffer와 receive lifetime
+### 문제 4: CQE 1000바이트의 의미
 
-Receive는 어느 connection에서 얼마가 올지 모르므로 provided buffer ring을 사용할 수 있다. Kernel이 buffer ID를 골라 CQE flag로 돌려준다.
+4 KiB message를 기다리는데 receive CQE가 1000을 반환했다. message 완료인가? 다음 상태를 계산하라.
 
-```text
-buffer group 7:
-  id 0 → 16KiB
-  id 1 → 16KiB
-  id 2 → 16KiB
+4 KiB는 4096바이트이므로 1000만으로 완료가 아니다. header가 선언한 길이가 4096이라면 remaining은 \(4096-1000=3096\)바이트다. buffer offset을 1000 전진해 다음 receive를 제출하고 EOF·error·timeout을 처리한다. 조건을 바꾸어 1000바이트 안에 길이 400짜리 message 두 개와 다음 header 200바이트가 들어왔다면 parser는 두 message를 꺼내고 200을 보존한다. CQE 경계를 protocol 경계로 쓰지 않는다.
 
-CQE: res=1200, flags=BUFFER|MORE, selected id=1
-```
+## buffer lifetime과 multishot을 terminal까지 본다
 
-Application은 ID 1의 1200 bytes를 parse하고 필요한 reference를 해제한 뒤 buffer를 pool에 돌려준다. Parser가 buffer slice를 다른 thread에 넘겼는데 먼저 recycle하면 다음 receive가 같은 memory를 덮는다.
+provided buffer ring은 kernel이 등록된 group에서 receive buffer ID를 골라 CQE flag로 돌려주는 방식이다. application은 선택된 ID의 res 길이만 parse하고 모든 consumer가 끝난 뒤 pool로 반환한다. 먼저 recycle하면 다음 packet이 아직 참조 중인 memory를 덮는다.
 
-## 6. Send completion과 peer delivery
+multishot accept·receive는 SQE 하나가 CQE 여러 개를 만든다. IORING_CQE_F_MORE가 더 결과가 올 수 있음을 알린다. MORE가 없는 terminal CQE 전 request context를 해제하지 않는다. 지원 opcode와 kernel version, flags는 probe해야 한다.
 
-Socket send가 bytes를 반환하면 kernel socket send buffer가 data를 받아들였다는 의미일 수 있다. Remote application이 읽었다는 뜻은 아니다.
+send CQE full bytes는 sender kernel socket buffer가 byte를 받아들였다는 뜻일 수 있다. NIC 전송, remote TCP stack 수신, remote application read, database commit은 이후 단계다. TCP ACK도 remote kernel transport 신호다.
 
-```mermaid
-sequenceDiagram
-    participant A as "sender application"
-    participant K as "sender kernel socket buffer"
-    participant N as "network"
-    participant R as "receiver application"
-    A->>K: "send 8KiB"
-    K-->>A: "CQE res=8192"
-    K->>N: "TCP segments"
-    N->>R: "receiver stack와 recv"
-    R-->>A: "application ACK는 별도 protocol일 때만"
-```
+**zero-copy(무복사)**는 특정 경계에서 CPU data copy를 줄이는 기법이다. 모든 경계에서 byte가 한 번도 복사되지 않는다는 절대 표현이 아니다. send zero-copy는 kernel이 user page 참조를 끝냈다는 notification까지 buffer를 유지해야 하며 fallback 가능성도 처리한다. remote 처리 완료 신호가 아니다.
 
-TCP ACK도 receiver kernel이 byte를 받았다는 transport 신호이며 remote business transaction commit이 아니다. 업무 완료가 필요하면 application-level response와 idempotency를 둔다.
+### 문제 5: send 성공과 buffer 재사용
 
-Zero-copy send notification은 sender buffer lifetime을 알려 주지만 remote 처리 완료를 뜻하지 않는다.
+8 KiB SEND_ZC 요청의 data CQE가 8192였지만 notification이 아직 없다. buffer를 덮어도 되는가? remote commit을 알 수 있는가?
 
-## 7. Deadline을 operation graph로 만든다
+full data CQE는 요청 byte가 send 경로에 받아들여졌음을 나타내지만 zero-copy reference 해제 notification 전에는 buffer를 재사용하지 않는다. remote application commit은 별도 protocol response와 transaction ID로 확인해야 한다. 조건을 바꾸어 kernel이 copy fallback을 했다면 notification semantics가 달라질 수 있으므로 CQE flags와 API 계약을 처리한다. io_uring 사용, registered buffer, zero-copy는 같은 조건이 아니다.
 
-Connection deadline에는 여러 층이 있다.
+## queue 증가와 backpressure를 수치로 본다
 
-- Accept 대기 deadline
-- Header read deadline
-- 전체 body deadline
-- Upstream RPC deadline
-- Response write deadline
-- 전체 request budget
+**backpressure(역압)**는 consumer가 느릴 때 queue 증가가 window 축소나 producer 대기로 전달되어 생산 속도를 제한하는 현상이다. TCP는 receive window와 send buffer를 통해 속도가 전달될 수 있지만 UDP에는 같은 reliable stream backpressure가 없어 drop이 직접 나타날 수 있다.
 
-```text
-전체 budget 100ms
-header read 10ms
-body read 20ms
-application work 45ms
-response write 15ms
-reserve 10ms
-```
+client 1000개가 각 100 KiB/s를 보내면 ingress는 약 100 MiB/s다. parser 처리량이 60 MiB/s면 잠재 차이는 40 MiB/s이고 5초면 200 MiB다. 실제 queue는 socket limit과 TCP window 때문에 무한히 늘지 않는다. 대신 sender 지연, drop, retransmission이 나타날 수 있다. socket memory는 cgroup memory에 포함될 수 있어 network burst가 memory.high, reclaim, OOM과 연결된다.
 
-각 step timeout을 100ms로 두면 worst case가 합쳐져 전체 SLO를 넘을 수 있다. Absolute deadline에서 남은 budget을 계산한다.
+### 문제 6: queue와 deadline 계산
 
-```text
-deadline = start + 100ms
-header 완료 시 elapsed=18ms
-remaining=82ms
-DB call budget=min(45ms, remaining-reserve)
-```
+ingress 80 MiB/s, 처리 50 MiB/s가 4초 지속된다. 잠재 queue 증가량과 64 MiB 여유를 소진하는 시간을 구하라.
 
-## 8. Timeout과 completion race
+차이는 30 MiB/s, 4초 누적은 \(30×4=120\) MiB다. 64 MiB 여유는 \(64/30≈2.13\)초에 소진된다. 실제 TCP backpressure가 먼저 sender를 늦출 수 있으므로 120 MiB가 실제 메모리에 모두 쌓인다는 예측은 아니다. 조건을 바꾸어 UDP라면 receive queue가 차면 drop이 늘 수 있고 송신자는 자동으로 동일한 속도 제한을 받지 않는다.
 
-```mermaid
-sequenceDiagram
-    participant A as "application"
-    participant R as "recv request"
-    participant T as "linked timeout"
-    A->>R: "receive body"
-    A->>T: "20ms deadline"
-    alt data at 19.8ms
-        R-->>A: "res=4096"
-        T-->>A: "-ECANCELED"
-    else timeout first
-        T-->>A: "-ETIME"
-        R-->>A: "-ECANCELED 또는 race completion"
-    end
-```
+## deadline은 단계별 timeout 합이 아니다
 
-Timeout CQE만 보고 connection context와 buffer를 free하지 않는다. Target request terminal CQE와 cancelability를 확인한다. Clock source와 absolute/relative timeout semantics도 API별로 구분한다.
+전체 request budget 100 ms를 header 10, body 20, work 45, response 15, reserve 10으로 나눴다고 하자. **deadline**은 작업이 끝나야 하는 절대 시각이고 timeout은 한 operation을 감시하는 mechanism이다. 각 단계에 100 ms relative timeout을 주면 최악 합계가 전체 budget을 넘는다.
 
-## 9. Backpressure를 숫자로 본다
+시작+100 ms를 absolute deadline으로 두고 매 단계 monotonic clock으로 remaining을 계산한다. header 완료가 18 ms면 82 ms가 남고 DB budget은 min(45, remaining-reserve)로 정한다. timeout CQE와 대상 CQE가 race하므로 둘의 terminal 결과 전 buffer와 connection context를 free하지 않는다.
 
-Client 1000개가 각각 초당 100KiB를 보내면 ingress는 약 100MiB/s다. Application parser가 60MiB/s만 처리하면 queue는 초당 약 40MiB 증가하려 한다.
+### 문제 7: 단계 지연 뒤 남은 예산
 
-```text
-5초 누적 차이 ≈ 40MiB/s × 5 = 200MiB
-```
+100 ms deadline에서 header 18 ms, body 27 ms를 썼고 reserve 10 ms가 필요하다. work와 send에 쓸 수 있는 합계와 원래 work 45+send 15 계획의 가능성을 계산하라.
 
-실제로는 socket receive buffer와 TCP receive window가 sender를 늦춘다. UDP는 같은 reliable backpressure가 없어서 drop이 나타날 수 있다. Buffer를 무한히 늘리면 latency와 memory 사용만 커질 수 있다.
+elapsed는 45 ms, remaining은 55 ms다. reserve를 빼면 45 ms만 work+send에 쓸 수 있다. 원래 계획 60 ms는 15 ms 초과하므로 그대로 실행하면 deadline 위험이 있다. work budget 축소, 조기 실패, 품질 저하 같은 정책이 필요하다. 조건을 바꾸어 timeout cancellation이 즉시 device work를 멈추지 않는다면 deadline 뒤에도 resource가 소비될 수 있어 late completion을 정리해야 한다.
 
-`memory.current`에는 TCP socket memory가 포함될 수 있다. Network burst가 container memory limit과 OOM으로 연결되는 이유다.
+## PMU, tracepoint와 per-CPU 관찰의 경계
 
-## 10. Copy 경로를 과장하지 않는다
+**PMU(Performance Monitoring Unit, 성능 감시 장치)**는 CPU hardware counter로 cycle, instruction, cache miss 같은 event를 센다. kernel perf subsystem이 예약·multiplex하고 process·CPU 범위로 읽는다. counter는 packet 의미를 모르며 multiplex·sampling overhead와 hardware 지원 차이가 있다.
 
-일반 receive는 NIC DMA, skb와 kernel stack, userspace copy 단계를 포함할 수 있다. GRO(Generic Receive Offload), TLS, page fragment, zero-copy feature에 따라 실제 경로가 달라진다.
+**tracepoint(추적 지점)**는 kernel 개발자가 정의한 event hook과 형식이다. function address에 직접 기대는 kprobe보다 안정적인 관찰 지점이 될 수 있지만 tracepoint 존재와 field는 kernel에서 확인한다. tracepoint event는 per-CPU ring buffer에 기록될 수 있고 consumer가 느리면 overwrite·lost event가 생길 수 있다.
 
-```text
-"io_uring 사용" ≠ "zero-copy"
-"registered buffer" ≠ "NIC가 항상 직접 user buffer에 DMA"
-"SEND_ZC 요청" ≠ "copy fallback이 절대 없음"
-```
+eBPF는 tracepoint, XDP, tc 등 서로 다른 hook에 attach할 수 있다. BPF map이 per-CPU 형식이면 update 경쟁을 줄이지만 userspace가 CPU별 counter를 합쳐야 전체값이 된다. flow·IP·payload 같은 high-cardinality와 민감 data를 무제한 수집하지 않는다.
 
-Copy 감소를 주장하려면 CPU profile, memory bandwidth, opcode result/notification과 feature support를 측정한다.
+### 문제 8: PMU와 tracepoint가 답하는 질문
 
-## 11. epoll과 io_uring 선택
+packet 지연이 늘었을 때 PMU cache-miss 상승과 net tracepoint queue event가 각각 무엇을 말하며 무엇을 못 말하는가?
 
-| 질문 | epoll | io_uring |
-| --- | --- | --- |
-| 기본 모델 | fd readiness | request completion |
-| Mature portability | 넓음 | kernel feature별 probe 필요 |
-| File+network 통합 | 별도 syscall 조합 | 한 completion model 가능 |
-| Buffer lifetime | recv/send syscall 동안 중심 | SQE부터 terminal CQE/notification까지 |
-| Multishot | event loop로 반복 | 지원 opcode에서 한 SQE→여러 CQE |
+PMU는 관측 CPU에서 cache miss가 늘었다는 hardware 실행 특성을 보여 주지만 어느 connection packet인지 직접 말하지 않는다. tracepoint는 정의된 network event와 skb·device·queue 단서를 줄 수 있지만 trace buffer loss와 attach overhead가 있고 application request ID가 없을 수 있다. 두 값을 같은 timestamp·CPU·cgroup과 application trace에 연결한다. 조건을 바꾸어 PMU가 multiplex됐다면 scaled count의 오차를 고려하고, tracepoint가 없는 kernel이면 지원되는 다른 stable hook을 선택한다.
 
-둘을 혼합할 수도 있다. Library와 protocol complexity, fallback, security policy, observability를 포함해 결정한다.
+## packet 한 개를 TX까지 시간 순서로 연결한다
 
-## 12. Kernel을 읽기 전용으로 관찰하는 층
+RX frame은 NIC queue에 도착해 DMA로 host buffer에 기록된다. interrupt가 NAPI를 schedule하고 poll이 descriptor를 회수한다. RSS가 hardware queue를, 설정됐다면 RPS가 상위 처리 CPU를 고른다. XDP hook이 있으면 skb 전 결정을 내리고, 통과한 packet은 skb와 Ethernet/IP/TCP stack을 지나 socket receive queue로 간다. epoll readiness 뒤 recv copy 또는 io_uring completion으로 application buffer에 도착한다. parser가 message를 복원하고 handler가 결과를 만든다.
 
-먼저 application이 이미 제공하는 metric, socket statistics, `/proc`, `ss` 같은 읽기 전용 정보로 범위를 좁힌다. 그 다음 tracepoint·perf·eBPF가 필요한지 판단한다.
+TX에서는 send가 socket send queue에 byte를 넣고 TCP가 segment와 skb를 만든다. qdisc와 tc egress를 지나 driver TX queue와 NIC로 제출된다. TX completion은 DMA buffer를 반환할 수 있고 transport ACK는 remote kernel 수신을 반영한다. 이 경로에서 data copy, CPU context 이동, queue wait를 따로 잰다.
 
-```mermaid
-flowchart LR
-    M["application metric/log"] --> P["/proc와 socket stats"]
-    P --> T["kernel tracepoint/perf"]
-    T --> B["검토된 eBPF 관찰 program"]
-    B --> H["가설 검증"]
-```
+Linux 공식 문서에 따르면 RSS/RPS/XPS는 지원·설정 조건이 있고 RPS는 compile돼 있어도 rps_cpus가 0이면 비활성이다. XDP mode, zero-copy, multishot, BPF hook도 kernel·driver·NIC·권한에 따라 달라진다. 기능 이름을 보았다는 이유로 활성·offload·무복사를 주장하지 않는다.
 
-이 교재는 eBPF program attach, kprobe, traffic 변경을 수행하지 않았다. 운영 host에서 attach는 권한, verifier, overhead, privacy와 change policy를 검토해야 하는 상태 변경이다.
 
-## 13. eBPF로 보고 싶은 것
+## 지연을 copy·전환·queue 대기로 분해한다
 
-- Syscall 또는 io_uring operation latency histogram
-- TCP retransmission과 reset
-- Socket queue와 drop 지점
-- Scheduler latency와 CPU migration
-- Block I/O latency와 writeback
-- cgroup ID별 event attribution
+교육용 packet 한 개의 RX 지연이 90 µs라고 하자. DMA 8, NAPI가 실행되기 전 CPU backlog 대기 20, driver·stack 처리 22, socket queue에서 application이 읽을 때까지 30, userspace copy 10 µs라면 합은 \(8+20+22+30+10=90\)이다. 이 중 DMA는 device 전송, 20과 30은 queue wait, 22는 kernel CPU 실행, 10은 copy CPU 작업이다. 총합만 줄이면 어느 resource를 바꿀지 알 수 없다.
 
-함수 이름 kprobe에만 의존하면 kernel version 변화에 깨질 수 있다. Stable tracepoint, BTF(BPF Type Format), CO-RE(Compile Once – Run Everywhere) 지원을 검토한다.
+NAPI budget이 소진돼 다음 poll로 밀렸다면 CPU 사용률이 높지 않아도 packet은 queue에서 기다릴 수 있다. 반대로 userspace copy가 크면 PMU cycle·cache miss와 memory bandwidth가 늘 수 있다. RPS로 CPU를 옮기면 source CPU backlog는 줄지만 IPI와 cache 이동이 추가된다. 각 최적화는 다른 항을 바꾼다.
 
-High-cardinality IP, credential, payload를 수집하지 않는다. Observability program이 packet data를 노출하는 새 보안 경계가 될 수 있다.
+### 추가 풀이: queue counter와 application latency 연결
 
-## 14. 완전한 지연 진단 이야기
+RX queue 0에서 1초 동안 packet 100,000개가 도착하고 NAPI가 98,000개를 처리했으며 drop 2,000개가 증가했다. application p99도 같은 초에 2 ms에서 20 ms로 올랐다. 처리율 차이와 관측 한계를 설명하라.
 
-```text
-09:00:00 request p99 8ms
-09:02:10 ingress 2배 증가
-09:02:15 socket receive queue 증가, no packet drop
-09:02:18 cgroup memory.high event 증가
-09:02:20 memory PSI some과 io PSI 상승
-09:02:22 request p99 450ms, timeout CQE 증가
-09:02:30 block writeback latency 상승 확인
-```
+도착과 처리 차이는 2,000 packet/s이고 drop 증가와 수치가 맞아 queue capacity 초과 가설을 지지한다. 그러나 application p99 상승 전체가 그 drop 때문이라는 증명은 아니다. retransmission, 다른 queue, CPU migration, cgroup pressure를 함께 본다. 조건을 바꾸어 drop은 queue 0인데 application flow는 RSS로 queue 3에만 있었다면 직접 귀속이 약하다. flow hash, queue, IRQ CPU와 socket을 연결해야 한다.
 
-처음에는 network 지연처럼 보이지만 ingress burst가 page cache·socket memory를 늘리고 memory reclaim이 writeback을 기다린 사건일 수 있다. Packet trace 하나가 아니라 cgroup memory, I/O, scheduler, application deadline을 같은 timestamp로 연결한다.
+### 추가 풀이: per-CPU counter를 그대로 비교하면 생기는 오류
 
-## 15. 반례 모음
+CPU 0의 BPF per-CPU map 값 900, CPU 1의 값 100을 보고 CPU 0이 전체 packet의 90%를 처리했다고 하자. 두 값의 시작 시각과 online CPU 집합이 같고 event 정의가 동일할 때만 합 1000 중 90%라는 계산이 성립한다. CPU hotplug, map reset, lost event, RPS 이동이 있으면 기간을 맞춰야 한다. 조건을 바꾸어 sample 기반 PMU 값이라면 packet count가 아니라 sampled hardware event이므로 같은 비율 해석을 적용하지 않는다.
 
-- EPOLLIN은 complete application message를 보장하지 않는다.
-- Receive CQE 한 개가 protocol frame 한 개라는 보장은 없다.
-- Send CQE 성공은 remote business commit이 아니다.
-- Timeout CQE 도착은 target buffer를 즉시 free할 허가가 아니다.
-- Device utilization은 task stall을 나타내는 PSI와 다르다.
-- eBPF attach는 읽기 전용 의도여도 kernel state를 바꾸는 운영 행위다.
+## feature 이름과 실제 활성 상태를 세 단계로 확인한다
 
-## 16. 처음 보는 단어로 TCP request를 끝까지 따라가기
+첫째 kernel build와 version이 interface를 제공하는지, 둘째 NIC·driver가 mode를 지원하는지, 셋째 현재 설정과 program attach가 실제 활성인지 나눈다. RPS는 CONFIG_RPS가 있어도 rps_cpus가 0이면 비활성이고, XDP는 generic과 native·offload의 비용 경계가 다르며, zero-copy는 opcode와 memory registration·notification 조건이 맞아야 한다. 관찰 결과에는 interface 존재, 설정값, packet counter라는 서로 다른 증거를 적는다.
 
-**Driver**는 kernel이 NIC hardware를 제어하도록 device register, DMA queue, interrupt를 다루는 software다. **DMA(Direct Memory Access)**는 device가 CPU의 byte-by-byte copy 없이 host memory와 data를 주고받는 hardware mechanism이다.
+## 공식 근거
 
-**RX**는 receive, **TX**는 transmit의 약자다. NIC에는 RX/TX descriptor ring이 있고 driver와 hardware가 buffer ownership을 주고받는다. 이 ring은 io_uring SQ/CQ와 목적·구조가 다른 device queue다.
+- [Linux NAPI](https://docs.kernel.org/networking/napi.html)
+- [Linux networking scaling: RSS, RPS, RFS, XPS](https://docs.kernel.org/networking/scaling.html)
+- [Linux BPF documentation](https://docs.kernel.org/bpf/index.html)
+- [Linux tracepoints](https://docs.kernel.org/trace/tracepoints.html)
+- [Linux perf ring buffer](https://docs.kernel.org/userspace-api/perf_ring_buffer.html)
+- [epoll(7)](https://man7.org/linux/man-pages/man7/epoll.7.html)
 
-**Interrupt**는 device가 CPU에 처리할 일이 있음을 알리는 signal이다. Packet마다 interrupt가 너무 많으면 비싸므로 NAPI는 interrupt로 일을 알린 뒤 일정 budget 동안 packet queue를 polling한다.
-
-**Socket**은 process가 network endpoint를 다루는 kernel object다. Userspace fd는 socket object를 가리키고, TCP state machine과 receive/send queue는 kernel에 있다.
-
-**Readiness**는 지금 syscall을 시도하면 blocking 없이 진행할 가능성이 있다는 상태다. epoll은 readiness를 알린 뒤 application이 `recv()`를 호출해야 실제 byte 수를 얻는다.
-
-**Completion**은 제출한 특정 operation이 끝나 result를 얻었다는 사건이다. io_uring CQE는 receive request의 byte 수나 negative error를 돌려준다. Protocol message 전체 completion과는 다르다.
-
-한 TCP request의 receive부터 response까지를 따라가면 다음과 같다.
-
-```text
-1. Ethernet frame이 NIC RX queue에 도착하고 DMA로 host buffer에 기록
-2. NIC/driver가 interrupt를 알리고 NAPI poll이 descriptor를 회수
-3. Kernel network stack이 Ethernet/IP/TCP header를 검사하고 TCP 순서를 맞춤
-4. Payload byte가 socket receive queue에 쌓임
-5a. epoll 방식: fd readable event → application recv syscall → byte count
-5b. io_uring 방식: pending RECV request와 data를 연결 → CQE byte count
-6. Application parser가 여러 chunk를 모아 header와 body boundary 확인
-7. Deadline과 authentication을 검사하고 business handler 실행
-8. Response buffer를 send queue에 넣음
-9. Kernel TCP stack이 segment를 만들고 driver TX queue에 제출
-10. NIC가 packet을 전송하고 transport ACK를 처리
-11. 업무 완료가 필요하면 remote application response를 별도로 기다림
-```
-
-**Backpressure**는 4번 socket queue가 계속 커질 때 TCP receive window 축소 등으로 sender까지 속도 제한이 전달되는 현상이다. UDP에는 같은 reliable stream backpressure가 없어서 drop 정책이 더 직접적으로 보인다.
-
-**Deadline**은 operation이 끝나야 하는 마지막 시각이다. Timeout은 그 시각을 감시하는 mechanism이고, timeout CQE와 대상 CQE의 race를 처리해야 한다.
-
-**eBPF**는 verified bytecode program을 kernel hook에서 실행하는 기술이다. 관찰 목적으로도 attach 자체는 kernel runtime state 변경이므로 change control과 overhead 검토가 필요하다. 이미 있는 tracepoint와 metric을 먼저 사용한다.
-
-## 17. 문제
-
-1. TCP receive CQE가 1000 bytes를 반환했다. 4KiB message가 끝났는가?
-2. Send CQE가 full bytes를 반환했다. Remote database commit을 보장하는가?
-3. 초당 ingress 80MiB, 처리 50MiB라면 4초 동안 잠재 queue 증가량은 얼마인가?
-4. eBPF 관찰 전 먼저 확인할 좁은 증거는 무엇인가?
-
-## 18. 해설
-
-1. Header와 누적 byte를 확인해야 한다. TCP는 byte stream이며 CQE 경계가 message 경계가 아니다.
-2. 아니다. Sender kernel이 data를 받아들인 결과일 수 있어 application-level ACK가 필요하다.
-3. `(80-50)×4=120MiB`다. 실제 TCP backpressure와 buffer limit이 sender를 늦출 수 있다.
-4. Application metric/log, socket stats, `/proc`, cgroup pressure와 기존 tracepoint부터 본다.
-
-공식 interface와 kernel 관찰 경계는 [epoll(7)](https://man7.org/linux/man-pages/man7/epoll.7.html), [io_uring(7)](https://man7.org/linux/man-pages/man7/io_uring.7.html), Linux kernel [Networking documentation](https://docs.kernel.org/networking/index.html), [BPF documentation](https://docs.kernel.org/bpf/index.html)을 기준으로 확인한다.
-
-다음 장에서는 이 kernel 경로가 container cgroup, Kubernetes request·limit, GPU device memory와 RAN deadline 안에서 어떻게 결합되는지 살펴본다.
+[이 책 목차](README.md) · [이전: io_uring ordering, error와 fsync](11-io-uring-ordering-errors-and-fsync.md) · [다음: Container, Kubernetes, GPU와 RAN](13-containers-kubernetes-gpu-and-ran.md)

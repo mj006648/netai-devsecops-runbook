@@ -1,22 +1,5 @@
 # 05. 포맷 v1과 v2: 스냅샷 테이블에서 행 단위 삭제까지
 
-## 삭제 적용과 파일 수명 전체 추적
-
-data file은 행 값을 담고 delete file은 결과에서 제외할 행을 표현한다. v1은 영향 data file을 다시 쓰는 COW를 사용하고, v2는 position·equality delete로 MOR reader가 원본과 삭제를 합칠 수 있게 한다.
-
-A.parquet의 partition day=10,data_seq=5에 pos0 id10 new, pos1 id11 new, pos2 id12 cancelled, pos3 id13 new가 있다. seq8 position delete가 A,pos1을 가리키면 5≤8이라 id11을 제외한다. seq9 equality delete가 field ID status=cancelled를 담으면 5<9이고 partition도 맞아 id12를 제외한다. 결과는 id10,id13이다.
-
-rewrite가 file_seq20이지만 같은 content의 data_seq5를 상속하면 seq9 delete는 계속 적용된다. file sequence를 기준으로 제외하면 삭제 행이 부활한다. COW는 A를 읽어 id10,id13인 C를 쓰고, MOR은 A와 delete를 함께 게시한다. 선택 주체는 engine writer의 작업별 설정과 지원 계획이다.
-
-과거 snapshot이 A를 참조하면 현재에서 빠져도 A를 즉시 지우지 않는다. snapshot expiration, 진행 reader, orphan 안전 기간 뒤 어떤 reference도 없을 때 GC 후보가 된다.
-
-### 추가 문제 5개
-1. position seq8 적용? **해설:** 5≤8이라 예.
-2. equality seq5 적용? **해설:** 5<5가 거짓이라 아니오.
-3. COW가 delete file을 만드는가? **해설:** data file rewrite 경로다.
-4. file_seq20이면 삭제가 사라지는가? **해설:** data_seq5를 본다.
-5. 현재에서 제거 즉시 GC인가? **해설:** 과거 reference를 확인한다.
-
 [← 이 책 목차](README.md)
 
 작성·문헌 확인일: **2026-10-08**
@@ -323,6 +306,23 @@ flowchart TD
 | Engine B 버전 Y | 확인 | 확인 | 확인 | 확인 | 확인 |
 
 업그레이드 자체는 스키마 변경이 아니며 기존 파일을 자동으로 모두 다시 쓰는 작업도 아니다. 하지만 format version을 올린 뒤에는 이전 reader와의 호환성이 달라질 수 있으므로 되돌리기 쉬운 설정 변경으로 생각하면 안 된다.
+
+## 삭제 적용과 파일 수명 전체 추적
+
+data file은 행 값을 담고 delete file은 결과에서 제외할 행을 표현한다. v1은 영향 data file을 다시 쓰는 COW를 사용하고, v2는 position·equality delete로 MOR reader가 원본과 삭제를 합칠 수 있게 한다.
+
+A.parquet의 partition day=10,data_seq=5에 pos0 id10 new, pos1 id11 new, pos2 id12 cancelled, pos3 id13 new가 있다. seq8 position delete가 A,pos1을 가리키면 5≤8이라 id11을 제외한다. seq9 equality delete가 field ID status=cancelled를 담으면 5<9이고 partition도 맞아 id12를 제외한다. 결과는 id10,id13이다.
+
+rewrite가 file_seq20이지만 같은 content의 data_seq5를 상속하면 seq9 delete는 계속 적용된다. file sequence를 기준으로 제외하면 삭제 행이 부활한다. COW는 A를 읽어 id10,id13인 C를 쓰고, MOR은 A와 delete를 함께 게시한다. 선택 주체는 engine writer의 작업별 설정과 지원 계획이다.
+
+과거 snapshot이 A를 참조하면 현재에서 빠져도 A를 즉시 지우지 않는다. snapshot expiration, 진행 reader, orphan 안전 기간 뒤 어떤 reference도 없을 때 GC 후보가 된다.
+
+### 추가 문제 5개
+1. position seq8 적용? **해설:** 5≤8이라 예.
+2. equality seq5 적용? **해설:** 5<5가 거짓이라 아니오.
+3. COW가 delete file을 만드는가? **해설:** data file rewrite 경로다.
+4. file_seq20이면 삭제가 사라지는가? **해설:** data_seq5를 본다.
+5. 현재에서 제거 즉시 GC인가? **해설:** 과거 reference를 확인한다.
 
 ## 8. 확인 문제
 

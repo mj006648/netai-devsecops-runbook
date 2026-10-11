@@ -16,6 +16,8 @@ GPU program을 이해하려면 코드 한 줄보다 객체의 위치와 실행 �
 
 **stream(스트림)**은 host가 제출한 device 작업들의 순서가 놓이는 논리 queue다. 같은 stream의 순서는 보존되지만 서로 다른 stream 작업이 실제로 겹치는지는 dependency와 hardware 자원에 달렸다. **launch(실행 제출)**는 kernel의 grid를 stream에 넣는 행위다. 보통 host는 GPU의 모든 thread가 끝날 때까지 launch 호출 안에서 기다리지 않고 다음 host 문장으로 돌아온다.
 
+호스트 메모리의 입력을 GPU가 접근하는 디바이스 메모리로 복사하는 방향을 **H2D(Host to Device, 호스트에서 디바이스로)**라고 한다. 계산이 끝난 결과를 디바이스 메모리에서 호스트 메모리로 되가져오는 방향은 **D2H(Device to Host, 디바이스에서 호스트로)**다. 아래 그림에서 H2D copy는 입력 전달, kernel launch는 GPU 계산 제출, D2H copy는 결과 회수다. 세 작업을 같은 스트림에 그 순서로 제출하면, 뒤의 작업은 앞의 작업이 완료된 뒤 진행하므로 계산이 입력을 읽기 전에 입력 전달이 끝나야 한다는 의존성을 표현할 수 있다.
+
 ```mermaid
 sequenceDiagram
     participant H as Host CPU thread

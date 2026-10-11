@@ -229,7 +229,7 @@ Causal mask가 필요한 이유는?
 **해설:** 현재 위치 예측이 미래 정보를 보지 못하게 하기 위해서다.
 
 
-+## 11. Sequence 출력, teacher forcing, state 수명
+## 11. Sequence 출력, teacher forcing, state 수명
 
 Sequence 분류는 마지막 hidden state 하나로 전체 label을 예측할 수 있지만, 각 시점마다 label이 필요한 tagging 문제는 모든 `h_t`에서 출력을 만든다. 입력 길이 3에서 출력 logit도 세 개이고 loss는 실제 token 위치만 평균낸다. Padding 두 칸을 loss 분모에 넣으면 짧은 sequence의 gradient scale이 달라진다.
 

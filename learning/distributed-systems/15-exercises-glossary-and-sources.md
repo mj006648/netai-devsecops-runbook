@@ -161,4 +161,103 @@ Data file 존재, metadata 존재, catalog pointer 변경은 세 상태다. Read
 
 자료 확인일: 2026-10-11.
 
+
+
+## 객체를 한 요청 흐름으로 연결한다
+
+**분산 객체**는 이름만 아는 용어가 아니라 위치·관리자·수명과 전이를 가진다. 요청 R9는 client에서 만들어져 RPC message로 이동한다. leader는 현재 term의 log entry를 만들고 follower log에 복제한다. quorum 조건이 맞으면 commitIndex가 전진하며 state machine이 lastApplied까지 실행한다. dedup row는 R9와 결과를 업무 변경과 함께 보존한다. 응답 timeout은 client의 기다림 수명만 끝내며 commit된 entry나 업무 효과를 지우지 않는다.
+
+stream E9는 source partition과 offset을 갖고 operator state를 바꾼다. checkpoint는 offset·state·watermark를 한 cut에 저장한다. crash 뒤 replay가 sink write를 반복할 수 있어 sink transaction이나 idempotent key가 필요하다. lease는 coordinator의 임시 소유권이고 fencing token은 storage가 낡은 writer를 거부하는 세대다. Iceberg data file은 catalog snapshot이 선택할 때만 현재 table에 보인다.
+
+이 연결에서 같은 단어도 대상이 다르다. Raft commit은 log 결정, 2PC commit은 참여자 전체 결정, sink commit은 출력 게시, Iceberg commit은 metadata pointer 교체다. 성공 지점을 섞지 않는다.
+
+## 종합 문제 15개와 전체 풀이
+
+### 문제 1. 응답 유실 뒤 R9를 새 ID로 재시도하면 무엇이 깨지는가?
+
+**풀이:** server가 첫 R9를 commit하고 응답만 잃었을 수 있다. 새 ID R10은 dedup 저장소에서 새 업무로 보이므로 효과가 두 번 생긴다. 같은 R9와 같은 payload hash로 재시도해 저장 결과를 받아야 한다. 같은 R9에 다른 payload면 충돌로 거부한다. timeout은 실패 판정이 아니라 결과 미상이다.
+
+### 문제 2. 3노드 Raft에서 A·B가 current term index7을 저장했다. client 성공까지 무엇이 남는가?
+
+**풀이:** 과반수2에 복제돼 leader가 commitIndex7을 전진시킬 수 있다. 그러나 state machine이 lastApplied7까지 실행하고 업무 결과를 내구화해야 한다. 응답 packet 전달도 별도다. leader가 apply 뒤 응답 전에 죽으면 client는 미상이지만 효과는 남는다. 새 leader와 request ID 조회로 결과를 배운다.
+
+### 문제 3. 5노드 matchIndex가 [9,9,8,8,3]이면 무엇을 직접 commit할 수 있는가?
+
+**풀이:** 세 번째 큰 값8까지 과반수3이 복제했다. index8 entry가 current term이면 leader는 8을 직접 commit하고 prefix도 간접 commit한다. index8이 과거 term뿐이면 복제 수만으로 직접 commit하지 않는다. current term entry를 과반수에 복제한 뒤 prefix를 포함시킨다. 숫자와 term 조건을 함께 본다.
+
+### 문제 4. 5노드가 2대와3대로 분할됐다. 양쪽이 쓰기를 받으면 왜 위험한가?
+
+**풀이:** majority가3이면 3대 집합만 새 commit을 만들 수 있다. 2대 쪽은 옛 leader가 살아 있어도 quorum 증거가 없다. 양쪽 쓰기를 성공시키면 서로 다른 log가 외부 효과를 만들 수 있다. 2대 쪽은 읽기 계약에 따라 제한된 stale read만 제공하거나 실패한다. partition 회복 뒤 log repair가 client에 이미 약속한 두 성공을 모두 정당화하지 못한다.
+
+### 문제 5. 2PC 참여자가 YES 뒤 coordinator를 잃었다. 30초 후 abort 가능한가?
+
+**풀이:** coordinator가 COMMIT을 영속화하고 메시지만 잃었을 수 있다. 독자 abort는 다른 participant의 commit과 갈린다. PREPARED WAL과 잠금을 유지하고 권위 결정 로그를 조회한다. 복제 coordinator가 있으면 같은 transaction ID의 결정을 재전송한다. timeout은 경보이지 abort 증거가 아니다.
+
+### 문제 6. lease token7 worker가 40초 멈춘 사이 token8이 발급됐다. 누가 막는가?
+
+**풀이:** lease 서비스는 token8을 발급해도 token7 process를 멈추지 못한다. worker가 깨어나 storage에 쓸 수 있다. storage가 highest token8을 영속 기억하고 token7 write를 거부해야 한다. 이것이 fencing이다. API front door만 검사하면 직접 storage 경로가 우회할 수 있다.
+
+### 문제 7. CP20이 P0=1000, P1=2000, sum55다. 장애 전 각 3개를 처리해 sum62였다면 복구는?
+
+**풀이:** 완료 checkpoint CP20의 state55와 두 offset을 함께 복원한다. P0 1001~1003, P1 2001~2003 여섯 record를 replay해 62를 만든다. 장애 전 sink 효과가 남았을 수 있어 CP transaction ID나 upsert key로 중복을 막는다. state만55로 돌리고 offset을 최신으로 두면 누락이다. offset만 과거로 돌리고 state62를 두면 중복 계산이다.
+
+### 문제 8. watermark10:05 뒤 event time10:03 사건이 오면 버그인가?
+
+**풀이:** watermark는 이 시각 이전 사건이 대체로 왔다는 정책적 진행값이다. 허용 지연 안이면 window 결과를 update하고, side output으로 보내거나 계약 밖이면 drop metric을 남긴다. 이미 sink에 게시한 결과를 수정할 수 있는지도 확인한다. append-only sink에는 version이나 retract 표현이 필요하다. 물리적으로 늦은 사건이 불가능하다는 증명은 아니다.
+
+### 문제 9. shard snapshot100 뒤 log101~130을 옮겼다. 몇 개이며 cutover 조건은?
+
+**풀이:** 양 끝 포함 130-101+1=30개다. target이 130까지 연속 적용하고 source가 새 승인 중단 뒤 마지막 boundary를 확인해야 한다. 그 다음 epoch를 올려 owner를 바꾼다. old source는 data copy가 남아도 새 epoch write를 거부한다. snapshot만 복사하면 이동 중 30개를 잃는다.
+
+### 문제 10. Spark task가 결제 뒤 crash해 retry됐다. Spark가 exactly-once를 보장하는가?
+
+**풀이:** lineage는 partition 계산을 다시 만들지만 외부 결제 성공을 기억하지 않는다. 같은 task가 두 번째 결제를 보낼 수 있다. 외부 API에 안정된 idempotency key를 전달하고 결과를 조회한다. 순수 data file output은 commit protocol이 한 attempt만 선택하게 한다. Spark checkpoint와 외부 effect once는 다른 경계다.
+
+### 문제 11. Iceberg writer A와 B가 M10을 읽고 M11·M12를 만들었다. 둘 다 현재가 되는가?
+
+**풀이:** catalog의 M10 기대 CAS는 먼저 한 writer만 성공한다. A가 M11을 게시하면 B의 M10→M12는 실패한다. B는 M11을 읽고 충돌을 검사해 새 metadata로 재계획한다. B data file은 존재해도 현재 snapshot이 참조하지 않으면 독자에게 보이지 않는다. file upload와 table commit을 구분한다.
+
+### 문제 12. etcd follower가 rev29일 때 leader는 rev30이다. 최신 설정 판단은?
+
+**풀이:** serializable follower read는 rev29를 반환할 수 있다. 최신 소유권·설정 결정에는 linearizable read나 etcd transaction compare를 쓴다. revision은 30초 같은 wall clock이 아니라 논리 변경 번호다. watch가 compacted revision을 요구하면 현재 snapshot을 다시 읽고 새 revision부터 이어 간다. 오래된 cache로 CAS 없이 writer를 시작하지 않는다.
+
+### 문제 13. history에서 W1은 10~30ms x=2, R1은 40~45ms 결과1이다. 판정은?
+
+**풀이:** W1 응답 뒤 R1 호출이라 실시간 순서가 확정된다. register 초기값1이라도 R1은 완료된 W1의2를 봐야 한다. 결과1은 linearizability 반례다. 평균 latency가 좋아도 정확성 guardrail을 위반한다. 호출·응답 둘 다 있어야 이 선후를 판단한다.
+
+### 문제 14. retry model의 assert가 통과하면 재시작에도 안전한가?
+
+**풀이:** 예제 results는 process memory dict다. restart하면 ID 기록을 잃어 다시 차감할 수 있다. balance 변경과 dedup 결과를 같은 durable transaction에 저장하고 복구해야 한다. 같은 ID의 payload hash도 검사한다. toy assert는 순차 메모리 실행의 분기만 확인한다.
+
+### 문제 15. 후보 시스템 throughput이 20% 높지만 node도 5대에서7대로 늘고 한 run에 checker 위반1건이 있었다. 채택하는가?
+
+**풀이:** 자원 증가와 algorithm 효과가 섞여 공정하지 않다. 같은 node와 같은 durability·consistency로 재실험하고 동일 비용 비교도 둔다. checker 위반은 사전 정확성 조건이 0이면 즉시 기각 사유다. 성공 run만 골라 평균내지 않는다. seed와 최소 history를 보존해 원인을 고친 뒤 전체 계획을 다시 수행한다.
+
+
+
+## 용어를 관계로 기억하기
+
+node는 process나 machine이라는 실행 주체이고, replica는 그 주체가 보관한 논리 상태 사본이다. log entry는 command와 term·index를 묶으며 quorum 복제가 commit 근거를 만든다. lastApplied는 commit된 command 중 state machine에 실제 반영한 끝을 나타낸다.
+
+wall clock은 달력 시각이라 조정될 수 있고 monotonic clock은 timeout 경과 측정에 쓴다. logical clock과 happens-before는 사건 인과 순서를 설명한다. 서로 다른 목적의 시계를 바꾸어 쓰지 않는다.
+
+transaction은 업무 경계, atomicity는 전부 또는 전무, isolation은 동시 실행 관측 규칙이다. 2PC는 여러 participant의 원자 결정을 맞추지만 isolation을 자동 제공하지 않는다. idempotency는 반복 결과의 성질이고 dedup row는 이를 구현하는 영속 객체다.
+
+shard는 key 공간 일부, shard map은 key와 owner의 대응, epoch는 구성 세대다. migration은 snapshot과 tail을 옮기고 cutover에서 epoch를 바꾼다. 이전 owner의 copy 수명과 쓰기 권한 수명은 다르다.
+
+## 문제를 푸는 공통 절차
+
+첫째 실제 객체와 관리자를 쓴다. 둘째 입력 message 순서와 durable write를 표로 만든다. 셋째 client 응답, 내부 commit, apply와 외부 effect를 분리한다. 넷째 정확한 장애 지점을 넣는다. 다섯째 복구 뒤 허용 결과와 금지 결과를 계산한다. 마지막으로 모델·실험이 생략한 범위를 적는다.
+
+## 보장 경계 점검
+
+- 복제본 수와 합의된 순서는 다른 개념이다.
+- commit과 apply, client ack는 다른 사건이다.
+- timeout은 원격 실패 증거가 아니다.
+- lease는 기간제 권리이고 fencing은 실제 저장소 거부다.
+- checkpoint는 내부 복구점이고 sink 게시와 자동 동일하지 않다.
+- Spark retry, Iceberg CAS와 etcd revision은 서로 다른 객체를 관리한다.
+- 가상 숫자는 교육 계산이며 실제 성능 관측값이 아니다.
+
+
 [← 이전](14-experiments-and-research-methods.md) · [목차](README.md)

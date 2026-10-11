@@ -2,60 +2,48 @@
 
 [이 책 목차](README.md) · [이전: Network I/O와 kernel 관찰](12-network-io-and-kernel-observation.md) · [다음: Troubleshooting과 증거](14-troubleshooting-and-evidence.md)
 
-Kubernetes resource request, Linux cgroup, GPU device assignment, application deadline은 서로 다른 control plane이다. Pod가 schedule되었다고 CPU latency가 보장되지 않고, memory limit을 지켰다고 GPU VRAM이 제한되는 것도 아니다. RAN(Radio Access Network) workload에서는 이 경계를 시간 budget과 함께 읽어야 한다.
-
-이 장의 YAML, 숫자와 결과는 교육용 모형이다. Cluster, cgroup, GPU 또는 RAN system에 적용하거나 실행하지 않았다.
+Kubernetes가 Pod를 node에 배치하는 결정, Linux가 process의 CPU·memory를 제한하는 결정, NVIDIA GPU가 device memory와 compute를 나누는 결정, RAN application이 deadline을 지키는 결정은 서로 다른 층에 있다. 한 층의 성공을 다음 층의 보장으로 바꾸지 않고 권한·배치·자원·지연의 전체 경로를 잇는다. 이 장의 YAML·수치·결과는 실행하지 않은 교육용 가상 모형이다. cluster, cgroup, GPU, RAN system을 변경하지 않았다.
 
 ![Application에서 kernel과 device까지 이어지는 workload 경로](assets/kernel-workload-path.svg)
 
-## 1. Pod에서 hardware까지의 경로
+## container는 별도 kernel이 아니라 격리된 process다
 
-```mermaid
+**namespace(이름공간)**는 process가 PID, mount, network interface, hostname, IPC, user 같은 kernel resource를 서로 다른 view로 보게 하는 격리 기능이다. kernel이 namespace object와 membership을 관리하고 reference가 사라지면 수명이 끝난다. network namespace 안의 eth0이나 PID 1은 host 전체와 같은 객체 번호가 아닐 수 있다. 이름과 가시성을 나누기 위해 필요하지만 CPU·memory 양을 제한하지는 않는다.
+
+**cgroup(control group)**은 process 묶음의 CPU, memory, PID, I/O 사용을 계정하고 제한하는 kernel 계층 객체다. cgroup filesystem의 controller file로 상태와 정책을 표현한다. process가 이동하거나 종료될 때 membership이 바뀌며 빈 cgroup도 관리 주체가 제거하기 전까지 남을 수 있다. namespace는 “무엇을 보나”, cgroup은 “얼마나 쓰나”라는 질문에 답한다.
+
+**container(컨테이너)**는 image에서 시작한 process를 namespace, cgroup, mount, capability와 보안 정책으로 묶은 실행 단위다. container마다 자동으로 별도 kernel이 생기는 VM이 아니다. **container runtime**은 kubelet 요청을 받아 OCI bundle을 준비하고 namespace·cgroup·mount·device 접근을 구성해 process를 시작·정리하는 node software다. runtime이 scheduler처럼 node를 고르지는 않는다.
+
+**Pod**는 Kubernetes scheduler가 node에 배치하는 최소 workload 단위다. Pod 안 container들은 같은 node와 Pod network identity, 명시한 volume을 공유할 수 있지만 process와 container별 resource limit은 나뉠 수 있다. API object는 control plane 저장소에 있고 실제 process는 선택된 node에서 kubelet/runtime이 만든다.
+
+~~~mermaid
 flowchart TD
-    Y["Pod spec: requests, limits, device claims"] --> S["Kubernetes scheduler"]
-    S --> B["Pod → node binding"]
-    B --> K["kubelet + container runtime"]
-    K --> C["Linux cgroup v2: cpu, memory, pids, io"]
-    K --> D["device assignment: GPU/VF/DRA"]
-    C --> P["application processes and threads"]
-    D --> P
-    P --> N["NIC, storage, accelerator"]
-    P --> R["RAN frame/slot deadline"]
-```
+ P[Pod spec] --> S[Kubernetes scheduler]
+ S --> B[Pod to node binding]
+ B --> K[kubelet]
+ K --> R[container runtime]
+ R --> N[namespace와 mount]
+ R --> C[cgroup CPU memory pids io]
+ R --> D[GPU NIC device access]
+ N --> A[application process]
+ C --> A
+ D --> A
+ A --> X[RAN frame deadline]
+~~~
 
-각 주체가 바꾸는 상태가 다르다.
+### 문제 1: namespace와 cgroup이 각각 막는 것
 
-| 주체 | 입력 | 바꾸는 상태 | 보장하지 않는 것 |
-| --- | --- | --- | --- |
-| Scheduler | Pod requests, affinity, device availability | Pod의 target node binding | Runtime latency와 실제 사용량 |
-| Kubelet/runtime | Pod spec과 node 상태 | Container process, cgroup, mount, device access | Application deadline |
-| Linux scheduler/memcg | Runnable task와 cgroup files | CPU time, reclaim, OOM | Kubernetes replica 수 |
-| Device plugin/DRA driver | Device request/claim | GPU·NIC 같은 device 할당 | GPU kernel correctness |
-| Application | Packet, frame, model, deadline | 업무 결과와 retry | Node resource isolation 전체 |
+container A와 B가 서로 다른 PID·network namespace지만 같은 CPU cgroup에 있고 quota 2 CPU를 공유한다고 하자. A가 B의 PID를 볼 수 있는가? CPU 2개씩 쓸 수 있는가?
 
-## 2. Request는 scheduler 입력이다
+서로 다른 PID namespace이면 일반적으로 각 view에서 다른 process가 보이지 않는다. network namespace도 interface와 socket table을 분리한다. 그러나 같은 CPU cgroup quota를 공유하면 A와 B 합계가 period budget을 경쟁하며 각각 2 CPU를 보장받지 않는다. 조건을 바꾸어 cgroup을 나눠도 host CPU와 cache, memory bandwidth는 공유할 수 있다. 가시성 격리와 성능 격리를 따로 검증한다.
 
-CPU·memory **request**는 scheduler가 Pod가 node에 fit하는지 계산하는 값이다. 현재 실제 사용량과 다르다.
+## request는 배치 입력이고 limit는 실행 경계다
 
-```text
-node allocatable: 16 CPU, 64Gi
-existing requests: 12 CPU, 48Gi
-new Pod request: 6 CPU, 8Gi
+Kubernetes **request**는 scheduler가 Pod가 node에 fit하는지 계산하는 자원 요구량이다. node allocatable 16 CPU·64 GiB, 기존 request 12 CPU·48 GiB, 새 Pod request 6 CPU·8 GiB라면 CPU는 \(12+6=18>16\)이라 후보에서 제외되고 memory는 \(48+8=56≤64\)로 맞는다. 모든 조건을 만족해야 배치된다. 실제 CPU 사용이 낮아도 request 합 때문에 Pending일 수 있다.
 
-CPU: 12 + 6 = 18 > 16 → fit하지 않음
-Memory: 48 + 8 = 56 <= 64 → fit
-결론: 두 resource를 모두 만족하지 못해 후보 제외
-```
+**limit**는 runtime 사용 상한을 표현한다. CPU request는 share·weight에, CPU limit는 cgroup quota에 연결될 수 있다. scheduler는 기본적으로 request로 fit을 계산하므로 request 4, limit 6인 container는 4 CPU를 배치량으로 센다.
 
-Node의 순간 CPU 사용이 20%여도 request 합 때문에 Pending일 수 있다. 반대로 request가 너무 낮으면 scheduler는 많은 Pod를 배치하지만 runtime contention이 커진다.
-
-공식 의미는 Kubernetes [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)를 따른다.
-
-## 3. CPU limit는 allocatable 예약량이 아니다
-
-CPU request는 placement와 CPU share/weight에 연결되고 CPU limit는 runtime quota로 구현될 수 있다.
-
-```yaml
+~~~yaml
 resources:
   requests:
     cpu: "4"
@@ -63,256 +51,151 @@ resources:
   limits:
     cpu: "6"
     memory: 12Gi
-```
+~~~
 
-이 조각은 교육용 container spec이며 단독 manifest로 적용하지 않는다.
+이 조각은 교육용 container spec이며 단독 manifest로 적용하지 않았다.
 
-Scheduler는 CPU 4를 request로 계산한다. Runtime에서는 CFS fair-class bandwidth 또는 관련 cgroup mechanism이 CPU 6 상한을 적용할 수 있다. 실제 quota period 안에 CPU 시간을 모두 쓰면 다음 period까지 throttling되어 latency spike가 생긴다.
+**CPU quota**는 일정 period마다 cgroup이 쓸 수 있는 CPU time budget이다. 교육용으로 quota 600 ms/period 100 ms는 period 안에서 합산 6 CPU 상당을 허용한다. 6 thread가 100 ms 내내 쓰면 budget이 소진돼 다음 period까지 runnable thread가 throttled될 수 있다. CPU가 물리적으로 사라진 것이 아니라 정책 때문에 실행을 기다린다.
 
-```text
-quota가 600ms / period 100ms인 6 CPU limit 모형
-6개 thread가 100ms 동안 모두 실행 → quota 소진 가능
-7번째 runnable thread가 있어도 period budget 때문에 대기
-```
+### 문제 2: request 4·limit 6과 7개 thread
 
-CPU limit을 없애면 node 여유를 burst에 쓸 수 있지만 noisy neighbor risk가 커진다. RAN deadline workload에서는 quota throttling count, cpuset, IRQ placement와 priority를 함께 측정한다.
+node에 배치된 Pod가 CPU request 4, limit 6이고 runnable thread 7개다. scheduler 계산, 최대 burst와 deadline 위험을 설명하라.
 
-## 4. Memory limit는 memcg로 이어진다
+scheduler fit에는 4 CPU가 쓰인다. node 여유와 cgroup 정책 아래에서 6 CPU 상당까지 실행할 수 있지만 7 thread가 계속 CPU를 요구하면 quota를 빨리 소진해 period 말에 throttling될 수 있다. request 4가 매 순간 네 core 즉시 실행을 보장하지 않고 limit 6도 여섯 전용 core를 예약하지 않는다. 조건을 바꾸어 limit를 없애면 여유 CPU burst는 가능하지만 다른 workload와의 contention과 node admission 정책을 봐야 한다.
 
-Container memory limit은 Linux cgroup v2 `memory.max` 같은 hard boundary에 연결될 수 있다. Request는 scheduler fit에 쓰이고 limit은 runtime memory charge에 작동한다.
+## memory.high와 memory.max는 압력과 hard boundary다
 
-```mermaid
+cgroup v2의 **memory.high**는 사용량이 넘으면 process를 즉시 kill하는 hard limit가 아니라 강한 reclaim과 throttling을 유도하는 pressure 경계다. kernel memory controller가 charge와 reclaim을 관리한다. **memory.max**는 cgroup memory의 hard limit로, 회수해도 charge를 만족하지 못하면 cgroup OOM과 process kill로 이어질 수 있다.
+
+memory charge에는 anonymous heap만 아니라 page cache와 일부 kernel memory가 포함될 수 있다. Kubernetes memory request는 배치에, container memory limit는 memory.max 같은 실행 경계에 연결될 수 있다. Pod phase가 Running이어도 한 container가 OOMKilled 뒤 restart될 수 있다.
+
+~~~mermaid
 sequenceDiagram
-    participant A as "application"
-    participant M as "memory cgroup"
-    participant R as "reclaim"
-    participant O as "cgroup OOM"
-    A->>M: "heap, page cache, socket buffer charge"
-    M->>R: "memory.high 또는 max pressure"
-    R-->>M: "reclaim 부족"
-    M->>O: "memory.max charge 실패"
-    O-->>A: "container process OOM kill 가능"
-```
+ participant A as application
+ participant M as memory cgroup
+ participant R as reclaim
+ participant O as cgroup OOM
+ A->>M: heap cache socket charge
+ M->>R: memory.high 초과 pressure
+ R-->>M: 충분한 page 회수 실패
+ M->>O: memory.max charge 실패
+ O-->>A: process kill 가능
+~~~
 
-Kubernetes의 `OOMKilled` status는 memcg 사건을 user-facing container 상태로 보여 줄 수 있다. Pod phase는 Running이면서 container restart count가 증가할 수 있다.
+### 문제 3: high 10 GiB, max 12 GiB에서 11 GiB 사용
 
-## 5. HugePages와 일반 memory를 구분한다
+memory.current가 11 GiB이고 high 10, max 12 GiB다. 즉시 OOM인가? 2 GiB를 추가하면 무엇이 가능한가?
 
-DPDK, packet processing, accelerator runtime은 HugeTLB page를 요구할 수 있다. Kubernetes hugepages resource와 memcg 일반 memory는 allocation·accounting 방식이 다르다.
+high는 넘었으므로 allocation path에서 reclaim·throttling과 memory pressure가 생길 수 있지만 즉시 kill이라는 뜻은 아니다. 2 GiB 추가 요구는 단순 합 13 GiB로 max를 넘으므로 kernel은 reclaim을 시도하고 충분하지 않으면 cgroup OOM이 가능하다. 조건을 바꾸어 3 GiB가 깨끗한 회수 가능 page cache라면 max 아래로 만들 수 있으나 cache miss와 I/O 지연이 늘 수 있다. memory.events, PSI, OOM status를 같은 시간에 본다.
 
-Hugepage size별 resource를 request해야 하며 일반 memory처럼 overcommit되는 것으로 가정하지 않는다. Node에 필요한 preallocated pool이 없으면 Pod가 schedule되지 않거나 application allocation이 실패할 수 있다.
+## scheduler, kubelet과 runtime의 권한이 다르다
 
-`memory.max`만 높이면 부족한 hugepage pool이 생기지 않는다. 반대로 hugepage를 확보해도 application heap과 socket buffer memory budget은 별도다.
+scheduler는 미배치 Pod의 request, affinity, taint/toleration, volume과 device 조건을 보고 node binding을 기록한다. process를 실행하거나 cgroup file을 직접 쓰는 주체가 아니다. 선택된 node의 kubelet은 PodSpec을 관찰해 runtime과 device driver에 실제 준비를 요청하고 status를 보고한다. runtime은 process·namespace·cgroup·mount를 만들며 node 선택 권한은 없다.
 
-## 6. GPU device assignment와 VRAM
+Kubernetes RBAC은 API object 읽기·쓰기 권한을 제어한다. container 내부 Linux capability와 device node 접근 권한은 별도다. ResourceClaim을 만들 권한, driver가 allocation status를 갱신할 권한, container가 /dev/nvidia*를 여는 권한을 같은 “GPU 권한”으로 묶지 않는다.
 
-GPU를 Pod에 할당하는 것과 GPU device memory(VRAM)를 세밀하게 제한하는 것은 다르다.
+### 문제 4: Scheduled지만 GPU application이 시작하지 못한 경우
 
-```mermaid
-flowchart LR
-    P["Pod requests GPU device"] --> S["scheduler/device allocator"]
-    S --> N["GPU가 있는 node 선택"]
-    N --> R["runtime에 device nodes/CDI 정보 전달"]
-    R --> A["application CUDA/ROCm context"]
-    A --> V["GPU VRAM allocation"]
-    M["container memory.max"] -. "일반 host memory 중심" .-> V
-```
+Pod binding은 성공했고 ResourceClaim도 allocated로 보이지만 container가 GPU device를 열지 못했다. 어느 단계와 주체를 확인하는가?
 
-Traditional extended resource request `vendor.example/gpu: 1`은 보통 device 단위를 할당한다. CPU memory limit 16Gi를 적었다고 GPU VRAM도 16Gi로 제한되는 것은 아니다.
+scheduler의 node·allocation 선택은 끝났지만 node preparation, CDI 정보 생성, runtime device injection, device node permission, driver health, application library 초기화가 남는다. kubelet event, DRA driver 상태, runtime spec와 application error를 순서대로 본다. 조건을 바꾸어 device는 열리지만 kernel launch가 실패하면 VRAM, compute capability, driver/runtime version과 GPU health가 다음 범위다. Scheduled는 runtime usability 보장이 아니다.
 
-MIG(Multi-Instance GPU), mediated device, vendor time-slicing은 서로 다른 isolation과 accounting을 제공한다. “GPU 1개”가 full physical GPU인지 partition인지 resource name과 driver configuration을 확인한다.
+## GPU device와 VRAM은 host memory와 다른 자원이다
 
-## 7. DRA가 표현하는 assignment
+**GPU(Graphics Processing Unit)**는 많은 계산을 병렬 수행하는 accelerator hardware다. PCIe나 전용 interconnect로 host에 붙고 kernel driver와 user runtime이 command·memory를 관리한다. **GPU device assignment**는 특정 GPU 또는 분할 instance에 container가 접근하도록 scheduler·device mechanism·runtime이 권한과 node 정보를 연결하는 과정이다.
 
-**DRA(Dynamic Resource Allocation)**는 device request와 claim을 통해 structured parameter, scheduling, allocation 상태를 표현하는 Kubernetes mechanism이다. Driver가 device 준비와 node-local 정보를 runtime에 연결한다.
+**VRAM(Video RAM)**은 GPU에 붙은 device memory다. model weight, activation, communication buffer가 놓이며 GPU context와 driver가 수명을 관리한다. Linux cgroup memory.max는 주로 host memory charge 경계이며 같은 숫자로 VRAM 사용을 제한한다고 가정하지 않는다. pinned host buffer는 host memory이지만 reclaim이 어려워 memcg pressure를 키울 수 있다.
 
-```mermaid
-sequenceDiagram
-    participant P as "Pod + ResourceClaim"
-    participant S as "scheduler"
-    participant D as "DRA driver/controller"
-    participant K as "kubelet"
-    participant A as "application"
-    P->>S: "GPU/NIC 속성 요구"
-    S->>D: "후보 device allocation"
-    D-->>S: "allocation result"
-    S->>K: "Pod를 matching node에 bind"
-    K->>D: "node prepare"
-    D-->>K: "device access 정보"
-    K->>A: "container 시작"
-```
+~~~text
+교육용 host memory:
+  process RSS 6 GiB
+  pinned host buffer 4 GiB
+  page cache 2 GiB
 
-DRA object가 존재한다고 driver가 정상이라는 뜻은 아니다. Claim allocation, node preparation, CDI(Container Device Interface) 정보, device health와 application initialization을 단계별로 본다.
+교육용 GPU memory:
+  model weight 18 GiB
+  activation peak 10 GiB
+  communication buffer 2 GiB
+~~~
 
-Kubernetes version별 DRA API와 feature state는 [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) 공식 문서에서 확인한다.
+host 관련 합은 12 GiB, GPU 관련 합은 30 GiB다. 두 주소 공간과 controller·telemetry가 다르다.
 
-## 8. GPU memory를 별도 측정한다
+**MIG(Multi-Instance GPU)**는 지원 NVIDIA GPU를 hardware-isolated GPU instance로 나누어 compute와 memory resource 일부를 제공하는 기능이다. 모든 NVIDIA GPU에서 되는 일반 기능이 아니다. 지원 GPU, MIG mode·profile, driver와 NVIDIA device plugin 또는 DRA driver 구성이 맞아야 한다. “GPU 1개”라는 resource name이 full physical GPU인지 특정 MIG profile인지 확인한다. MIG는 instance 사이 격리를 제공하지만 node CPU, PCIe uplink, host memory와 다른 공용 자원까지 없애지 않는다.
 
-```text
-Host memory:
-  process RSS 6Gi
-  pinned host buffers 4Gi
-  page cache 2Gi
+### 문제 5: host 12 GiB limit와 GPU 30 GiB 사용
 
-GPU memory:
-  model weights 18Gi
-  activation peak 10Gi
-  communication buffers 2Gi
-```
+container memory limit가 12 GiB이고 GPU telemetry가 30 GiB다. limit 위반인가? pinned host buffer가 4 GiB에서 7 GiB로 늘면 무엇을 봐야 하는가?
 
-Host memcg 관찰값은 약 12Gi와 관련될 수 있지만 GPU 30Gi 사용을 같은 숫자로 포함한다고 가정하지 않는다. Driver와 device telemetry, 지원되는 device-memory controller 또는 vendor mechanism을 별도로 확인한다.
+GPU VRAM 30 GiB를 host memory.max 12 GiB와 직접 비교하지 않는다. 별도 device capacity와 driver accounting을 본다. pinned host buffer는 host charge에 포함될 수 있어 3 GiB 증가가 memory.max, reclaim과 OOM을 촉발할 수 있다. 조건을 바꾸어 GPU OOM이 나면 host limit을 올리는 것만으로 해결되지 않으며 model·activation·GPU instance capacity를 확인한다. host OOM과 GPU OOM의 error source를 구별한다.
 
-Pinned host memory는 reclaim이 어려워 node pressure를 키울 수 있다. GPU OOM과 host cgroup OOM은 error message와 controller가 다르다.
+## DRA는 device를 표현·배치하는 Kubernetes 자원 모델이다
 
-## 9. RAN deadline budget
+**DRA(Dynamic Resource Allocation, 동적 자원 할당)**는 DeviceClass, ResourceSlice, ResourceClaim 같은 API object로 device 속성, 요청, allocation을 표현하고 scheduler·driver·kubelet이 준비를 조정하는 Kubernetes mechanism이다. device 자체나 NVIDIA driver의 다른 이름이 아니다.
 
-RAN workload는 packet 처리량뿐 아니라 frame·slot deadline을 지켜야 한다. 예를 들어 1ms budget을 다음처럼 나눈 교육 모형을 보자.
+2026-10 현재 Kubernetes 공식 문서에서 DRA core는 v1.35부터 stable이고 resource.k8s.io/v1 API를 사용한다. 이 문장은 cluster가 DRA-compatible driver를 자동으로 갖는다는 뜻이 아니다. driver가 ResourceSlice를 광고하고 claim에 맞는 device를 준비해 CDI(Container Device Interface) 등으로 runtime 접근 정보를 줘야 한다. 세부 기능은 버전 상태가 다르다. 예를 들어 device binding conditions는 v1.36부터 beta이며, resource pool status 같은 일부 관측 기능은 alpha feature gate가 필요할 수 있다. cluster의 정확한 minor version과 feature gate, driver 지원을 확인한다.
 
-| 단계 | Budget |
-| --- | ---: |
-| NIC receive와 kernel path | 120µs |
-| Userspace dequeue와 parse | 80µs |
-| PHY/MAC compute 또는 accelerator | 500µs |
-| Result queue와 transmit 준비 | 150µs |
-| Jitter reserve | 150µs |
-| 합계 | 1000µs |
+DRA 흐름은 driver의 ResourceSlice 광고, workload의 ResourceClaim, scheduler의 후보 device·node allocation, Pod binding, kubelet과 node driver의 prepare, runtime device access, application init, 종료 뒤 unprepare·cleanup 순이다. claim이 allocated여도 node prepare와 application init은 실패할 수 있다. 공식 제한으로 DRA resource를 점유한 기존 Pod를 필요한 고우선순위 Pod가 preempt하지 못해 Pending이 지속될 수 있는 조건도 확인한다.
 
-평균이 700µs라도 p99.999가 1200µs면 deadline miss가 생긴다. CPU quota period, scheduler preemption, IRQ, page fault, memory reclaim, GPU launch, PCIe transfer, IOMMU와 network queue를 tail latency에서 본다.
+### 문제 6: DRA stable을 “모든 GPU 자동 지원”으로 오해한 경우
 
-## 10. Deadline miss 시간표
+Kubernetes 1.35 cluster라는 이유로 vendor GPU가 claim만 만들면 동작한다고 주장했다. 빠진 전제와 확인 상태를 적어라.
 
-```text
-t=0µs    NIC queue에 packet 도착
-t=90µs   NAPI/kernel network 처리 완료
-t=160µs  application receive CQE
-t=240µs  parse 완료
-t=260µs  GPU work submit
-t=720µs  GPU completion
-t=760µs  response build
+DRA core API 안정성만 확인됐다. GPU를 ResourceSlice로 광고하고 allocation·prepare·CDI를 수행하는 compatible driver, GPU kernel driver, runtime, 권한과 DeviceClass가 필요하다. cluster minor version의 세부 API와 driver release 호환성도 맞아야 한다. 조건을 바꾸어 전통적 device plugin extended resource를 쓴다면 그 경로와 DRA claim 경로를 구분한다. 최신 Kubernetes의 일부 extended-resource-to-DRA 기능도 해당 버전·gate 상태를 확인하고 일반 기능으로 소급하지 않는다.
+
+## RAN deadline은 평균 처리량보다 늦은 꼬리를 본다
+
+**RAN(Radio Access Network, 무선 접속망)**은 단말과 core network 사이의 radio 접속 계층이다. baseband의 PHY/MAC 작업은 frame·slot 시각에 맞춰 결과를 내야 한다. **deadline**은 해당 결과가 끝나야 하는 마지막 시각이고, 늦게 끝난 정확한 결과도 실시간 protocol에서는 쓸 수 없을 수 있다.
+
+교육용 1 ms, 즉 1000 µs budget을 NIC/kernel 120, userspace parse 80, PHY/MAC 또는 accelerator 500, result queue/TX 150, jitter reserve 150으로 나누면 합이 1000이다. 평균 700 µs라도 p99.999가 1200이면 deadline miss가 있다. CPU quota throttling, scheduler preemption, IRQ·softirq, page fault·reclaim, GPU launch·queue, PCIe transfer, IOMMU, NIC queue를 같은 monotonic clock에 놓는다.
+
+~~~text
+정상 교육용 시간표
+t=0µs    NIC RX 도착
+t=90µs   NAPI/kernel 완료
+t=160µs  application receive
+t=260µs  GPU submit
+t=720µs  GPU complete
 t=810µs  send submit
-t=880µs  정상 completion
-```
+t=880µs  TX path 진입
 
-Memory pressure가 있는 반례:
-
-```text
-t=160µs  receive CQE
-t=210µs  page fault에서 memcg reclaim 시작
+memory pressure 반례
+t=160µs  receive
+t=210µs  page fault와 memcg reclaim 시작
 t=620µs  reclaim 종료
 t=700µs  GPU submit
-t=1160µs send 준비 → deadline miss
-```
+t=1160µs send 준비, deadline miss
+~~~
 
-GPU compute를 최적화해도 reclaim 410µs가 남으면 목표를 못 맞춘다. PSI, page fault, cgroup event와 application trace를 같은 monotonic clock에 맞춘다.
+### 문제 7: 1 ms budget 합산과 최적화 선택
 
-## 11. CPU isolation의 조건
+kernel 150 µs, application 200, GPU 550, TX 180이 걸렸다. 합계와 초과를 구하고 GPU를 50 µs 줄인 경우를 계산하라.
 
-Cpuset으로 exclusive CPU를 주는 것만으로 jitter가 사라지지 않는다.
+합은 \(150+200+550+180=1080\) µs로 deadline을 80 µs 넘는다. GPU를 50 줄여도 1030 µs라 30 초과한다. 다른 경로와 reserve도 줄여야 한다. 조건을 바꾸어 평균이 900이어도 1% 요청이 reclaim 때문에 400 추가되면 tail miss가 남는다. throughput 평균 대신 frame ID별 deadline histogram과 각 단계 timestamp를 본다.
 
-- IRQ와 softirq가 같은 CPU에서 실행될 수 있다.
-- Kernel worker와 RCU callback이 간섭할 수 있다.
-- SMT(Simultaneous Multithreading) sibling이 resource를 공유한다.
-- CPU frequency와 thermal throttling이 바뀔 수 있다.
-- NUMA(Non-Uniform Memory Access) remote memory와 PCIe locality가 다를 수 있다.
-- Cgroup CPU quota가 여전히 throttling할 수 있다.
+## CPU isolation과 device locality는 함께 맞춘다
 
-Topology Manager, CPU Manager, device NUMA node와 hugepage locality를 함께 맞춘다. Policy를 켰다는 사실보다 실제 Pod의 cpuset, device locality, latency histogram을 확인한다. CPU pinning 정책의 전제와 option은 Kubernetes [CPU management policies](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/)에서 확인한다.
+cpuset으로 CPU를 배정해도 IRQ·softirq, kernel worker, RCU callback, SMT sibling, frequency·thermal throttling이 간섭할 수 있다. **NUMA(Non-Uniform Memory Access)**는 CPU socket에 따라 local·remote memory 접근 비용이 다른 구조다. NIC와 GPU PCIe locality, CPU cpuset, hugepage가 다른 NUMA node면 data 이동과 jitter가 늘 수 있다.
 
-## 12. Network와 storage가 RAN에 끼치는 영향
+Kubernetes CPU Manager static policy와 Topology Manager는 조건에 맞는 Pod의 CPU·device topology 정렬을 도울 수 있지만 설치·정책·QoS 전제가 있다. 실제 Pod cpuset, IRQ affinity, device NUMA, hugepage allocation을 확인한다. Guaranteed QoS는 request=limit 설정을 바탕으로 eviction 우선순위에 영향을 주지만 realtime 실행, quota 무발생, GPU latency, NIC queue exclusivity, RAN deadline을 보장하지 않는다.
 
-Packet pipeline이 log, checkpoint, model load를 같은 node storage에 의존하면 writeback spike가 memory reclaim과 scheduler latency를 만들 수 있다. Control-plane log를 synchronous fsync하면 deadline path를 막을 수도 있다.
+### 문제 8: Guaranteed Pod가 deadline을 놓친 이유
 
-Critical packet path와 telemetry path를 queue와 thread에서 분리하되, crash 뒤 필요한 durability 수준을 버리지 않는다. Async log queue가 가득 찰 때 drop할지 backpressure할지 명시한다.
+CPU·memory request와 limit가 같아 Guaranteed인 RAN Pod가 1 ms deadline을 놓쳤다. 확인할 Linux·device 증거를 순서대로 제시하라.
 
-## 13. Kubernetes QoS만으로 부족한 이유
+application frame timestamp로 어느 단계가 늘었는지 먼저 나눈다. cgroup cpu.stat의 throttling, run queue·scheduler latency, memory.events·PSI·page fault·reclaim, IRQ·softirq CPU, cpuset과 NUMA locality, GPU queue·VRAM·temperature·completion, NIC queue drop을 같은 시각에 연결한다. 조건을 바꾸어 CPU throttling이 0이어도 remote NUMA transfer와 GPU queue가 원인일 수 있다. QoS class는 원인 배제 증거가 아니다.
 
-Guaranteed QoS는 모든 container의 CPU·memory request와 limit이 같은 Pod에 상대적으로 강한 eviction protection을 준다. 다음을 보장하지 않는다.
+## 제출부터 radio 응답까지 책임을 잇는다
 
-- CPU가 항상 즉시 4 core에서 실행됨
-- Quota throttling이 없음
-- GPU VRAM capacity와 bandwidth
-- NIC queue와 IRQ exclusivity
-- RAN slot deadline
-- Node power·thermal 상태
+사용자가 request·limit과 GPU/NIC claim이 있는 PodSpec을 제출하면 API server가 object를 저장한다. scheduler는 allocatable, affinity, volume·device 조건으로 node와 device allocation을 고르고 binding을 기록한다. kubelet은 runtime과 driver에 sandbox, namespace, cgroup, mount와 device prepare를 요청한다. container process가 host heap·pinned buffer와 GPU VRAM을 각각 할당한다.
 
-PriorityClass와 Guaranteed를 최고로 설정한 workload가 많아지면 차별화가 사라진다. Capacity와 admission policy가 필요하다.
+packet은 NIC queue, NAPI, kernel/socket 또는 userspace I/O path를 지나 application에 온다. CPU thread와 GPU kernel이 PHY/MAC 계산을 수행하고 deadline 전에 TX queue로 결과를 보낸다. kubelet은 container 생존과 restart를, cgroup은 CPU·memory 사건을, device telemetry는 GPU를, application은 frame deadline을 각각 보고한다. Pod scheduled, container Running, claim Allocated, frame deadline success는 서로 다른 상태다.
 
-## 14. 통합 관찰 matrix
+## 공식 근거
 
-| 증상 | Kubernetes | Linux | Device/application |
-| --- | --- | --- | --- |
-| Pod Pending | scheduling event, claim status | 해당 node 미선택 | device availability |
-| CPU jitter | request/limit, cpuset | throttled time, run queue, PSI | frame deadline histogram |
-| OOMKilled | container lastState | memory.events, memory.stat | heap, pinned host memory |
-| GPU OOM | device allocation | host memory와 분리 | VRAM telemetry, runtime error |
-| Packet loss | Pod readiness, node | socket/drop/softirq | NIC counters, sequence gap |
-| Slow checkpoint | volume event | io.pressure, writeback | filesystem/device latency |
+- [Kubernetes Pod and container resource management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+- [Kubernetes Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/)
+- [Kubernetes DRA 작동 방식](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/how-dra-works/)
+- [Kubernetes CPU management policies](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/)
+- [NVIDIA MIG User Guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/latest/)
 
-한 열만 보고 원인을 결정하지 않는다. Timestamp, Pod UID, cgroup path, device ID, application frame ID를 연결한다.
-
-## 15. 반례 모음
-
-- Request 4 CPU는 실제 사용 4 CPU를 예약 실행하는 realtime contract가 아니다.
-- CPU limit 6은 scheduler가 6 CPU를 allocatable에서 빼는 값이 아니다.
-- Memory limit은 GPU VRAM limit이 아니다.
-- GPU device assignment는 GPU compute latency 보장이 아니다.
-- DRA claim이 Allocated여도 node preparation과 application init은 실패할 수 있다.
-- Guaranteed QoS는 RAN deadline을 보장하지 않는다.
-- 평균 latency가 budget 아래여도 tail deadline miss가 발생한다.
-
-## 16. 처음 보는 단어로 RAN Pod 하나를 끝까지 따라가기
-
-**Container**는 image에서 시작한 process를 Linux namespace와 cgroup 같은 kernel 기능으로 격리·제어하는 실행 단위다. VM처럼 별도 kernel을 자동 제공하는 개념은 아니다.
-
-**Pod**는 Kubernetes scheduler가 node에 배치하는 최소 단위다. Pod 안 container들은 node, network identity와 명시한 volume을 공유할 수 있지만 resource limit과 process는 container별일 수 있다.
-
-**Scheduler**는 아직 node가 정해지지 않은 Pod의 request, affinity, taint, volume·device 조건을 보고 후보 node를 고른다. Process를 직접 실행하지 않는다.
-
-**Kubelet**은 선택된 node에서 PodSpec을 관찰하고 container runtime에 sandbox와 container 생성을 요청한다. Runtime은 OCI bundle, namespace, cgroup, mount와 device access를 구성한다.
-
-**Allocatable**은 node capacity에서 Kubernetes와 system daemon을 위해 예약한 양 등을 뺀 scheduler 사용 가능 값이다. Request 합을 allocatable과 비교한다.
-
-**GPU(Graphics Processing Unit)**는 많은 연산을 병렬로 수행하는 accelerator다. **VRAM(Video RAM)**은 GPU device에 붙은 memory다. Host DDR memory와 address·controller·telemetry가 다르다.
-
-**DRA(Dynamic Resource Allocation)**는 Pod가 필요한 device 속성을 claim으로 표현하고 scheduler와 driver가 allocation·node preparation을 조정하는 Kubernetes resource model이다.
-
-**RAN(Radio Access Network)**은 단말과 core network 사이의 radio 접속 계층이다. Baseband processing은 정해진 frame·slot 시각 안에 끝나야 하므로 평균 throughput보다 deadline miss tail이 중요하다.
-
-한 Pod의 제출부터 radio 결과까지 시간순서는 다음과 같다.
-
-```text
-1. 사용자가 CPU/memory request·limit과 GPU/NIC claim이 있는 PodSpec 제출
-2. API server가 object를 저장하고 scheduler가 watch
-3. Scheduler가 allocatable, cpuset/NUMA, hugepage, device claim 후보를 filter
-4. 한 node를 골라 Pod binding 기록
-5. 선택 node의 kubelet이 Pod 변경을 관찰
-6. Runtime이 network namespace, mount와 CPU/memory/PID cgroup을 생성
-7. DRA/device driver가 GPU 또는 NIC를 prepare하고 container access 정보 제공
-8. Container process가 시작해 host memory, pinned buffer, GPU VRAM을 각각 allocate
-9. NIC packet이 kernel/socket 또는 userspace I/O path로 application에 도착
-10. CPU thread와 GPU kernel이 PHY/MAC 계산을 수행
-11. Response를 deadline 전에 TX queue로 제출
-12. Kubelet은 process 상태를, application은 frame deadline metric을 각각 보고
-```
-
-여기서 4번 성공은 11번 deadline 성공을 보장하지 않는다. Scheduler는 미래의 page fault, CPU throttling, IRQ, GPU queue, device temperature를 모두 예측하지 않는다.
-
-**NUMA(Non-Uniform Memory Access)**는 CPU socket에 따라 local memory와 remote memory 접근 비용이 다른 architecture다. GPU와 NIC의 PCIe locality, CPU cpuset, hugepage가 서로 다른 NUMA node면 data 이동 latency가 늘 수 있다.
-
-**IRQ(Interrupt Request)**와 **softirq**는 device event와 network 후속 처리를 CPU에서 실행하는 kernel work다. Application CPU만 isolate하고 IRQ가 같은 core를 쓰면 jitter가 남는다.
-
-## 17. 문제
-
-1. Pod CPU request 4, limit 8이다. Scheduler는 기본적으로 node에서 몇 CPU를 fit 계산하는가?
-2. Container memory limit 12Gi다. GPU VRAM도 12Gi로 제한되는가?
-3. 1ms deadline에서 kernel 150µs, application 200µs, GPU 550µs, transmit 180µs가 걸렸다. Reserve 없이 deadline을 만족하는가?
-4. Guaranteed Pod가 deadline을 놓쳤다. 어떤 Linux 증거를 먼저 연결할 수 있는가?
-
-## 18. 해설
-
-1. Request인 4 CPU다. Limit 8은 runtime 상한과 관련된다.
-2. 아니다. Host memcg와 GPU device memory는 별도 accounting·제어 경로다.
-3. 합이 1080µs이므로 80µs 초과한다. Tail jitter reserve까지 있으면 더 엄격하다.
-4. CPU throttling, run queue와 PSI, memory reclaim/page fault, IRQ·softirq, NUMA locality, device completion을 application timestamp와 연결한다.
-
-다음 장에서는 지금까지의 status, counter, event, trace를 하나의 재현 가능한 troubleshooting evidence package로 만드는 방법을 다룬다.
+[이 책 목차](README.md) · [이전: Network I/O와 kernel 관찰](12-network-io-and-kernel-observation.md) · [다음: Troubleshooting과 증거](14-troubleshooting-and-evidence.md)

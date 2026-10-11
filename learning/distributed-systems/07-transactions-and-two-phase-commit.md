@@ -1,172 +1,237 @@
 # 07. 트랜잭션과 2단계 커밋
 
-## ACID 트랜잭션과 분산 원자 커밋은 같은 말이 아니다
+A 계좌에서 100원을 빼고 B 계좌에 100원을 더하는 송금은 사람에게 한 작업이다. 그러나 두 계좌가 서로 다른 데이터베이스에 있으면 실제 쓰기는 둘이다. 한쪽만 반영되면 돈이 사라지거나 생긴다. 이 장은 두 저장소가 같은 결정을 따르게 하는 방법, 장애 때문에 결정이 알려지지 않을 때 보존할 객체, 그리고 합의와의 차이를 수치로 추적한다.
 
-**트랜잭션**은 여러 읽기·쓰기를 하나의 논리 작업으로 묶는 경계다. ACID의 원자성은 모두 적용하거나 모두 취소한다는 뜻이고, 일관성은 애플리케이션 불변식을 지키는 유효 상태 전이를 뜻한다. 격리성은 동시에 실행되는 거래가 서로 어떤 중간 상태를 보는지 정한다. 지속성은 성공 응답한 결과가 정한 장애 뒤에도 남는 성질이다.
+## 실제 객체와 수명부터 정의한다
 
-**격리 수준**은 읽기와 동시 실행의 관계다. **분산 원자 커밋**은 여러 저장소 참여자가 같은 commit 또는 abort 결정을 따르게 하는 문제다. 2PC를 사용해도 격리 수준이 자동으로 serializable이 되지 않는다. 각 참여자의 잠금·MVCC 규칙이 별도로 필요하다.
+**트랜잭션(transaction, 여러 읽기와 쓰기를 한 성공 또는 실패로 묶는 거래 단위)**은 T900 같은 ID, 변경 목록, 읽은 버전, 잠금과 상태 레코드로 존재한다. 애플리케이션과 데이터베이스 트랜잭션 관리자가 만들고, 시작부터 commit 또는 abort 뒤 정리까지 관리한다. “차감했으면 입금도 됐다” 같은 업무 불변식을 중간 장애에도 지키기 위해 필요하다.
 
-계좌 A shard에서 100을 빼고 B shard에 100을 더하는 송금을 보자. 한쪽만 커밋하면 총액이 깨진다. coordinator는 전역 거래 T9를 만들고 두 participant가 모두 commit 가능한지 묻는다.
+**원자 커밋(atomic commit, 모든 참여 저장소가 전부 반영하거나 전부 취소하는 하나의 결정)**은 여러 로컬 트랜잭션의 최종 결과를 맞추는 문제다. 원자성은 부분 성공을 막는다. 동시에 실행되는 다른 거래가 어떤 중간 값을 보는지는 격리성의 문제이며 별도 잠금이나 다중 버전 규칙이 제공한다.
 
-## prepare는 “아마 가능”이 아니라 약속을 영속화하는 단계다
+**조정자(coordinator, 전역 거래의 투표와 결정을 관리하는 주체)**는 참여자 목록, 투표, 최종 결정을 가진다. 실제 객체는 조정자 로그의 거래 레코드다. 메모리 객체만으로 두면 재시작 때 결정을 잃으므로 디스크나 합의로 복제한 저장소에 둔다. 거래 생성부터 모든 참여자의 결정 확인과 정리까지 산다.
 
-participant가 PREPARE T9를 받으면 입력을 검증하고 필요한 잠금을 잡고, commit을 나중에 재현할 변경 정보와 PREPARED 상태를 디스크에 쓴다. 그 뒤 YES를 보낸다. YES는 “지금 메모리에서는 가능하다”가 아니라 “재시작 뒤에도 commit 또는 abort 결정을 따를 준비가 됐다”는 약속이다.
+**참여자(participant, 자기 저장소의 변경을 준비하고 적용하는 주체)**는 계좌 A DB와 계좌 B DB 같은 자원 관리자다. 참여자는 자기 WAL과 잠금 표에 거래 상태를 남긴다. **WAL(write-ahead log, 데이터 페이지보다 먼저 쓰는 복구 로그)**은 변경 재현 정보와 상태를 순서대로 안정 저장하는 객체다. 저장 엔진이 관리하며 체크포인트와 복구 정책이 허용할 때까지 산다.
 
-| participant 상태 | 영속 정보 | 허용 행동 |
-|---|---|---|
-| INIT | 거래 ID | prepare 검사 |
-| PREPARED | 변경·잠금·YES 사실 | 전역 결정 대기 |
-| COMMITTED | commit 결정·적용 결과 | 잠금 해제 |
-| ABORTED | abort 결정·복구 결과 | 잠금 해제 |
+**준비(prepare, 최종 결정에 따를 능력을 영속적으로 약속하는 단계)**에서 참여자는 제약 조건을 검사하고 잠금을 잡고 redo·undo 정보와 PREPARED 상태를 WAL에 강제 기록한 뒤 YES를 보낸다. YES는 “지금 가능해 보인다”가 아니라 “재시작 뒤에도 COMMIT 명령을 수행할 수 있고 독자적으로 마음을 바꾸지 않겠다”는 약속이다.
 
-t=0 coordinator가 PREPARE를 보낸다. t=10 A가 PREPARED를 기록하고 YES, t=15 B도 YES를 보낸다. t=20 coordinator가 COMMIT을 영속화한다. t=21 결정 전송 전에 crash한다. A와 B의 timeout은 abort 증거가 아니다. 복구 coordinator가 COMMIT 기록을 읽어 재전송해야 한다.
+**커밋(commit, 준비한 변경을 확정해 정상 상태로 공개하는 결정)**과 **중단(abort, 준비한 변경을 버리고 잠금을 해제하는 결정)**은 조정자의 권위 로그에 남는다. **의심 상태(in-doubt, YES 뒤 최종 결정을 아직 모르는 영속 상태)**는 참여자의 PREPARED 레코드와 잠금으로 존재한다. 타임아웃은 결정 부재의 증거가 아니므로 권위 있는 결정을 배울 때까지 유지한다.
 
-## crash 위치별 결정
+**2단계 커밋(2PC, two-phase commit)**은 1단계에 모든 참여자의 prepare 투표를 모으고, 2단계에 하나의 COMMIT 또는 ABORT를 영속화해 배포하는 프로토콜이다. 재전송·조회·확인 메시지가 더 생기므로 네트워크 메시지가 정확히 두 개라는 뜻은 아니다.
 
-| crash 위치 | coordinator 디스크 | participant | 복구 결과 |
-|---|---|---|---|
-| PREPARE 전 | 없음 | INIT | abort 가능 |
-| 일부 YES 뒤 | 결정 없음 | 일부 PREPARED | 복구 규칙에 따라 abort 통지 |
-| COMMIT 기록 뒤 | COMMIT | PREPARED | commit 재전송 |
-| 적용 뒤 ack 전 | COMMIT | COMMITTED | 중복 commit을 멱등 처리 |
+## 두 데이터베이스 송금의 전체 정상 경로
 
-coordinator가 COMMIT을 메모리에만 정하고 한 participant에 전송한 뒤 죽으면 다른 participant와 결정이 갈릴 수 있다. 그래서 결정은 통지 전에 영속화한다. participant도 PREPARED 기록 전에 YES를 보내면 재시작 뒤 약속을 잊는다.
+초기값은 A DB의 A=1,000원, B DB의 B=500원이다. T900은 A에서 100원을 빼고 B에 더한다. C는 조정자, PA와 PB는 참여자다.
 
-## blocking의 실제 비용
+| 시각(ms) | C의 영속 상태 | PA 상태 | PB 상태 | 메시지와 공개값 |
+|---:|---|---|---|---|
+| 0 | T900, participants=[PA,PB], START | A=1000, INIT | B=500, INIT | 클라이언트 요청 |
+| 4 | START | A행 잠금 | B행 잠금 | C→둘 PREPARE |
+| 8 | START | WAL A:1000→900, PREPARED | 검사 중 | 아직 응답 없음 |
+| 11 | PA=YES | PREPARED, 공개값 1000 | WAL B:500→600 기록 중 | PA→C YES |
+| 14 | PA=YES, PB=YES | PREPARED | PREPARED, 공개값 500 | PB→C YES |
+| 17 | **DECISION=COMMIT 강제 기록** | PREPARED | PREPARED | 결정 전송 전 |
+| 20 | COMMIT | COMMIT WAL, A=900, 잠금 해제 | PREPARED | C→둘 COMMIT |
+| 23 | COMMIT, PA ack | COMMITTED | COMMIT WAL, B=600 | PA→C ack |
+| 26 | COMMIT, PA/PB ack | COMMITTED | COMMITTED, 잠금 해제 | PB→C ack |
+| 28 | 결과 T900=OK 보존 | A=900 | B=600 | C→클라이언트 성공 |
 
-PREPARED participant는 혼자 결정을 추측할 수 없다. coordinator와 결정 기록에 접근할 수 없으면 잠금을 유지한 채 기다릴 수 있다. 이 상태가 2PC의 blocking이다. timeout은 운영 경보를 만들 수 있지만 전역 결정을 바꾸지 않는다.
+17ms가 결정 경계다. C는 참여자에게 알리기 전에 COMMIT을 안정 저장한다. 18ms에 C가 죽어도 복구한 조정자는 결정을 다시 고르지 않고 COMMIT을 반복 전송한다. PA와 PB는 거래 ID와 자기 WAL 상태를 보고 중복 COMMIT을 한 번만 적용한다.
 
-coordinator 로그를 합의 그룹에 복제하면 단일 장비 장애를 줄일 수 있다. 그러나 어느 기록이 권위 있는지, 새 coordinator가 참여자 목록과 결정을 어떻게 복원하는지 명세해야 한다.
-
-Saga는 각 단계 뒤 실패 시 보상 작업을 실행하는 다른 접근이다. 보상은 시간 역행 rollback이 아니라 새 업무다. 이미 발송한 이메일이나 외부에 공개된 가격은 완전히 되돌릴 수 없다.
-
-## 추가 연습 문제와 해설
-
-### 1. YES 전에 무엇을 저장해야 하는가?
-거래 ID, commit 재현 정보, 잡은 잠금과 PREPARED 사실이다. 재시작 뒤 약속을 지킬 수 있어야 한다.
-
-### 2. COMMIT 기록 뒤 coordinator crash 시 복구 결정은?
-COMMIT이다. 기록을 읽어 모든 participant에 반복 전송하며 commit 처리는 멱등해야 한다.
-
-### 3. timeout 5초면 prepared 거래를 abort해도 되는가?
-아니다. COMMIT이 이미 영속화됐지만 메시지만 유실됐을 수 있다.
-
-### 4. 2PC가 serializable isolation을 보장하는가?
-아니다. 원자 결정과 동시 거래의 읽기 규칙은 별도 문제다.
-
-### 5. A만 YES, B는 NO면?
-coordinator는 ABORT를 영속화하고 A에 abort를 통지해 준비 상태와 잠금을 해제한다.
-
-[← 이전](06-consensus-failures-and-snapshots.md) · [목차](README.md) · [다음 →](08-sharding-and-reconfiguration.md)
-
-## 원자성과 2PC
-
-트랜잭션의 **원자성**은 여러 변경이 모두 적용되거나 모두 취소되는 성질이다.
-2PC(Two-Phase Commit)는 coordinator와 participant가 분산 원자 결정을 맞추는 프로토콜이다.
-
-```mermaid
+~~~mermaid
 sequenceDiagram
- participant C as Coordinator
- participant A as 계좌 shard A
- participant B as 계좌 shard B
- C->>A: PREPARE T9
- C->>B: PREPARE T9
- A-->>C: YES, 잠금+로그
- B-->>C: YES, 잠금+로그
- C->>C: COMMIT T9 영속 기록
- C->>A: COMMIT
- C->>B: COMMIT
-```
+    participant U as 클라이언트
+    participant C as 조정자
+    participant A as PA
+    participant B as PB
+    U->>C: T900, A→B 100원
+    C->>A: PREPARE
+    C->>B: PREPARE
+    A->>A: WAL+PREPARED+잠금
+    B->>B: WAL+PREPARED+잠금
+    A-->>C: YES
+    B-->>C: YES
+    C->>C: COMMIT 영속화
+    C->>A: COMMIT
+    C->>B: COMMIT
+    A-->>C: 적용 확인
+    B-->>C: 적용 확인
+    C-->>U: 성공
+~~~
 
-입력은 거래 ID와 참여자별 변경이다.
-prepare 단계에서 참여자는 검사하고 잠금과 준비 로그를 영속화한다.
-YES 뒤에는 혼자 abort할 수 없는 중간 상태가 된다.
-모두 YES면 coordinator가 COMMIT을 영속 기록한다.
-하나라도 NO면 ABORT를 기록한다.
-두 번째 단계에서 결정을 참여자에게 보낸다.
+## 한 참여자가 NO이면 전부 중단한다
 
-## blocking
+PB가 B 계좌 폐쇄를 발견해 NO를 보냈다고 하자. PA가 이미 YES여도 C는 COMMIT할 수 없다. C는 ABORT를 영속화하고 두 참여자에 반복 통지한다.
 
-참여자 A가 YES를 보낸 직후 coordinator와 통신이 끊겼다고 하자.
-A는 다른 참여자의 표와 coordinator 결정을 모른다.
-임의 commit은 원자성을 깰 수 있고 임의 abort도 이미 기록된 commit과 충돌할 수 있다.
-따라서 결정을 배울 때까지 잠금과 prepared 상태를 유지할 수 있다.
-이것이 2PC의 blocking 성질이다.
-coordinator 로그를 복제하거나 합의 프로토콜을 결합하면 단일 장애를 줄이지만 프로토콜 조건은 더 복잡해진다.
+| 단계 | C | PA | PB | 최종 공개값 |
+|---|---|---|---|---|
+| 준비 전 | START | INIT | INIT | A=1000, B=500 |
+| PA 투표 뒤 | PA=YES | PREPARED | 검사 중 | 변화 없음 |
+| PB 투표 뒤 | PA=YES, PB=NO | PREPARED | NO | 변화 없음 |
+| 결정 기록 | ABORT | PREPARED | ABORT 가능 | 변화 없음 |
+| 결정 적용 | ABORT+acks | ABORTED, 잠금 해제 | ABORTED | A=1000, B=500 |
 
-### participant 내부 상태를 따라가기
+YES는 모든 조건을 만족해 나중 COMMIT을 보장할 수 있다는 뜻이다. 디스크 공간 부족, 제약 위반, 잠금 실패처럼 약속을 지킬 수 없는 참여자는 NO를 보내야 한다. 모든 참여자의 YES가 있어야 COMMIT할 수 있다는 유효성 조건은 다수결로 바뀌지 않는다.
 
-participant는 단순히 YES 문자열만 돌려주지 않는다.
-거래 T9가 바꿀 행, 잡은 잠금, undo/redo 정보, 현재 단계가 로컬 저장소에 남는다.
+## WAL 기록 순서가 약속을 만든다
 
-| 상태 | 디스크에 남은 정보 | 허용 행동 |
-|---|---|---|
-| INIT | 거래 ID와 작업 시작 | prepare 검사 |
-| PREPARED | 변경 재현 정보와 YES 사실 | 전역 결정 대기 |
-| COMMITTED | commit 결정과 적용 결과 | 잠금 해제, 결과 반환 |
-| ABORTED | abort 결정과 복구 결과 | 잠금 해제 |
+PA가 YES를 먼저 보내고 PREPARED를 나중에 쓰면 다음 반례가 생긴다.
 
-t=0에 coordinator가 A와 B에 PREPARE T9를 보낸다.
-t=10에 A가 행 잠금과 PREPARED를 디스크에 쓰고 YES를 보낸다.
-t=15에 B도 같은 절차를 마친다.
-t=20에 coordinator가 COMMIT을 디스크에 쓴다.
-t=21에 coordinator가 멈춰 결정 메시지가 전달되지 않는다.
-A와 B는 timeout을 보지만 PREPARED를 지우면 안 된다.
-복구된 coordinator나 결정 기록의 복제본에서 COMMIT을 배운 뒤 적용한다.
+1. PA가 메모리 검사만 하고 YES를 전송한다.
+2. PB도 YES를 보내 C가 COMMIT을 기록한다.
+3. PA가 PREPARED WAL을 쓰기 전에 전원이 꺼진다.
+4. 재시작한 PA는 T900과 적용할 변경을 모른다.
+5. C는 정당하게 COMMIT을 보내지만 PA는 약속을 수행할 수 없다.
 
-NO를 보낸 participant는 prepare 조건을 충족하지 못한 것이다.
-YES를 보낸 participant와 달리 전역 commit에 참여할 준비가 끝나지 않았다.
-coordinator는 하나라도 NO이면 ABORT를 선택한다.
-그러나 메시지 유실 때문에 참여자별 관측 시각은 다를 수 있다.
+따라서 참여자는 **변경 재현 정보 기록 → PREPARED 강제 저장 → YES 전송** 순서를 지킨다. 조정자는 **최종 결정 강제 저장 → 결정 전송** 순서를 지킨다. 데이터 페이지가 아직 저장되지 않아도 WAL이 안정 저장됐으면 redo로 COMMIT을 재현할 수 있다. ABORT에는 undo 정보나 공개되지 않은 새 버전을 폐기하는 규칙이 필요하다.
 
-### 2PC와 로컬 데이터베이스 경계
+## 장애 지점별 결정과 클라이언트 관측
 
-coordinator 메모리에만 참여자 목록을 두면 재시작 뒤 누구에게 결정을 재전송할지 모른다.
-결정은 참여자 통지 전에 영속화해야 한다.
-참여자는 결정 적용 후 확인을 보내고, coordinator는 모든 정리 조건을 만족한 뒤 기록을 수거한다.
-준비 거래가 오래 남으면 잠금이 정상 요청을 막으므로 운영자는 임의 삭제보다 결정 복구 경로를 먼저 사용해야 한다.
+| crash 위치 | C 디스크 | PA | PB | 올바른 복구 | 클라이언트 |
+|---|---|---|---|---|---|
+| PREPARE 전 | 없음 또는 START | INIT | INIT | ABORT 가능 | 실패·재시도 |
+| PA YES 뒤 | 결정 없음 | PREPARED | INIT | 정한 복구 규칙으로 ABORT 기록·통지 | 성공 아님 |
+| 둘 YES 뒤 결정 전 | 결정 없음 | PREPARED | PREPARED | 복구 C가 유일한 결정을 기록 | 결과 미상 |
+| COMMIT 기록 뒤 전송 전 | COMMIT | PREPARED | PREPARED | COMMIT 재전송 | 결과 미상, 내부 결정 성공 |
+| PA 적용 뒤 | COMMIT | COMMITTED | PREPARED | PB에 COMMIT 반복 | 결과 미상 |
+| 둘 적용 뒤 HTTP 유실 | COMMIT+acks | COMMITTED | COMMITTED | 저장 결과 반환 | 재시도에서 성공 확인 |
 
-## 수치 추적
+결정 전 복구 규칙은 구현에 명시해야 한다. START와 참여자 목록이 영속화됐고 COMMIT 레코드가 없다면 복구 조정자가 ABORT를 기록하는 설계가 가능하다. 그러나 참여자가 각자 추측해서는 안 된다. COMMIT 기록 뒤에는 30초나 하루가 지나도 타임아웃만으로 ABORT로 바꿀 수 없다.
 
-prepare 왕복 20 ms, 결정 영속화 5 ms, commit 왕복 20 ms인 교육 모형은 최소 약 45 ms다.
-한 참여자가 200 ms 지연되면 전체 결정이 그 지연을 기다릴 수 있다.
-timeout으로 기다림을 끝내도 prepared 결과는 자동 abort가 아니다.
+**블로킹(blocking, 안전한 다음 결정을 혼자 고를 수 없어 기다리는 상태)**은 고전 2PC의 비용이다. PA가 PREPARED인데 C와 PB에 모두 연결되지 않으면 COMMIT이 C 디스크에 있는지 알 수 없다. 독자 COMMIT은 PB가 NO였던 경우 원자성을 깨고, 독자 ABORT는 C가 이미 COMMIT한 경우 원자성을 깬다. PA는 잠금과 준비 정보를 유지한다.
 
-## 반례
+준비 거래가 오래 남으면 잠금이 정상 업무와 저장소 정리를 막는다. 운영자는 “24시간이 지났으니 삭제”하지 않고 조정자의 결정 로그, 거래 ID, 참여자 목록을 찾아 같은 결정을 재전송한다. 만료 시간은 경보와 조사 시작 조건이지 ABORT 증거가 아니다.
 
-2PC는 Raft와 같은 합의 알고리즘 자체가 아니다.
-2PC participant가 YES 뒤 독립적으로 결정을 만들 수 없기 때문이다.
-데이터베이스 내부 원자 커밋과 외부 이메일 발송을 한 트랜잭션으로 묶지 못하면 outbox 같은 경계 설계가 필요하다.
+## 조정자 복제와 합의의 차이
 
-## 문제와 해설
+**합의(consensus, 복제 노드들이 하나의 로그 값을 선택하는 문제)**는 Raft처럼 다수 교집합으로 조정자 로그를 복제할 수 있다. C1·C2·C3 중 C1이 죽으면 다수가 가진 T900 COMMIT을 C2가 읽어 통지를 계속한다. 단일 조정자 장애의 진행성은 좋아진다.
 
-### 1. YES 전에 무엇을 영속화하는가?
-commit 명령을 나중에 수행할 수 있는 변경과 prepared 상태다.
+그러나 원자 커밋과 합의는 유효성 조건이 다르다. 2PC는 참여자 전부가 YES여야 COMMIT한다. PB가 정당하게 NO이면 C1·C2의 다수로 이를 덮을 수 없다. PA가 조정자 그룹의 다수와 단절되면 여전히 결정을 배우지 못한다. 합의는 결정 기록의 권위를 복제하고, 2PC는 모든 자원 관리자의 원자 결정을 조정한다.
 
-### 2. coordinator 장애 때 왜 막히는가?
-참여자가 전역 결정을 모르며 어느 쪽 추측도 원자성을 깰 수 있다.
+참여자끼리 상태를 물을 수도 있다. PB가 권위 로그에서 받은 COMMIT 증거와 함께 COMMITTED라고 답하면 PA가 결정을 배울 수 있다. PB도 PREPARED이거나 응답이 없으면 새 정보가 없다. 단순 COMMIT 문자열 대신 거래 ID, 참여자 집합, 결정 로그 세대를 확인해야 오래된 메시지가 다른 거래를 끝내지 않는다.
 
-### 3. timeout은 abort 증거인가?
-아니다. 결정 메시지 유실일 수 있어 결과 조회와 복구가 필요하다.
+## 3단계 커밋의 조건과 한계
 
-## 공식 자료
+**3단계 커밋(3PC, three-phase commit)**은 CAN_COMMIT, PRE_COMMIT, DO_COMMIT처럼 커밋 직전 공유 상태를 하나 더 둔다. 고전 연구는 ABORT 가능 상태와 이미 COMMIT인 상태가 직접 인접하는 모호함을 없애 특정 동기적 장애 모델에서 블로킹을 줄인다.
 
-- [PostgreSQL PREPARE TRANSACTION](https://www.postgresql.org/docs/current/sql-prepare-transaction.html)
+이를 임의의 실제 네트워크에서 항상 진행한다고 해석하면 안 된다. 비차단 성질은 메시지 지연 상한을 믿고 장애와 지연을 구별할 수 있는 동기성, 제한된 장애 조합을 전제로 한다. 네트워크가 두 집단으로 분할돼 양쪽이 서로를 장애로 판단하면 독립 진행이 충돌할 수 있다. 3PC는 상태와 메시지 왕복을 하나 더 쓰고도 임의의 비동기 분할을 없애지 않는다. 실무에서는 합의로 결정 로그의 단일 권위를 복제하는 방법을 주로 사용한다.
+
+## 클라이언트 응답과 내부 결정은 같은 시점이 아니다
+
+C가 17ms에 COMMIT을 기록한 직후 성공을 반환하면 PA와 PB 적용은 아직 끝나지 않았을 수 있다. “성공 뒤 어느 참여자에서 읽어도 반영됨”을 약속하려면 적용 ack를 기다리거나 읽기를 적용 완료 지점으로 보내야 한다. 모든 ack 뒤 응답하려 해도 HTTP 패킷 유실은 남는다. 내부 COMMIT은 응답 유실 때문에 되돌릴 수 없다.
+
+클라이언트는 안정된 T900으로 상태를 조회하거나 같은 요청 ID로 재시도한다. 새 거래 T901로 같은 송금을 보내면 T900과 T901이 둘 다 커밋될 수 있다. 2PC는 한 거래 내부의 원자성을 제공하고, 논리 요청 중복 제거는 별도 멱등성 계약이 담당한다.
+
+## 로컬 DB 밖의 효과
+
+두 DB가 2PC에 참여해도 이메일, 택배, 외부 카드망이 prepare/commit 계약을 제공하지 않으면 같은 원자 경계에 없다. DB 커밋 뒤 이메일 전에 죽으면 알림이 누락되고, 이메일 뒤 DB 중단이면 존재하지 않는 거래 알림이 간다. DB 거래 안에 발신 사건을 기록하는 outbox, 외부 request ID, 결과 조회와 중복 제거를 연결한다.
+
+보상 거래도 과거를 지우는 rollback이 아니다. 승인된 결제를 환불하면 승인과 환불이라는 두 거래가 남는다. 이미 보낸 이메일을 완전히 되돌릴 수 없다. 어떤 대상까지 원자 커밋에 참여하는지 경계를 명시해야 한다.
+
+## 수치로 보는 잠금과 지연
+
+prepare 왕복 20ms, 조정자 결정 WAL 5ms, 결정 적용 왕복 20ms라면 장애 없는 교육 모형의 최소 시간은 **20+5+20=45ms**다. 참여자 작업이 병렬이면 각 단계는 가장 느린 참여자를 기다린다. PB prepare가 80ms 더 늦어지면 prepare 단계는 100ms가 되고 총 125ms다.
+
+PA가 초당 200건이 접근하는 계좌 행을 PREPARED 상태로 40초 잠그면 단순히 잠재 대기 요청은 **200×40=8,000건**까지 쌓일 수 있다. 실제 수는 timeout과 큐 제한에 따라 달라진다. timeout을 짧게 해도 전역 결정이 사라지지 않으므로, 조정자 복구 시간과 준비 거래 경보가 중요하다.
+
+## 참여자와 조정자의 상태 기계
+
+재시작 뒤 메모리 흐름을 추측하지 않으려면 상태 전이를 영속 객체로 정의한다.
+
+| 주체 상태 | 디스크에 반드시 있는 정보 | 허용 전이 | 금지 행동 |
+|---|---|---|---|
+| C:START | T900, 참여자 PA·PB, 입력 요약 | PREPARING 또는 ABORT | 참여자 목록 변경 |
+| C:PREPARING | 받은 투표와 세대 | COMMIT 또는 ABORT 기록 | 결정 전 통지 |
+| C:COMMIT | 최종 결정과 로그 위치 | COMMIT 재전송, ack 수집 | ABORT로 변경 |
+| C:ABORT | 최종 결정과 이유 | ABORT 재전송, ack 수집 | COMMIT으로 변경 |
+| P:INIT | 거래 ID 또는 없음 | 로컬 검사 | YES 전송 후 정보 미저장 |
+| P:PREPARED | 변경, 잠금, YES 사실 | COMMIT 또는 ABORT 적용 | 혼자 결정 |
+| P:COMMITTED | 결정과 적용 결과 | 중복 COMMIT 확인 | 효과 재적용 |
+| P:ABORTED | 결정과 undo 결과 | 중복 ABORT 확인 | COMMIT 적용 |
+
+C가 PREPARING에서 죽고 복구됐을 때 일부 투표가 메모리에만 있었다면 참여자에게 같은 PREPARE를 다시 보낼 수 있다. PA가 이미 PREPARED이면 새 잠금을 두 번 잡지 않고 같은 YES를 반환한다. PB가 아직 INIT이면 검사부터 수행한다. 이 때문에 PREPARE 메시지에도 안정된 T900과 참여자별 작업 요약이 들어가야 한다.
+
+C가 결정 전 참여자 목록을 바꾸면 안 된다. PA·PB가 모두 YES한 뒤 PC를 새로 추가하면 PC는 약속에 참여하지 않았다. 반대로 PB를 목록에서 빼고 COMMIT하면 B 입금이 빠진다. 참여자 목록은 거래 시작 때 영속화하고 그 목록 전체에 대해 결정한다.
+
+ack는 결정과 다르다. PA의 ack가 유실돼도 PA가 실제로 COMMITTED일 수 있다. C는 COMMIT을 재전송하거나 상태를 조회한다. 모든 ack가 모였다는 사실은 정리 조건이며 COMMIT의 성립 조건은 그보다 앞선 영속 결정이다.
+
+## 준비 중 동시 요청이 보는 값
+
+PA가 A행을 잠그고 A:1000→900을 준비했지만 아직 COMMIT하지 않았다고 하자. 다른 거래 T901이 A를 읽거나 쓰려 할 때 행동은 로컬 격리 수준에 달렸다. 강한 행 잠금이면 T901이 기다린다. 다중 버전이면 T901이 공개된 이전 값 1000을 읽되 준비 중 900은 보지 않을 수 있다. T901의 갱신은 충돌 검사를 기다린다.
+
+2PC 문서에서 “prepare가 끝났다”를 “새 값이 모든 독자에게 보인다”로 쓰면 안 된다. prepare는 나중 결정을 수행할 자원과 로그를 확보했다는 뜻이다. 공개 시점, 읽기 가시성과 충돌 규칙은 참여 데이터베이스의 격리 구현이 정한다.
+
+## 휴리스틱 결정은 정상 성공이 아니다
+
+**휴리스틱 결정(heuristic decision, 권위 있는 전역 결정을 모른 채 운영자가 로컬 COMMIT 또는 ABORT를 택하는 비상 조치)**은 장기 잠금을 풀기 위한 최후 수단이다. 원자성을 지킨다는 증거가 없으므로 정상 복구와 구분한다. PA를 HEURISTIC_ABORT로 만들었는데 나중 C에서 COMMIT이 발견되면 PB와 결과가 갈린다.
+
+시스템은 휴리스틱 상태, 운영자, 시각, 근거와 원래 거래 ID를 감사 로그에 남긴다. 다른 참여자의 결과를 조사하고 보상 거래로 업무 불변식을 회복한다. 상태를 단순 ABORTED로 덮으면 불일치를 발견할 증거가 사라진다. 잠금 해제라는 진행성 선택이 원자성 위험을 만든다는 사실을 호출자에게도 알려야 한다.
+
+## 3PC 메시지와 장애 지점을 숫자로 보기
+
+교육용 정상 경로를 보자. 0ms에 C가 CAN_COMMIT을 보내고 10ms에 모두 YES를 받는다. 12ms에 C가 PRE_COMMIT을 기록해 보내고 22ms에 모든 ack를 받는다. 24ms에 DO_COMMIT을 기록해 보내며 34ms에 적용 ack를 받는다. 2PC보다 PRE_COMMIT 왕복이 추가됐다.
+
+| 장애 시각 | 공유된 가장 높은 상태 | 동기성 가정 아래 새 조정자 판단 |
+|---:|---|---|
+| 8ms | 일부 YES, PRE_COMMIT 없음 | COMMIT 가능 증거 부족, ABORT 방향 |
+| 18ms | PRE_COMMIT을 일부 또는 전부 수신 | 참가 상태를 모아 PRE_COMMIT 여부 판단 |
+| 25ms | DO_COMMIT 기록 가능 | 권위 기록이 있으면 COMMIT 반복 |
+| 분할 지속 | 양쪽 관측이 다름 | 지연 상한 가정이 깨지므로 독립 진행 위험 |
+
+여기서 timeout은 신뢰 가능한 지연 상한과 실패 감지 가정이 있을 때만 상태 추론에 쓰인다. 인터넷이나 과부하 시스템에서는 느린 노드와 죽은 노드를 완전히 구별할 수 없다. 따라서 “3PC라서 timeout 뒤 안전하게 계속한다”는 설명에는 반드시 실패 모델을 붙인다.
+
+## 거래 결과 보존과 중복 요청
+
+C가 T900의 COMMIT과 응답을 7일 보존한다고 하자. 클라이언트가 1분 뒤 같은 T900을 조회하면 저장된 성공을 받는다. 8일 뒤 레코드가 삭제됐는데 같은 업무 요청이 오면 T900만으로 중복을 판별하지 못할 수 있다. 외부 요청 ID와 계좌 원장의 자연 업무 키를 더 오래 보존하거나 재시도 가능 기간을 7일보다 짧게 계약한다.
+
+거래 상태 정리와 업무 원장 삭제도 구분한다. 참여자의 임시 잠금과 redo 위치는 ack 뒤 정리할 수 있지만, 송금 원장과 감사 식별자는 장기간 남을 수 있다. 같은 ID의 다른 금액이 오면 이전 결과를 반환하거나 새 거래로 처리하지 말고 입력 불일치 오류를 내야 한다.
+
+## 완전 풀이 문제
+
+### 문제 1. PA가 YES 뒤 30초 timeout을 봤다. 혼자 ABORT해도 되는가?
+
+**풀이:** 안 된다. C가 COMMIT을 기록하고 메시지만 잃었을 수 있다. PA가 ABORT하면 PB는 COMMIT해 결과가 갈린다. PA는 PREPARED와 잠금을 유지하고 복구 C나 복제 결정 로그에서 T900의 권위 결정을 조회한다. ABORT 증거를 확인한 뒤에만 취소한다.
+
+### 문제 2. PA=YES, PB=NO일 때 C의 기록과 최종 잔액은?
+
+**풀이:** 모두 YES가 아니므로 C는 ABORT를 영속화하고 반복 통지한다. PA는 준비 변경을 공개하지 않고 잠금을 푼다. 최종값은 A=1000, B=500이다. PA의 YES는 부분 커밋 허가가 아니라 최종 결정에 따르겠다는 약속이다.
+
+### 문제 3. C가 COMMIT을 PA에만 보내고 죽었다. 새 C가 참여자 다수결로 ABORT를 골라도 되는가?
+
+**풀이:** 안 된다. 결정은 이미 C 로그의 COMMIT이다. 새 C는 그 레코드와 참여자 목록을 복구해 PB에 COMMIT을 보낸다. PA에 중복 COMMIT이 가도 한 번만 적용한다. 참여자 수의 다수결은 2PC 복구 규칙이 아니다.
+
+### 문제 4. 준비 20ms, 결정 기록 5ms, 결정 왕복 20ms의 최소 완료 시간은?
+
+**풀이:** 단계가 직렬이고 단계 내부 참여자는 병렬이라는 모형에서 45ms다. PB가 80ms 추가 지연되면 125ms다. 이 수치는 디스크 큐와 잠금 대기를 제외한 교육값이다. timeout을 줄이면 기다림은 끝나도 PREPARED 결정은 자동 중단되지 않는다.
+
+### 문제 5. 2PC가 T1과 T2의 동시 과다 인출을 막는가?
+
+**풀이:** 자동으로 막지 않는다. 2PC는 각 거래의 참여자 결정만 맞춘다. 두 거래가 같은 옛 잔액을 읽는 문제는 직렬화 격리, 조건부 갱신이나 행 잠금이 해결한다. 원자 커밋과 동시성 격리를 별도로 설계해야 한다.
+
+### 문제 6. 조정자 로그를 3노드 합의 그룹으로 복제하면 blocking이 완전히 사라지는가?
+
+**풀이:** 조정자 한 대 장애는 새 리더가 결정을 읽어 해결할 수 있다. 그러나 PA가 조정자 다수와 단절되면 결정을 배울 수 없다. PB가 NO인 사실도 합의 다수로 YES로 바꿀 수 없다. 복제 조정자는 가용성을 높이지만 모든 네트워크 분할을 없애지 않는다.
+
+### 문제 7. 3PC는 임의의 네트워크 분할에서 양쪽 모두 안전하게 진행하는가?
+
+**풀이:** 아니다. 고전 비차단 주장은 시간 상한과 제한된 장애 모델에 의존한다. 분할 양쪽이 서로를 죽었다고 판단하면 관측 상태가 달라진다. 비동기 환경에서는 권위 있는 합의 다수만 진행하고 나머지를 멈추는 경계가 필요하다.
+
+### 문제 8. DB와 이메일을 순서대로 처리할 때 두 장애 창은 무엇인가?
+
+**풀이:** DB 먼저면 커밋 뒤 이메일 전에 죽어 누락된다. 이메일 먼저면 발송 뒤 DB 중단으로 거짓 알림이 간다. DB 변경과 outbox 사건을 같은 로컬 트랜잭션에 쓰고, 발송기는 같은 사건 ID로 재시도한다. 외부 제공자가 중복 제거를 지원하지 않으면 이메일 한 번 보장 범위는 제한된다.
+
+## 검토 기준
+
+- YES 전 PREPARED와 변경 재현 정보를 영속화한다.
+- 결정 통지 전 조정자 결정을 영속화한다.
+- PREPARED timeout을 ABORT 증거로 쓰지 않는다.
+- 원자 커밋, 격리, 합의와 외부 효과의 경계를 구분한다.
+- 반복 COMMIT·ABORT와 상태 조회를 거래 ID로 멱등 처리한다.
+- 준비 거래의 잠금 수명과 운영 복구 경로를 문서화한다.
+
+## 근거 자료
+
+- [PostgreSQL PREPARE TRANSACTION](https://www.postgresql.org/docs/current/sql-prepare-transaction.html) — 준비 거래의 디스크 상태, 이후 커밋·롤백과 장기 잠금 주의 사항
+- [Dale Skeen, Nonblocking Commit Protocols](https://doi.org/10.1145/582318.582339) — 비차단 원자 커밋 조건과 3단계 상태의 고전 연구
+- [Lamport, Consensus on Transaction Commit](https://arxiv.org/abs/cs/0408036) — 고전 2PC와 합의 기반 원자 커밋의 관계
 
 [← 이전](06-consensus-failures-and-snapshots.md) · [목차](README.md) · [다음 →](08-sharding-and-reconfiguration.md)
-## 상세 추적: crash 위치별 복구
-
-participant는 YES 전에 거래 ID, 변경 재현 정보, 잠금, PREPARED 상태를 영속화한다. YES 뒤에는 혼자 abort할 수 없다.
-
-| crash 지점 | coordinator 기록 | participant 상태 | 복구 |
-|---|---|---|---|
-| PREPARE 전 | 없음 | INIT | abort 가능 |
-| 일부 YES 뒤 | 결정 없음 | 일부 PREPARED | abort 통지 |
-| COMMIT 기록 뒤 | COMMIT | PREPARED | commit 재전송 |
-| 적용 뒤 ack 전 | COMMIT | COMMITTED | 중복 commit 멱등 처리 |
-
-t=0 PREPARE 전송, t=10 A가 PREPARED+YES, t=15 B가 PREPARED+YES, t=20 coordinator가 COMMIT 영속화, t=21 coordinator crash라고 하자. timeout은 abort 증거가 아니다. 복구된 coordinator가 COMMIT을 읽어 재전송한다.
-
-coordinator가 COMMIT을 메모리에만 두고 통지하면 참여자별 결정이 갈릴 수 있다. 결정은 통지 전에 영속화해야 한다. participant도 PREPARED 기록보다 YES를 먼저 보내면 재시작 뒤 commit을 수행할 정보를 잃을 수 있다.
-
-2PC는 원자 결정을 맞추며 직렬화 격리를 자동 제공하지 않는다. 보상 가능한 업무의 saga도 과거를 지우는 rollback이 아니라 새 업무다. 이미 보낸 이메일은 완전히 되돌릴 수 없는 반례다.

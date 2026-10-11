@@ -1,200 +1,264 @@
-# 15. 종합 문제, 용어 풀이, 공식 출처
-
-## 종합 풀이를 쓰는 방법
-
-답은 정의 한 줄이 아니라 입력, 객체 위치, 실행 주체, 중간 상태, 결과, 실패 조건을 잇는다. 예를 들어 “hash join이 빠르다” 대신 build 100행과 probe 1,000행이 memory 안에 있을 때 약 1,100행 key 작업이며 spill하면 임시 I/O가 추가된다고 쓴다.
-
-### 추가 문제 13: column batch
-
-값 [20,NULL,80,100,40]에서 x>=80의 selection과 합을 구하라.
-
-**해설:** 비교는 [FALSE,UNKNOWN,TRUE,TRUE,FALSE]다. WHERE는 TRUE 위치 2와3만 남기고 합은 180이다. NULL을 0으로 바꾼 것이 아니라 UNKNOWN을 선택하지 않았다.
-
-### 추가 문제 14: Spark와 Iceberg
-
-snapshot의 1,000파일 중 manifest pruning 800개, file 통계 150개를 제외하고 남은 파일을 100 task로 나눴다. 후보 파일, 제거율, 파일과 task 관계를 설명하라.
-
-**해설:** 후보는 50개, 제거율은 95%다. 파일 하나가 여러 split이 되거나 여러 작은 파일이 한 task 입력이 될 수 있어 50파일과 100 task는 모순이 아니다. snapshot 파일 집합은 Iceberg metadata이고 task partition은 Spark 실행 객체다.
-
-### 추가 문제 15: 연구 주장
-
-새 optimizer의 planning 5ms, 기존 20ms이고 실행은 각각 500ms와 300ms다. 무엇이 빠른가?
-
-**해설:** planning만 보면 새 optimizer가 15ms 짧지만 단순 합계는 새 505ms, 기존 320ms다. 결과 동일성, 반복 분포와 cache 조건을 확인한 뒤 end-to-end에서는 기존이 빠르다고 관측할 수 있다. prototype의 계획 시간 우위를 모든 실행 우위로 바꾸지 않는다.
-
-용어 연결: relation은 논리 행 집합이고 record는 page 바이트다. snapshot은 보이는 version 또는 Iceberg 파일 집합을 고정하는 문맥별 객체다. Spark partition은 task 입력이고 Iceberg partition은 지속 metadata transform이다. 같은 단어도 대상과 수명을 함께 적어야 한다.
+# 15. 종합 문제, 연결 개념과 출처
 
 [이전: 실험과 연구](14-experiments-and-research.md) · [목차](README.md) · 다음 장 없음
 
-이 장은 앞의 개념을 한 요청의 흐름으로 다시 묶는다. 먼저 문제의 조건을 읽고, 어떤 객체가 어디에 있으며 누가 바꾸는지 적은 다음 계산한다. 해설은 조건, 중간 계산, 결론 순서로 썼다.
+이 장은 용어를 한 줄씩 외우는 사전이 아니다. 사용자가 SQL을 보내면 어떤 객체가 언제 생기고, 메모리와 저장장치 어디에 놓이며, 누가 바꾸고, 장애 뒤 무엇이 남는지를 한 흐름으로 다시 연결한다. 같은 “page”, “snapshot”, “partition”도 문맥마다 실제 대상과 수명이 다르므로 이름만 외우지 않고 이웃 개념과 함께 읽는다.
 
-## 1. 종합 문제 12개와 해설
+## 1. SQL 문장에서 논리 결과까지
 
-### 문제 1: NULL과 집계
+**데이터베이스 관리 시스템(DBMS)** 은 오래 보관할 데이터의 구조, 동시 읽기와 쓰기, 장애 복구를 관리하는 서버 소프트웨어다. 사용자는 보통 **SQL** 로 원하는 결과를 선언한다. 선언형이라는 말은 “어떤 결과가 필요한지”를 쓰고 페이지를 어느 순서로 읽을지는 optimizer와 executor에 맡긴다는 뜻이다.
 
-`score` 열의 값이 `10, NULL, 20, NULL`이다. `COUNT(*)`, `COUNT(score)`, `SUM(score)`의 결과를 구하라.
+**relation** 은 같은 속성 구조를 가진 tuple의 집합이라는 논리 모델이고, SQL **table** 은 사용자가 이름을 붙여 관리하는 논리 객체다. **row** 는 주문 한 건처럼 열 값들의 논리 묶음이다. 저장장치의 한 위치에 놓인 **record** 또는 MVCC **tuple version** 과 같은 말이 아니다. 한 논리 행을 갱신하면 옛 버전과 새 버전 두 record가 잠시 함께 존재할 수 있다.
 
-**해설:** `COUNT(*)`는 입력 행을 세므로 4다. `COUNT(score)`는 NULL이 아닌 표현식 결과만 세므로 2다. `SUM`은 NULL을 제외한 `10+20`을 계산하여 30이다. NULL을 숫자 0으로 자동 치환한 결과가 아니다.
+**schema** 는 열 이름과 type, NULL 허용, primary key와 foreign key 같은 constraint를 정한다. primary key는 논리 행을 유일하게 식별하고, foreign key는 다른 table의 유효한 key를 참조하게 한다. constraint는 애플리케이션 설명문이 아니라 DBMS가 write 때 검사하는 허용 상태 규칙이다.
 
-### 문제 2: 페이지 수
+NULL은 0이나 빈 문자열이 아니라 값이 알려지지 않았거나 적용되지 않음을 나타낸다. 비교 결과가 TRUE, FALSE, UNKNOWN인 3값 논리를 쓰며 WHERE는 TRUE만 통과시킨다. COUNT(*)는 행을 세고 COUNT(column)은 NULL이 아닌 표현식 결과를 세므로 서로 다르다.
 
-고정 길이 레코드가 200바이트이고 페이지가 8,192바이트다. 페이지 머리말 192바이트와 슬롯 2바이트/행을 가정하면 한 페이지에 최대 몇 행이 들어가는가?
+## 2. 논리 행이 페이지에 놓이는 과정
 
-**해설:** 사용 가능한 공간은 `8192-192=8000`바이트다. 행 하나는 레코드와 슬롯을 합쳐 202바이트다. `floor(8000/202)=39`행이고 40행은 8,080바이트라 넘친다. 실제 엔진은 정렬, 정렬 패딩, 가변 길이 데이터 때문에 달라질 수 있다.
+저장 엔진은 파일 전체를 매번 옮기지 않고 고정 크기 **page** 단위로 주로 읽고 쓴다. PostgreSQL의 보통 page는 8KiB다. page header는 페이지 종류와 free-space 경계 같은 관리 정보를 담고, slot array의 항목은 record 위치를 가리킨다. record가 페이지 안에서 이동해도 slot 번호를 유지할 수 있어 다른 구조의 참조를 안정시키기 쉽다.
 
-### 문제 3: B-tree 높이
+table의 heap file은 key 정렬을 보장하지 않는 record 페이지 집합이다. 여기서 heap은 프로세스 동적 메모리 영역과 다른 저장 구조 이름이다. DBMS의 **buffer pool** 은 저장장치 page의 메모리 사본을 두는 영역이고, 한 page가 들어가는 자리가 buffer frame이다. executor가 frame을 사용하는 동안 **pin** 을 잡으면 교체 관리기가 그 frame을 내보내지 않는다. 메모리 사본을 바꾸고 데이터 파일에 아직 쓰지 않은 page는 **dirty page** 다.
 
-루트부터 각 내부 노드가 평균 100개 자식을 가리키고 잎 하나가 100개 키를 담는다. 1억 개 키에 필요한 잎 수와 대략적인 내부 단계 수를 구하라.
+page, record, slot, frame은 수명이 다르다. page는 파일의 논리 블록으로 데이터베이스 수명 동안 재사용될 수 있고, record는 insert/update/vacuum에 따라 생기거나 사라진다. frame은 서버 메모리의 일시 자리이며 다른 page로 교체될 수 있다. slot은 특정 page 안의 위치 식별자다.
 
-**해설:** 잎은 `100,000,000/100=1,000,000`개다. fan-out 100이면 `100^3=1,000,000`이므로 루트 아래 내부 탐색 약 3단계 뒤 잎에 도달한다. 노드 점유율과 캐시는 이 단순 계산을 바꾼다.
+## 3. 인덱스가 후보 위치를 찾는 과정
 
-### 문제 4: 조인 선택
+**index** 는 검색 key에서 table record 위치 또는 다른 index node로 빠르게 이동하도록 돕는 별도 자료구조다. B+tree 계열 index는 정렬된 key와 child pointer를 page 크기 node에 담는다. 한 내부 node가 가리키는 평균 child 수를 **fan-out** 이라고 한다. fan-out이 크면 많은 key도 낮은 높이로 탐색할 수 있다.
 
-외부 입력 10,000행, 내부 입력 100,000행이다. 인덱스 없는 단순 중첩 반복과 해시 조인의 키 연산 수를 비교하라.
+B+tree leaf는 정렬된 key와 row locator를 담고 이웃 leaf 연결로 범위 scan을 돕는다. insert로 leaf가 넘치면 split하여 두 node로 나누고 parent에 separator를 올린다. index도 page이므로 buffer pool, dirty 상태와 WAL 보호가 필요하다. index가 있다고 모든 query가 index scan을 고르는 것은 아니다. 결과 비율이 높으면 무작위 table page 접근보다 sequential scan이 쌀 수 있다.
 
-**해설:** 중첩 반복은 `10,000×100,000=10억`번 비교한다. 단순 해시 조인은 한쪽 100,000행을 build하고 다른 쪽 10,000행을 probe하여 약 110,000번 키 연산을 한다. 그러나 해시 테이블이 메모리를 넘으면 partition I/O가 추가되므로 연산 수만으로 실제 시간을 단정할 수 없다.
+LSM-tree 계열은 새 write를 메모리의 정렬 구조인 **memtable** 에 모으고 WAL로 내구성을 보호한 뒤, 변경 불가능한 정렬 파일 **SSTable** 로 flush한다. 여러 SSTable의 겹치는 key와 tombstone을 background **compaction** 으로 병합한다. B+tree의 node split과 LSM의 compaction은 모두 index 관리지만 I/O 모양과 읽기·쓰기 증폭이 다르다.
 
-### 문제 5: 추정 오차
+## 4. plan이 접근 방법과 조인을 고른다
 
-계획기는 필터 뒤 200행을 예상했지만 실행기는 8,000행을 받았다. 오차 배수와 다음 조사 대상을 적어라.
+parser와 analyzer가 SQL 이름·type을 확정하면 optimizer는 여러 **query plan** 을 비교한다. plan은 sequential scan, index scan, filter, join, aggregate 같은 operator를 연결한 tree다. **cardinality** 는 문맥에 따라 operator가 내는 행 수 또는 열의 distinct 값 수를 뜻하므로 어느 쪽인지 적는다. **selectivity** 는 전체 입력 중 조건을 통과하는 비율이다.
 
-**해설:** `8,000/200=40배`다. 그 필터에 쓰인 열의 distinct 수, 빈도, histogram, 통계 갱신 시점과 여러 조건의 상관을 본다. 이 오차가 조인 입력 크기를 바꾸어 잘못된 알고리즘 선택으로 이어졌는지도 확인한다.
+통계에는 행·페이지 수, distinct 수, 자주 등장하는 값, 값 범위를 근사한 histogram이 있다. optimizer의 **cost model** 은 예상 I/O와 CPU를 상대 숫자로 계산한다. cost는 실행 ms가 아니다. estimate가 실제와 크게 다르면 작은 입력을 전제로 고른 nested loop가 많은 반복을 하거나, 큰 hash table이 memory를 넘어 spill할 수 있다.
 
-### 문제 6: ACID와 송금
+**nested loop join** 은 outer의 각 행마다 inner에서 일치 항목을 찾는다. inner key index가 있거나 outer가 작으면 좋을 수 있다. **hash join** 은 build side의 동등 key로 hash table을 만들고 probe side의 key로 조회한다. build 상태가 memory 한도를 넘으면 임시 저장장치에 partition을 내려 쓰는 spill이 생긴다. **sort-merge join** 은 두 입력을 key 순으로 정렬해 함께 전진한다. 어느 알고리즘도 모든 조건에서 항상 이기지 않는다.
 
-A에서 30을 빼고 B에 30을 더하는 도중 충돌이 났다. A만 70으로 저장되고 B는 50인 상태가 왜 문제이며 어느 속성이 직접 다루는가?
+## 5. 트랜잭션이 여러 문장을 한 상태 전이로 묶는다
 
-**해설:** 초기 합이 150이었다면 결과 합은 120이 되어 돈 30이 사라졌다. 두 변경을 하나의 트랜잭션으로 묶어 전부 commit하거나 전부 abort해야 하는 **원자성(Atomicity)** 문제다. 합계 불변식을 지키는 것은 애플리케이션 규칙과 DB 제약을 포함한 일관성 설계에도 관련된다.
+**transaction** 은 함께 성공하거나 함께 취소되어야 할 읽기와 쓰기의 논리 단위다. BEGIN에서 시작해 COMMIT으로 성공을 확정하거나 오류·ROLLBACK으로 abort한다. **원자성** 은 일부만 성공 상태로 남지 않게 하고, **일관성** 은 constraint와 업무 불변식을 지키는 유효 상태 전이를 뜻하며, **격리성** 은 동시 실행의 관찰 범위를 제어하고, **내구성** 은 성공 commit이 장애 뒤에도 남는 약속이다.
 
-### 문제 7: MVCC 두 번 읽기
+MVCC는 한 논리 행의 여러 version과 **snapshot** 을 이용해 reader와 writer 충돌을 줄인다. PostgreSQL tuple의 xmin은 그 version을 만든 XID, xmax는 삭제하거나 대체하려 한 XID와 관련된다. snapshot은 XID 숫자 크기만 보는 것이 아니라 어느 transaction이 commit했고 어느 것이 진행 중인지로 **visibility** 를 판정한다.
 
-T20이 balance=100을 읽는다. T30이 80으로 갱신하고 commit한 뒤 T20이 다시 읽는다. PostgreSQL Read Committed와 Repeatable Read 결과를 각각 적어라.
+Read Committed는 PostgreSQL에서 문장마다 새 snapshot을 얻을 수 있어 한 transaction의 두 SELECT가 다른 commit 상태를 볼 수 있다. Repeatable Read는 transaction snapshot을 유지하며 PostgreSQL 구현에서는 phantom도 막지만, 동시 write 충돌에서 serialization failure가 날 수 있다. Serializable은 성공한 결과가 어떤 직렬 실행 순서와 동등하도록 만들며, 불가능한 실행 중 하나를 중단할 수 있다. 실패한 문장만이 아니라 그 문장이 의존한 읽기와 결정까지 포함한 transaction 전체를 재시도한다.
 
-**해설:** Read Committed는 문장마다 새 스냅샷을 얻으므로 첫 SELECT는 100, 두 번째 SELECT는 80을 볼 수 있다. Repeatable Read는 트랜잭션 스냅샷을 유지하므로 두 SELECT 모두 100을 본다. 이 결론에는 T30이 두 번째 SELECT 전에 commit했다는 조건이 필요하다.
+오래된 version은 즉시 지우면 옛 snapshot을 깨뜨린다. vacuum은 더 이상 필요한 snapshot이 없는 horizon을 확인해 dead tuple 공간을 재사용 가능하게 한다. 오래 열린 transaction이나 replication 조건이 horizon을 붙잡으면 정리가 늦어진다.
 
-### 문제 8: 직렬화 실패
+## 6. WAL이 메모리 변경을 장애 뒤 상태로 잇는다
 
-두 Serializable 트랜잭션이 서로 다른 행을 읽고 각자 상대 조건을 깨는 쓰기를 해 한 트랜잭션이 serialization failure로 중단되었다. 실패한 SQL 한 문장만 다시 보내면 되는가?
+WAL은 데이터 page의 새 바이트보다 그 변경을 복원할 log record를 먼저 durable storage에 확정하는 방식이다. **LSN** 은 WAL byte stream의 위치이지 시간이나 transaction 수가 아니다. page의 **pageLSN** 은 그 page에 반영한 최신 log 위치를 나타낸다.
 
-**해설:** 아니다. 앞서 읽은 값과 그 값으로 내린 애플리케이션 결정이 하나의 트랜잭션 문맥이다. PostgreSQL 문서가 요구하듯 실패한 트랜잭션 전체를 처음부터 재실행해야 한다. 재시도에는 상한과 backoff를 두고 외부 부작용은 중복되지 않게 설계한다.
+commit 때 모든 dirty page를 데이터 파일에 내릴 필요는 없다. 변경 WAL과 commit record가 필요한 경계까지 flush되면 성공 ACK를 보낼 수 있고, 장애 뒤 recovery가 뒤처진 page에 redo한다. checkpoint는 “모든 것을 한순간 복사한 snapshot”이 아니라 dirty page를 점진적으로 쓰고 recovery가 시작할 redo 경계를 앞으로 옮기는 절차다.
 
-### 문제 9: WAL 복구
+redo가 page byte를 재구성했다고 곧 reader에게 행이 보이는 것은 아니다. MVCC가 transaction commit 상태와 snapshot으로 visibility를 판정한다. 앞 장의 로컬 WAL 모델이 committed record만 적용한 것은 교육 단순화이며 실제 PostgreSQL의 물리 redo 알고리즘 전체가 아니다.
 
-디스크 페이지의 page LSN은 40이다. 커밋된 트랜잭션의 같은 페이지 WAL이 LSN 41, 42이고, 중단된 트랜잭션 기록이 43이다. 단순 redo 모형의 마지막 값은 어느 기록에서 오는가?
+## 7. 복제가 다른 서버의 상태로 잇는다
 
-**해설:** 40보다 큰 커밋 기록 41과 42를 순서대로 적용하므로 마지막 값은 42에서 온다. 43은 번호가 더 커도 중단된 트랜잭션이므로 이 단순 모형에서는 결과에 반영하지 않는다. 실제 복구 규칙은 레코드 종류와 undo/redo 설계에 따라 더 복잡하다.
+primary는 write와 WAL 생성을 담당하고 standby/replica는 WAL을 받아 재생한다. sent LSN은 주 서버가 네트워크로 보낸 끝, write LSN은 replica 파일 시스템에 쓴 끝, flush LSN은 replica durable storage에 확정한 끝, replay LSN은 data page에 적용한 끝이다. 한 replica가 flush 960,replay 900이면 950 record는 장애 뒤 살릴 수 있어도 지금 replica query에는 아직 안 보일 수 있다.
 
-### 문제 10: 복제 지연
+비동기 복제는 replica 완료를 기다리지 않아 latency가 낮지만 primary 전체 손실 때 ACK한 최근 transaction을 잃을 수 있다. 동기 복제도 remote_write, remote flush, remote_apply 중 어느 경계를 기다리는지 명시해야 한다. failover 때 옛 primary를 fencing하지 않으면 두 writer가 생기는 split brain이 발생할 수 있다.
 
-primary의 최신 LSN이 9,000이고 replica가 8,700까지 재생했다. 초당 100 LSN만큼 따라잡고 새 쓰기가 없다고 단순화하면 지연량과 따라잡는 시간을 구하라.
+2PC는 서로 독립적인 여러 database의 한 업무를 prepare와 commit/abort 두 단계로 맞춘다. prepared participant는 최종 결정을 기다리며 lock과 상태를 유지할 수 있다. coordinator의 durable decision이 없거나 통신이 끊기면 in-doubt 상태가 길어지는 blocking 문제가 있다. replication이 사본을 유지하는 문제와 분산 transaction이 여러 원본의 원자성을 맞추는 문제는 다르다.
 
-**해설:** 차이는 `9000-8700=300 LSN`이다. 속도가 초당 100이면 `300/100=3초`다. 실제 LSN 차이는 바이트 위치와 관계되며 처리 시간은 레코드 비용, 네트워크, 새 쓰기에 따라 달라진다.
+## 8. 분석 읽기는 열과 batch로 바뀐다
 
-### 문제 11: 열 저장 건너뛰기
+행 지향 저장은 한 행의 여러 열을 가까이 두고 point lookup과 update에 적합하다. **columnar storage** 는 같은 열 값을 가까이 두어 분석 query가 필요한 열만 읽고 압축하기 쉽게 한다. Parquet file은 row group 안에 column chunk를 두고 footer metadata로 위치와 통계를 찾게 한다.
 
-row group A의 `amount` 범위가 0~90, B가 80~150, C가 200~500이다. 조건이 `amount > 100`이면 통계만으로 확실히 건너뛸 수 있는 묶음은 무엇인가?
+executor는 열 값을 메모리 array의 **vector batch** 로 만들고 여러 값을 한 loop에서 계산할 수 있다. validity bitmap은 NULL 여부를 위치당 한 bit로 표현하고, selection vector는 filter를 통과한 위치 목록을 담는다. dictionary encoding은 반복 문자열을 사전과 정수 ID로 바꾸고, min/max 통계는 조건과 겹치지 않는 row group을 건너뛴다.
 
-**해설:** A의 최댓값 90이 조건 경계 100 이하이므로 A 전체를 건너뛴다. B와 C에는 100보다 큰 값이 있을 수 있으므로 읽어야 한다. B의 모든 행이 일치한다는 뜻도 아니므로 디코딩 뒤 행별 필터가 필요하다.
+predicate pushdown은 filter를 data source 가까이 내려 불필요한 byte를 줄인다. 통계 pruning은 후보를 제거할 뿐 남은 행의 조건 검사를 대신하지 않는다. memory를 넘는 aggregate나 join은 columnar여도 spill할 수 있다.
 
-### 문제 12: Iceberg 계획
+## 9. Spark와 Iceberg에서 객체 수명이 다시 갈린다
 
-테이블 메타데이터가 1,000개 데이터 파일을 가리키지만 partition 통계로 900개, 파일 통계로 추가 60개를 제외했다. 실제 읽기 후보 파일 수와 제외율은 얼마인가?
+Spark driver는 logical/physical plan과 stage를 조정하고 executor는 task를 실행한다. **Spark partition** 은 한 task의 일시 입력 조각이다. shuffle은 key에 따라 중간 record를 worker 사이로 재분배하며 network, serialization, 임시 file 비용을 만든다.
 
-**해설:** 후보는 `1000-900-60=40`개다. 제외한 파일은 960개이므로 제외율은 `960/1000×100=96%`다. 파일을 제외했다는 것은 행 결과가 이미 계산되었다는 뜻이 아니며, 남은 파일 안에서 행 필터를 계속 수행한다.
+Iceberg는 current metadata JSON, snapshot, manifest list, manifest, data/delete file의 pointer graph로 table version을 관리한다. **Iceberg partition** 은 days(ts), bucket(id) 같은 지속 metadata transform 결과다. Spark partition과 다른 객체다. Iceberg **snapshot** 은 특정 file 집합을 고정하고, MVCC snapshot은 transaction visibility를 고정한다. 둘 다 일관된 읽기를 돕지만 판단 대상과 관리자, 수명이 다르다.
 
-## 2. 쉬운 용어 풀이
+writer task가 data file upload에 성공해도 table commit은 끝나지 않았다. driver가 manifest와 새 snapshot metadata를 만들고 catalog current pointer를 조건부 교체해야 새 reader에게 보인다. 실패해 metadata에서 참조되지 않는 file은 orphan 후보지만 진행 중 write와 과거 snapshot을 고려해 안전하게 정리한다.
 
-1. **데이터베이스(Database)**: 관련 데이터를 오래 보관하고 여러 요청이 안전하게 읽고 바꾸도록 관리하는 시스템 또는 그 데이터 모음이다.
-2. **DBMS**: Database Management System의 약자다. SQL 해석, 동시성 제어, 저장, 복구를 수행하는 서버 프로그램이다.
-3. **관계(Relation)**: 같은 속성 구조를 가진 튜플의 집합이라는 수학적 개념이다. SQL 테이블의 기초 모델이다.
-4. **테이블(Table)**: 사용자가 이름을 붙여 행을 저장하는 논리 객체다. 내부에서는 여러 파일과 페이지로 표현될 수 있다.
-5. **행(Row)**: 한 대상의 속성값 묶음이다. 논리적 표현이며 물리 저장에서는 하나 이상의 레코드나 튜플 버전이 될 수 있다.
-6. **열(Column)**: 모든 행에 공통으로 정의한 이름, 타입, 의미다.
-7. **튜플(Tuple)**: 관계의 한 원소다. MVCC 문맥에서는 페이지에 저장된 특정 행 버전을 뜻하기도 한다.
-8. **스키마(Schema)**: 테이블, 열, 타입, 제약, 이름 공간의 구조 정의다.
-9. **기본 키(Primary Key)**: 각 논리 행을 유일하게 식별하도록 정한 키다.
-10. **외래 키(Foreign Key)**: 한 테이블 값이 다른 테이블의 유효한 키를 참조하도록 하는 제약이다.
-11. **SQL**: 관계형 데이터의 정의, 조회, 변경을 표현하는 선언형 언어다.
-12. **선언형(Declarative)**: 어떤 결과가 필요한지 적고 구체적인 반복·접근 순서는 엔진에 맡기는 방식이다.
-13. **NULL**: 값이 없거나 알려지지 않았음을 나타내는 표지다. 숫자 0이나 빈 문자열과 다르다.
-14. **3값 논리**: SQL 조건 결과가 TRUE, FALSE뿐 아니라 UNKNOWN일 수 있는 규칙이다.
-15. **제약 조건(Constraint)**: 허용할 데이터 상태를 DBMS가 검사하는 규칙이다.
-16. **페이지(Page)**: 저장 엔진이 디스크와 메모리 사이에서 주로 읽고 쓰는 고정 크기 블록이다.
-17. **레코드(Record)**: 페이지 안에 인코딩된 한 저장 단위다. 머리말과 열 값 등을 포함한다.
-18. **슬롯 배열(Slot Array)**: 페이지 속 레코드 위치를 가리키는 작은 항목들의 배열이다. 레코드가 이동해도 슬롯 번호를 유지하기 쉽다.
-19. **힙(Heap)**: 특정 키 순서가 보장되지 않는 테이블 저장 구조다. 메모리 힙 영역과 다른 뜻이다.
-20. **버퍼 풀(Buffer Pool)**: DBMS가 자주 쓰는 페이지 사본을 두는 메모리 영역과 관리 구조다.
-21. **버퍼 프레임(Buffer Frame)**: 버퍼 풀에서 페이지 하나가 들어가는 자리다.
-22. **Pin**: 사용 중인 프레임이 교체되지 않도록 참조를 잡는 동작이다.
-23. **Dirty Page**: 메모리에서 바뀌었지만 데이터 파일에는 아직 반영되지 않은 페이지다.
-24. **B-tree**: 정렬된 키와 자식 포인터를 여러 갈래 노드에 보관하여 범위 탐색을 지원하는 균형 트리 계열이다.
-25. **Fan-out**: 내부 노드 하나가 가리킬 수 있는 자식 수다. 클수록 트리 높이가 낮아질 수 있다.
-26. **인덱스(Index)**: 검색 키에서 행 위치나 다른 키로 빠르게 이동하도록 돕는 별도 자료구조다.
-27. **LSM-tree**: 쓰기를 메모리와 정렬 파일에 모은 뒤 배경 병합하는 저장 구조 계열이다.
-28. **Memtable**: LSM 구조에서 새 쓰기를 정렬해 모으는 메모리 자료구조다.
-29. **SSTable**: Sorted String Table의 약자다. 키 순서로 정렬되어 저장된 변경 불가능 파일이다.
-30. **Compaction**: 여러 정렬 파일을 읽어 겹치는 키와 삭제 표지를 정리하고 새 파일로 병합하는 작업이다.
-31. **순차 스캔(Sequential Scan)**: 테이블 페이지를 넓은 범위에서 차례로 읽어 조건을 검사하는 연산자다.
-32. **인덱스 스캔(Index Scan)**: 인덱스 키를 탐색하여 후보 행 위치로 이동하는 연산자다.
-33. **필터(Filter)**: 입력 행마다 조건식을 계산하고 참인 행만 다음 연산자로 보내는 단계다.
-34. **조인(Join)**: 둘 이상의 입력에서 키나 조건이 맞는 행을 결합하는 연산이다.
-35. **Nested Loop Join**: 한쪽 행마다 다른 쪽에서 일치 항목을 찾는 조인이다.
-36. **Hash Join**: 한쪽 키로 해시 테이블을 만들고 다른 쪽 키로 조회하는 동등 조건 조인이다.
-37. **Build Side**: 해시 조인에서 해시 테이블을 만드는 입력 쪽이다.
-38. **Probe Side**: 해시 테이블을 키로 조회하는 입력 쪽이다.
-39. **Spill**: 연산 중간 상태가 메모리를 넘어 임시 저장장치로 내려가는 현상이다.
-40. **쿼리 계획(Query Plan)**: Scan, Join, Aggregate 같은 실행 연산자를 연결한 트리다.
-41. **카디널리티(Cardinality)**: 문맥에 따라 집합의 행 수 또는 열의 서로 다른 값 수를 뜻한다.
-42. **선택도(Selectivity)**: 전체 입력 중 조건을 통과할 것으로 예상하는 비율이다.
-43. **Histogram**: 값 범위를 구간으로 나누어 분포를 근사한 통계다.
-44. **비용 모델(Cost Model)**: 후보 계획의 CPU와 I/O 작업량을 비교 가능한 숫자로 추정하는 규칙이다.
-45. **트랜잭션(Transaction)**: 함께 성공하거나 함께 취소되어야 하는 읽기와 쓰기의 논리 단위다.
-46. **ACID**: 원자성, 일관성, 격리성, 지속성을 묶어 부르는 약자다.
-47. **Commit**: 트랜잭션 변경을 성공으로 확정하는 상태 전이다.
-48. **Abort/Rollback**: 트랜잭션을 실패 처리하고 그 변경이 최종 상태에 나타나지 않게 하는 동작이다.
-49. **MVCC**: Multi-Version Concurrency Control의 약자다. 여러 행 버전과 스냅샷으로 읽기와 쓰기의 충돌을 줄이는 방식이다.
-50. **XID**: Transaction Identifier의 약자다. 트랜잭션을 구별하는 번호이며 번호만으로 commit 순서를 단정할 수 없다.
-51. **xmin**: 튜플 버전을 만든 트랜잭션 XID를 담는 메타데이터 이름이다.
-52. **xmax**: 튜플 버전을 삭제하거나 대체하려 한 트랜잭션 XID를 담는 메타데이터 이름이다.
-53. **스냅샷(Snapshot)**: 한 읽기에서 어떤 트랜잭션 결과를 보이게 할지 판정하는 경계와 진행 상태의 모음이다.
-54. **가시성(Visibility)**: 특정 스냅샷에서 특정 튜플 버전을 결과에 포함할지 정하는 규칙이다.
-55. **Vacuum**: 앞으로 필요한 스냅샷이 없는 오래된 버전을 재사용 가능하게 정리하는 작업이다.
-56. **Cleanup Horizon**: 오래된 버전을 안전하게 제거할 수 있는 경계다. 아직 오래된 스냅샷이 있으면 경계가 뒤로 머문다.
-57. **격리 수준(Isolation Level)**: 동시 트랜잭션의 중간 결과를 서로 어느 범위까지 볼 수 있는지 정한 규칙이다.
-58. **Read Committed**: PostgreSQL에서 각 문장이 시작할 때 커밋된 상태를 기준으로 스냅샷을 얻는 격리 수준이다.
-59. **Repeatable Read**: PostgreSQL에서 트랜잭션 스냅샷을 유지하며 phantom read도 허용하지 않는 수준이다. Serializable과 같지는 않다.
-60. **Serializable**: 성공한 동시 실행 결과가 어떤 직렬 실행 순서와 동등하도록 보장하는 가장 강한 격리 목표다.
-61. **Serialization Failure**: 직렬 실행과 동등하게 만들 수 없어 한 트랜잭션을 중단했다는 오류다. 전체 트랜잭션 재시도가 필요하다.
-62. **잠금(Lock)**: 객체에 대한 충돌 작업의 순서를 조절하는 동시성 제어 상태다.
-63. **교착 상태(Deadlock)**: 트랜잭션들이 서로 가진 잠금을 기다려 아무도 진행할 수 없는 순환 대기다.
-64. **WAL**: Write-Ahead Log의 약자다. 데이터 페이지보다 먼저 변경 기록을 내구화하는 로그 방식이다.
-65. **LSN**: Log Sequence Number의 약자다. WAL 안에서 기록 위치와 순서를 나타내는 번호다.
-66. **체크포인트(Checkpoint)**: 복구가 시작할 기준과 dirty page 처리 범위를 줄이도록 만드는 저장 엔진 사건이다.
-67. **Redo**: 로그에 남은 변경을 데이터 페이지에 다시 적용하는 복구 작업이다.
-68. **복제(Replication)**: 한 서버의 변경을 다른 서버가 받아 데이터 사본을 유지하는 방식이다.
-69. **Primary**: 변경을 받아 복제 로그를 만드는 주 서버 역할이다.
-70. **Replica**: primary의 변경을 수신하고 재생하는 사본 서버 역할이다.
-71. **복제 지연(Replication Lag)**: primary가 만든 최신 변경과 replica가 적용한 위치의 차이다.
-72. **2PC**: Two-Phase Commit의 약자다. prepare와 commit/abort 두 단계로 여러 참여자의 결정을 맞추는 프로토콜이다.
-73. **열 지향 저장(Columnar Storage)**: 같은 열의 값을 가까이 저장하여 분석 쿼리의 필요한 열만 읽기 쉽게 하는 방식이다.
-74. **벡터 실행(Vectorized Execution)**: 값 하나씩 함수 호출하기보다 여러 값을 배열 단위로 처리하는 실행 방식이다.
-75. **Predicate Pushdown**: 필터 조건을 데이터 원본 가까이 내려 불필요한 읽기를 줄이는 최적화다.
-76. **Spark**: 데이터를 여러 작업과 파티션으로 나누어 처리하는 분산 실행 엔진이다.
-77. **Iceberg**: 데이터 파일 목록과 스냅샷을 메타데이터로 관리하는 분석 테이블 형식이다.
-78. **Manifest**: Iceberg에서 데이터 파일과 통계 정보를 묶어 기록하는 메타데이터 파일이다.
-79. **Partition Pruning**: 조건과 맞지 않는 파티션을 계획 단계에서 읽기 후보에서 제외하는 최적화다.
-80. **EXPLAIN ANALYZE**: 계획을 보여 주면서 쿼리도 실제 실행해 실제 행 수와 시간을 계측하는 기능이다. 쓰기 부작용에 주의해야 한다.
+row-level delete는 data file을 즉시 rewrite하지 않고 position delete나 equality delete로 나타낼 수 있다. reader는 snapshot이 가리키는 delete를 data에 적용한 뒤 live row를 Spark에 넘긴다. file record count와 reader output row count는 다를 수 있다.
 
-## 3. 출처를 사용할 때의 기준
+## 10. 한 요청의 전체 수명
 
-공식 문서는 현재 제품의 계약과 동작을 확인하는 1차 자료다. 강의 자료는 개념의 구조를 배우는 데 유용하지만 특정 제품 버전의 세부 계약을 대신하지 않는다. 이 교재의 계산은 개념을 분리한 교육용 단순화이며 실제 성능 수치나 제품 검증 결과가 아니다.
+사용자가 “KR 모바일 주문의 고객 등급별 합계” SQL을 보낸다고 하자.
 
-- [PostgreSQL 18 Documentation](https://www.postgresql.org/docs/current/)
-- [PostgreSQL: Transaction Isolation](https://www.postgresql.org/docs/current/transaction-iso.html)
-- [PostgreSQL: EXPLAIN](https://www.postgresql.org/docs/current/sql-explain.html)
-- [PostgreSQL 16: Write-Ahead Logging](https://www.postgresql.org/docs/16/wal-intro.html)
+1. SQL text는 session에 들어와 parser/analyzer가 table, column, type에 연결한다.
+2. optimizer는 통계로 filter cardinality를 추정하고 scan·join·aggregate plan을 고른다.
+3. row store라면 buffer manager가 heap/index page를 frame에 읽고 pin한다. lake table이라면 connector가 Iceberg snapshot과 manifest를 읽어 Parquet 후보를 고른다.
+4. executor는 MVCC snapshot에서 visible row/version만 전달하거나 delete file을 적용해 live rows를 만든다.
+5. filter는 3값 논리로 TRUE만 선택하고 join은 key가 맞는 row를 결합한다.
+6. aggregate는 group state를 memory에 만들고 부족하면 spill한다. Spark에서는 shuffle로 같은 key를 모은다.
+7. SELECT 결과는 client에 직렬화된다. write라면 새 tuple/page와 WAL 또는 새 data/metadata file이 생긴다.
+8. PostgreSQL commit ACK는 WAL durable 경계와 연결되고, Iceberg commit은 catalog pointer publication과 연결된다.
+9. replica 또는 후속 Spark query가 새 상태를 보는 시점은 각각 replay LSN 또는 current snapshot 선택에 달렸다.
+10. 오래된 tuple/version/snapshot/file은 reader가 더 요구하지 않을 때 vacuum이나 maintenance가 정리한다.
+
+## 11. 종합 문제와 완전 풀이
+
+### 문제 1. NULL과 집계
+
+score 값이 [10,NULL,20,NULL]이다. COUNT(*), COUNT(score), SUM(score)를 구하라.
+
+**풀이:** COUNT(*)는 입력 row 네 개를 세어 4다. COUNT(score)는 NULL이 아닌 표현식 결과 10과20만 세어 2다. SUM도 NULL을 제외해 30이다. NULL을 0으로 바꾼 계산이 아니므로 AVG(score)는 30/2=15다.
+
+### 문제 2. 페이지 수용량
+
+page 8,192B, header 192B, 고정 record 200B, slot 2B/행이다.
+
+**풀이:** record 영역에 쓸 수 있는 공간은 8,192-192=8,000B다. 행 하나는 record와 slot 합계 202B다. floor(8,000/202)=39행이다. 40행은 8,080B로 넘친다. 실제 엔진의 alignment, variable field, fill factor는 결과를 바꿀 수 있다.
+
+### 문제 3. dirty page와 commit
+
+T1이 page 42를 바꿨고 메모리 page는 dirty지만 data file은 옛 값이다. 성공 commit이 가능한가?
+
+**풀이:** 필요한 change와 commit WAL이 durable storage까지 flush되면 모든 data page를 그 순간 쓰지 않고 성공할 수 있다. 장애 뒤 redo가 page를 복원한다. WAL이 확정되기 전에 새 data page를 먼저 내리면 write-ahead 순서를 깨뜨린다.
+
+### 문제 4. B+tree 높이
+
+leaf 하나가 key 100개, 평균 fan-out 100이고 총 key가 1억 개다.
+
+**풀이:** leaf는 100,000,000/100=1,000,000개다. fan-out 100이면 root에서 세 child-pointer edge로 최대 100^3=1,000,000 leaf 범위를 가리킬 수 있다. 실제 높이는 node 점유율, key 폭, root와 cache 상태에 따라 달라진다.
+
+### 문제 5. index가 있어도 sequential scan
+
+1,000,000행 중 800,000행을 반환한다.
+
+**풀이:** index로 800,000 locator를 찾고 table page를 흩어 읽는 비용이 대부분 page를 순서대로 읽는 비용보다 클 수 있다. projection, clustering, covering index와 cache에 따라 달라지므로 “index 존재=사용”이 아니다. EXPLAIN의 선택과 실제 buffer를 확인한다.
+
+### 문제 6. 조인 작업량
+
+outer 10,000행, inner 100,000행이고 inner index가 없는 단순 모형이다.
+
+**풀이:** nested loop 비교는 10,000×100,000=1,000,000,000번이다. hash는 build와 probe key 작업 약 110,000번이다. 그러나 build row 64B면 6.4MB이며 memory 2MB에서는 로컬 모델상 4 batch라 spill 가능성이 있다. 작업 수만으로 ms를 단정하지 않는다.
+
+### 문제 7. 추정 오차
+
+planner는 filter 뒤 200행, executor는 8,000행을 관찰했다.
+
+**풀이:** 8,000/200=40배 과소 추정이다. 오차가 처음 생긴 filter의 distinct, MCV, histogram, 통계 갱신 시점과 다중 열 상관을 조사한다. 이 오차가 다음 join의 build/outer 선택을 바꾸었는지도 본다.
+
+### 문제 8. 송금 원자성
+
+A=100,B=50에서 A에서30을 빼는 write만 남고 B 증가가 없다.
+
+**풀이:** 합계가 150에서120으로 줄어 업무 불변식을 깨뜨린다. 두 write를 한 transaction으로 묶어 전부 commit 또는 abort하게 하는 원자성 문제다. CHECK나 업무 constraint로 합계를 직접 표현할 수 있는지는 schema 범위에 따라 별도 설계한다.
+
+### 문제 9. MVCC 두 번 읽기
+
+T20이 100을 읽은 뒤 T30이 80으로 update/commit하고 T20이 다시 읽는다.
+
+**풀이:** PostgreSQL Read Committed는 두 번째 statement에서 새 snapshot을 얻어 80을 볼 수 있다. Repeatable Read는 transaction snapshot을 유지해 100을 본다. T30 commit이 두 번째 SELECT 전이라는 시간 조건이 필요하다.
+
+### 문제 10. serialization failure 재시도
+
+한 Serializable transaction의 마지막 UPDATE가 실패했다.
+
+**풀이:** UPDATE만 재전송하면 앞에서 읽은 값과 그로 내린 결정이 이미 낡았다. transaction 전체를 BEGIN부터 다시 실행한다. 재시도 상한과 backoff를 두고 email·결제 같은 외부 부작용은 요청 ID로 중복을 막는다.
+
+### 문제 11. WAL 로컬 모형
+
+Page(50,10), committed T1의 record(11,60), 미커밋 T2 record(12,70)다.
+
+**풀이:** 교육 모델은 T1이 committed이고 11>10이므로 Page(60,11)을 만든다. T2는 제외한다. 같은 입력을 다시 적용하면 11>11이 거짓이라 그대로다. 실제 PostgreSQL은 미커밋 WAL도 물리 redo할 수 있고 가시성은 MVCC가 판정한다.
+
+### 문제 12. checkpoint와 보존
+
+crash recovery redo 경계는800인데 replication slot이620부터 요구한다.
+
+**풀이:** recovery만 보면 오래된 WAL을 지울 수 있어도 replica가 620 이후를 아직 요구한다. 보존 경계는 더 오래된 620이다. max_wal_size를 절대 상한으로 믿지 말고 slot lag와 archive 상태를 본다.
+
+### 문제 13. 복제 단계
+
+primary=1000, replica sent=980,write=970,flush=960,replay=900이고 commit은950이다.
+
+**풀이:** replica는 950 WAL을 durable하게 보유하지만 data page에는 아직 적용하지 않았다. 현재 replica query는 그 commit을 못 볼 수 있다. replica 재시작이나 promotion recovery는 보유 WAL을 960까지 재생할 수 있다. flush와 reader visibility를 구분한다.
+
+### 문제 14. failover 손실
+
+비동기 primary는1000까지 ACK했고 후보 replica flush는960이다.
+
+**풀이:** primary storage를 완전히 잃으면 961~1000 사이 commit이 사라질 수 있다. LSN 차이40이 40건이라는 뜻은 아니다. 해당 구간의 commit record와 업무 요청 ID로 손실을 판정하고 옛 primary를 fencing한 뒤 승격한다.
+
+### 문제 15. column batch
+
+값 [20,NULL,80,100,40]에 x>=80을 적용한다.
+
+**풀이:** 비교 결과는 [FALSE,UNKNOWN,TRUE,TRUE,FALSE]다. WHERE는 위치2,3을 선택하고 합은180이다. validity bitmap이 NULL 위치를 표시하며 selection vector [2,3]은 batch 안의 위치이지 값 자체가 아니다.
+
+### 문제 16. row-group pruning
+
+A amount 0~90, B 80~150, C 200~500이고 조건 amount>100이다.
+
+**풀이:** A는 max90<=100이라 확실히 건너뛴다. B는 일부 가능해 읽어야 한다. C의 비NULL 값은 범위상 모두 조건을 만족하지만 NULL과 통계 계약을 확인한다. B 통계만으로 통과 행 수를 알 수 없다.
+
+### 문제 17. Spark와 Iceberg
+
+snapshot의 1,000파일 중 partition summary로800개, file 통계로150개를 더 제외하고 100 task를 만든다.
+
+**풀이:** 후보는50파일, 제거율은95%다. 한 큰 file을 여러 split으로 나눌 수 있어 50파일과100 task는 모순이 아니다. file 집합은 Iceberg snapshot의 지속 metadata이고 task partition은 이번 Spark 실행의 일시 객체다.
+
+### 문제 18. Iceberg commit 실패
+
+80 data file upload 뒤 catalog compare-and-swap이 실패했다.
+
+**풀이:** current snapshot이 참조하지 않으므로 정상 reader에게 행은 보이지 않는다. 충돌 없는 append라면 최신 metadata에 rebase해 파일을 재사용할 수 있다. 끝내 참조되지 않으면 orphan 후보지만 진행 중 writer와 retention 기간을 고려해 정리한다.
+
+### 문제 19. position delete와 equality delete
+
+(A.parquet,4) position delete와 customer_id=7 equality delete가 있다.
+
+**풀이:** position delete는 A의 물리 위치4만 지운다. 다른 파일 위치4에는 적용하지 않는다. equality delete는 같은 field ID 값 7인 적용 대상 data file 행을 지우지만 partition과 sequence 조건을 충족해야 한다. 같은 값이라는 이유만으로 모든 snapshot의 모든 file을 지우지 않는다.
+
+### 문제 20. 연구 결과
+
+새 optimizer planning=5ms,execution=500ms이고 기존은20ms,300ms다.
+
+**풀이:** planning만 보면 새 방식이15ms 짧다. 단순 end-to-end 합은 새505ms, 기존320ms다. 결과 checksum, cache, 반복 분포와 지원 실패를 확인한 뒤 이 조건에서는 기존 실행이 더 빠르다고 관찰할 수 있다. planning 우위를 전체 성능 우위로 확대하지 않는다.
+
+## 12. 같은 이름을 구분하는 연결표
+
+| 이름 | 문맥과 실제 대상 | 수명 |
+|---|---|---|
+| page | DB 파일·buffer pool의 고정 블록 | 파일에서 오래 존재, frame 사본은 교체 |
+| Parquet data page | column chunk 안의 encoding 단위 | data file 수명 |
+| snapshot | MVCC visibility 경계 | statement 또는 transaction |
+| Iceberg snapshot | manifest/file 집합을 가리키는 commit | 만료 전까지 metadata에 존재 |
+| partition | Spark task 입력 조각 | 한 execution |
+| Iceberg partition | transform으로 조직한 data 범위 | spec/file metadata 수명 |
+| batch | vector operator의 메모리 값 묶음 | operator가 소비할 때까지 |
+| hash batch | spill partition 수의 실행 단위 | join 실행 동안 |
+| commit | DB transaction 성공 결정 | transaction 상태로 지속 |
+| Iceberg commit | catalog current metadata pointer 교체 | 새 snapshot이 current인 기간 |
+
+## 13. 장애를 읽는 공통 순서
+
+첫째, 신원을 적는다. transaction XID, query ID, page ID, LSN, snapshot ID, Spark application/stage/task attempt를 구별한다. 둘째, 생성과 공개를 나눈다. tuple/data file이 생긴 것과 commit되어 reader에게 보이는 것은 다르다. 셋째, durable과 applied를 나눈다. replica flush와 replay, WAL과 data page가 다르다.
+
+넷째, estimate와 actual을 나눈다. optimizer cost, manifest candidate bytes, actual decoded bytes, 결과 rows는 다른 단계다. 다섯째, retry 범위를 확인한다. serialization failure는 transaction 전체, Spark task failure는 attempt, Iceberg CAS conflict는 operation 의미에 따라 재검증한다. 여섯째, 외부 부작용과 orphan을 찾는다.
+
+## 14. 출처를 읽는 기준
+
+공식 specification은 파일 형식과 protocol의 계약을 확인하는 1차 자료다. 제품 공식 문서는 특정 version의 지원 동작과 설정을 확인한다. 강의 자료와 논문은 원리와 연구 질문을 배우는 데 유용하지만 현재 제품 version의 보장을 대신하지 않는다. blog와 benchmark를 읽을 때 데이터 분포, hardware, cache, concurrency, correctness와 실패 workload를 찾는다.
+
+이 책의 손 계산과 로컬 model 숫자는 개념을 분리하기 위한 교육 값이다. PostgreSQL, Spark, Iceberg에서 실제 측정했다는 주장이 아니다. 실행 계획과 내부 형식은 version에 따라 바뀔 수 있으므로 운영 판단은 사용 중인 version의 공식 문서와 재현 실험으로 확인한다.
+
+## 15. 주요 1차 자료
+
+- [PostgreSQL 18 Documentation](https://www.postgresql.org/docs/18/)
+- [PostgreSQL 18: Transaction Isolation](https://www.postgresql.org/docs/18/transaction-iso.html)
+- [PostgreSQL 18: MVCC](https://www.postgresql.org/docs/18/mvcc.html)
+- [PostgreSQL 18: EXPLAIN](https://www.postgresql.org/docs/18/sql-explain.html)
+- [PostgreSQL 18: WAL](https://www.postgresql.org/docs/18/wal-intro.html)
+- [PostgreSQL 18: Streaming Replication](https://www.postgresql.org/docs/18/warm-standby.html)
+- [Apache Parquet File Format](https://parquet.apache.org/docs/file-format/)
+- [Apache Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)
 - [Apache Spark SQL Performance Tuning](https://spark.apache.org/docs/latest/sql-performance-tuning.html)
-- [Apache Iceberg Performance](https://iceberg.apache.org/docs/latest/performance/)
-- [CMU 15-445/645 Database Systems, Fall 2024](https://15445.courses.cs.cmu.edu/fall2024/syllabus.html)
+- [Apache Iceberg Specification](https://iceberg.apache.org/spec/)
+- [Apache Iceberg Spark Writes](https://iceberg.apache.org/docs/latest/spark-writes/)
+- [CMU 15-445/645 Database Systems](https://15445.courses.cs.cmu.edu/)
 
-[이전: 실험과 연구](14-experiments-and-research.md) · [목차](README.md) · 다음 장 없음
+읽기를 마쳤다면 새 용어 하나를 정의로만 답하지 말고 “어떤 실제 객체인가, 어디에 있는가, 누가 만들고 바꾸는가, 언제 사라지는가, 어떤 이웃 객체와 상태를 주고받는가”의 다섯 문장으로 설명해 본다. 그 설명이 가능해야 숫자와 장애 trace도 스스로 연결할 수 있다.

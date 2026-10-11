@@ -1,22 +1,5 @@
 # 06. 포맷 v3: deletion vector, 행 계보, 기본값, 확장 타입
 
-## DV와 Puffin, Parquet를 한 예로 구분한다
-
-Parquet는 원래 행 값을 담는다. Puffin은 통계·index blob container이고 deletion-vector-v1은 Puffin 안의 blob type이다. DV는 특정 data file의 64비트 row position 집합을 Roaring64 bitmap으로 표현한다.
-
-A의 기존 DV={1,4}, 업그레이드 전 position delete={7}, 새 삭제={4,9}이면 writer는 union {1,4,7,9}를 만든다. 중복4는 한 bit이고 cardinality는4다. 새 snapshot에서 A에 적용되는 DV는 최대 하나이므로 두 DV를 나란히 게시하지 않는다.
-
-v3 writer는 새 v2-style position delete file을 쓰면 안 되고 새 position 삭제를 DV로 쓴다. 과거 position delete는 유효해 reader와 maintenance가 읽어야 한다. equality delete도 유지된다. S20이 DV{1,4}, S21이 DV{1,3,4}를 가리키면 각 time travel reader는 자기 snapshot의 DV를 적용한다.
-
-DV가 있어도 살아 있는 column은 Parquet에서 읽는다. 성능은 cardinality, Puffin range read, cache, vectorization과 rewrite 주기에 달린다.
-
-### 추가 문제 5개
-1. union cardinality? **해설:** 4.
-2. A당 snapshot DV 수? **해설:** 최대1.
-3. 과거 position delete 유효? **해설:** 예.
-4. equality delete 유지? **해설:** 예.
-5. Puffin이 행 파일인가? **해설:** 보조 blob container다.
-
 [← 이 책 목차](README.md)
 
 작성·문헌 확인일: **2026-10-08**
@@ -348,6 +331,23 @@ flowchart TD
 - initial/write default를 오래된 파일과 새 파일에서 각각 검증했는가?
 - ns timestamp, variant, geometry/geography를 모든 경로가 보존하는가?
 - v3 table을 모르는 reader가 production에 남아 있지 않은가?
+
+## DV와 Puffin, Parquet를 한 예로 구분한다
+
+Parquet는 원래 행 값을 담는다. Puffin은 통계·index blob container이고 deletion-vector-v1은 Puffin 안의 blob type이다. DV는 특정 data file의 64비트 row position 집합을 Roaring64 bitmap으로 표현한다.
+
+A의 기존 DV={1,4}, 업그레이드 전 position delete={7}, 새 삭제={4,9}이면 writer는 union {1,4,7,9}를 만든다. 중복4는 한 bit이고 cardinality는4다. 새 snapshot에서 A에 적용되는 DV는 최대 하나이므로 두 DV를 나란히 게시하지 않는다.
+
+v3 writer는 새 v2-style position delete file을 쓰면 안 되고 새 position 삭제를 DV로 쓴다. 과거 position delete는 유효해 reader와 maintenance가 읽어야 한다. equality delete도 유지된다. S20이 DV{1,4}, S21이 DV{1,3,4}를 가리키면 각 time travel reader는 자기 snapshot의 DV를 적용한다.
+
+DV가 있어도 살아 있는 column은 Parquet에서 읽는다. 성능은 cardinality, Puffin range read, cache, vectorization과 rewrite 주기에 달린다.
+
+### 추가 문제 5개
+1. union cardinality? **해설:** 4.
+2. A당 snapshot DV 수? **해설:** 최대1.
+3. 과거 position delete 유효? **해설:** 예.
+4. equality delete 유지? **해설:** 예.
+5. Puffin이 행 파일인가? **해설:** 보조 blob container다.
 
 ## 8. 확인 문제
 

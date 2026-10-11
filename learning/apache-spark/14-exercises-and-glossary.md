@@ -1,214 +1,243 @@
-# 14. 문제·해설·용어사전
+# 14. 종합 문제와 개념 연결: 파일 한 줄에서 Commit과 복구까지
 
-## 실행 전체를 묻는 종합 사례
+[이전: 버전과 마이그레이션](13-versions-and-migration.md) · [목차](README.md)
 
-source file 세 개가 Spark input partition P0~P2로 계획되고 각 주문이 P0=(KR10,US20,KR30), P1=(JP40,KR50,US60), P2=(KR70,JP80,US90)이라고 하자. amount>=20, region별 sum, 결과 write를 수행한다.
+이 장은 용어를 한 줄씩 외우는 사전이 아니다. 같은 실행에서 Source File, Input Partition, Task, Stage, Executor, Shuffle Block, Output File, Table Snapshot이 어디에 존재하고 누가 관리하며 언제 사라지는지를 연결한다. 이어지는 15개 문제는 답 한 줄로 끝내지 않고 입력 상태, 계산 과정, 실패 반례와 실제 확인 대상을 모두 풀이한다.
 
-Stage 0은 P0에서 KR30·US20, P1에서 JP40·KR50·US60, P2에서 KR70·JP80·US90을 만든다. key shuffle 뒤 Stage 1은 KR150,US170,JP120을 만든다. writer가 세 결과를 F0,F1 두 파일로 쓸 수 있으며 파일 수와 executor 수는 다르다. commit 전 파일 존재만으로 독자에게 공개하지 않는다.
+## 1. 하나의 Spark Application 안에 있는 실행 객체
 
-P2 shuffle block이 executor 유실로 사라지면 lineage로 P2를 다시 계산한다. task가 외부 API를 호출했다면 중복될 수 있다. 결과 세 행 collect는 작지만 원본 전체 collect는 driver OOM 위험이 있다. 이 한 사례에서 source file, input partition, stage, task, shuffle, output file, commit과 recovery가 서로 다른 객체임을 확인한다.
+**Application**은 사용자가 제출한 Spark 프로그램 한 번의 전체 실행이다. Driver가 시작될 때 만들어지고 Driver가 정상 종료하거나 실패할 때 끝난다. Cluster Manager는 Application에 CPU와 Memory 자원을 배정하지만 SQL의 의미를 결정하지 않는다.
 
-### 추가 완전 풀이 문제 5개
+**Driver**는 사용자 코드와 SparkSession, 논리·물리 계획, Job·Stage·Task 상태를 가진 중심 Process다. **Executor**는 Cluster Worker 또는 Pod에서 Task를 실행하고 Cache와 Shuffle Block을 보관하는 Process다. Driver가 "무엇을 어떤 순서로 계산할지" 관리한다면 Executor는 할당된 Partition의 행을 실제로 읽고 변환한다.
 
-1. 필터 뒤 P0 상태는? **해설:** KR30,US20이다.
-2. shuffle 전 상태 수는? **해설:** P0 2+P1 3+P2 3=8개다.
-3. KR 최종 합은? **해설:** 30+50+70=150이다.
-4. P2 block 유실 복구는? **해설:** source가 남아 있으면 P2 map task를 재실행한다.
-5. F0,F1 존재가 commit 증거인가? **해설:** sink의 job/table commit 상태를 확인해야 한다.
+**Job**은 Action이 결과를 요구할 때 만들어지는 실행 묶음이다. show 한 번이 언제나 Job 하나라는 계약은 아니다. Broadcast 준비나 내부 실행 때문에 여러 Job이 보일 수 있다. **Stage**는 Shuffle 같은 데이터 재분배 경계 사이의 Task 집합이다. **Task**는 Stage의 Partition 하나를 처리하는 실행 단위다. 동일 논리 Task가 실패하거나 Speculation으로 복제되면 여러 Attempt가 생길 수 있다.
 
-용어를 읽을 때 영어 이름만 외우지 않는다. partition은 task가 처리하는 실행 조각, stage는 shuffle 같은 경계 사이의 task 집합, DAG는 계산 의존 관계, lineage는 잃은 조각을 다시 만드는 경로다. shuffle은 같은 key를 모으도록 데이터를 재분배하는 과정이고 checkpoint는 streaming 진행·state를 복구할 지속 기록이다. watermark는 event-time 정리 경계이며 processing-time TTL과 다르다.
+이 관계를 객체 수명으로 그리면 다음과 같다.
 
-[이 책의 목차](README.md) · [이전 장](13-versions-and-migration.md)
+~~~mermaid
+flowchart TD
+    A["Application: Driver 수명"] --> J1["Job 1: count Action"]
+    A --> J2["Job 2: write Action"]
+    J2 --> S0["Stage 0: scan/filter/partial"]
+    J2 --> S1["Stage 1: shuffle 뒤 aggregate"]
+    S0 --> T0["Task P0 attempt 0"]
+    S0 --> T1["Task P1 attempt 0"]
+    S0 --> T2["Task P2 attempt 0"]
+    T2 -. 실패 .-> T2R["Task P2 attempt 1"]
+~~~
 
-코드의 줄 수 대신 실제 행·파일·task·상태를 계산한다. 먼저 답을 가리고 손으로 표와 화살표를 그려 본다. 숫자는 교육용이다.
+Task와 Thread, Core도 같은 객체가 아니다. Task는 논리 실행 단위이고 Thread가 Task 코드를 실행하며 Core는 그 Thread에 CPU 시간을 제공한다.
 
-## 1. 계산과 실행 문제
+## 2. 데이터가 존재하는 네 장소
 
-### 문제 1. 평균의 평균
+**Source File**은 실행 전 Storage에 있는 입력 Byte다. Parquet라면 Row Group, Column Chunk와 Footer Metadata를 가진다. Spark가 File Listing과 Split 계획을 거쳐 **Input Partition**을 만든다. File 하나가 Partition 하나라는 고정 관계는 없다.
 
-Partition A에는 값 10 하나, B에는 값 20 세 개가 있다. 부분 평균을 단순 평균한 결과와 전체 평균은 각각 얼마인가?
+**Shuffle Block**은 앞 Stage Task가 만든 중간 결과 Byte다. 같은 Key를 모으기 위해 뒤 Stage가 Network로 가져간다. Executor Local Disk에만 있던 Block은 Executor Loss로 사라질 수 있으며 Lineage가 있으면 이전 Task를 다시 실행해 만든다.
 
-**해설.** 부분 평균의 평균은 `(10+20)/2=15`, 전체 평균은 `(10+20+20+20)/4=17.5`다. 전체 평균을 합치려면 sum과 유효 count 등 필요한 상태를 보존한다.
+**Cache Block**은 반복 계산을 줄이려고 Executor Memory나 Disk에 임시 보관한 Partition 결과다. DataFrame 변수를 Python 변수에 넣는 것만으로 Cache되지 않는다. cache 또는 persist 표시 뒤 Action이 계산해야 실제 Block이 생긴다. Eviction이나 Executor Loss 뒤에는 다시 계산될 수 있다.
 
-### 문제 2. NULL과 0
+**Output File**은 Writer Task가 Sink에 만든 Data File이다. File 존재는 전체 Job Commit 또는 Iceberg Snapshot Commit과 다르다. Task File이 모두 성공해도 Driver가 최종 Commit 전에 실패할 수 있다.
 
-온도 `20, 22, NULL`에 `COUNT(*)`, `COUNT(temperature)`, `AVG(temperature)`를 적용한다. NULL을 0으로 채운 뒤 평균은 어떻게 달라지는가?
+## 3. 계획 객체와 저장 상태를 연결한다
 
-**해설.** 3, 2, 21이다. 0으로 채우면 평균은 14다. 누락값 정책이 결과를 바꾼다.
+**DataFrame**은 이름과 Type이 있는 Column 연산의 분산 계획을 가리킨다. Driver의 DataFrame 변수 안에 모든 행이 들어 있는 것이 아니다. **Logical Plan**은 무엇을 계산할지를 Filter, Join, Aggregate 같은 관계 연산으로 표현한다. **Physical Plan**은 Scan 구현, Hash Aggregate, Sort Merge Join, Exchange처럼 어떻게 실행할지를 정한다.
 
-### 문제 3. 지연 실행
+**Catalyst**는 Spark SQL의 Expression과 Plan을 분석하고 변환하는 기반이다. Schema와 내장 함수 의미가 보이므로 Column Pruning, Predicate Pushdown, 부분 집계 같은 선택을 할 수 있다. Python UDF 내부 의미는 같은 수준으로 보이지 않을 수 있다.
 
-`clean = raw.filter(...)`와 `summary = clean.groupBy(...).agg(...)`를 실행했다. 결과가 파일로 저장되었다고 주장해도 되는가?
+**DAG**는 방향이 있고 순환하지 않는 계산 의존 Graph다. **Lineage**는 결과 Partition이 어떤 입력과 변환에서 왔는지 나타내는 재계산 경로다. DAG가 계획의 전체 의존 관계라면 Lineage는 잃어버린 조각을 다시 만드는 데 쓰이는 계보라는 관점이 중요하다.
 
-**해설.** 아니다. 계산 표현 구성과 데이터 실행·영구 저장은 다르다. 파일 목록·schema 작업 등이 발생할 수 있지만 결과 쓰기의 증거가 아니다.
+**Checkpoint**는 특히 Streaming에서 Source Offset, Commit Log, State를 지속 Storage에 기록한 복구 상태다. Lineage를 짧게 자르는 Batch Checkpoint와 Stateful Streaming Checkpoint는 맥락과 내용이 다르다. 이름만 같다고 동일 Directory 의미로 취급하지 않는다.
 
-### 문제 4. Task 동시성
+## 4. Structured Streaming 객체의 연결
 
-Executor 3개, 각각 4코어, task당 1 CPU, 다른 제한 없음이라고 가정한다. 120개 task의 최대 동시 실행 수와 균등한 단순 실행 차수는?
+**Micro-batch**는 일정 구간의 새 입력을 작은 Batch Job처럼 반복 처리하는 방식이다. **Event Time**은 사건이 원천에서 발생한 시각이고 **Processing Time**은 Spark가 처리한 시각이다. Network 지연 때문에 Event Time이 오래된 행이 나중에 도착할 수 있다.
 
-**해설.** 최대 약 12개, 모든 task가 같은 시간이라면 10차수다. 실제 I/O·skew·동적 할당은 별도다.
+**Watermark**는 Event Time 진행과 허용 지연을 바탕으로 오래된 State를 언제 정리할 수 있는지 판단하는 경계다. "이 시각보다 늦은 행은 항상 버린다"는 단일 문장으로 모든 Operator 동작을 설명할 수 없다. Output Mode와 Window, Join, Deduplication 연산의 조건을 함께 봐야 한다.
 
-### 문제 5. Job 수
+**State**는 다음 Micro-batch 계산에 필요한 누적 값이다. Window별 Count, 이미 본 Event ID, Stream-stream Join의 아직 짝을 기다리는 행이 예다. Executor Memory만의 임시 Cache와 달리 재시작 복구를 위해 State Store와 Checkpoint에 연결된다.
 
-`show()` 하나를 호출했으니 Spark job이 반드시 하나라고 할 수 있는가?
+**Exactly-once**라는 표현은 범위를 붙여야 한다. Source Offset과 Sink Commit의 조합이 한 Query의 처리 효과를 중복시키지 않더라도, 같은 업무 event_id가 서로 다른 Offset으로 두 번 들어오면 업무 중복은 남는다.
 
-**해설.** 아니다. Broadcast 준비·AQE·내부 실행 경로 등에 따라 여러 job이 생길 수 있다. UI·물리 계획으로 확인한다.
+## 5. Iceberg 객체와 Spark 실행을 연결한다
 
-## 2. Join·partition·메모리 문제
+**Table Format**은 Data File 집합을 Table 상태로 관리하는 Metadata 규칙이다. Iceberg에서 **Catalog**는 Table 이름과 현재 Metadata 위치를 연결하고 Commit 경쟁을 조정한다. **Snapshot**은 성공한 Commit 뒤 유효한 File과 상태를 가리킨다.
 
-### 문제 6. Join 후 행 증가
+**COW, Copy-on-Write**는 Row 변경을 반영한 새 Data File을 쓰는 방식이고 **MOR, Merge-on-Read**는 기존 Data File과 Delete 정보를 읽을 때 합칠 수 있는 방식이다. SQL DELETE 조건이 어떤 물리 표현을 만드는지는 Engine, Table Property, Format Version과 지원 경로에 달려 있다. 사용자가 equality delete라는 단어를 SQL에 쓰지 않았다고 Engine이 임의로 업무 의미를 추측하는 것은 아니다.
 
-Events에 S1 두 행, S2 한 행이 있다. Devices에 S1 두 행, S2 한 행이 있다. `device_id`로 inner join하면 몇 행인가?
+Iceberg Format v1·v2·v3는 Table 규격이고 Iceberg 1.12.0은 Software Release다. v4는 현재 개발 중이며 공식 채택 전이다. Spark 4.2 Engine과 Iceberg 4.1 Runtime JAR 숫자도 서로 다른 축이다.
 
-**해설.** S1은 `2×2=4`, S2는 `1×1=1`, 합계 5다. Join key의 중복은 결과를 곱셈으로 늘릴 수 있다. Devices가 한 장치당 한 행인지 검사한다.
+## 6. 종합 사례의 모든 행
 
-### 문제 7. 파일 수
+Source File 세 개가 다음 Input Partition P0~P2로 계획되었다고 하자.
 
-DataFrame을 `repartition(4)`하고 날짜 두 종류로 `partitionBy("date")` 저장했다. 파일 수가 반드시 4인가?
+| Partition | 입력 행 |
+|---|---|
+| P0 | KR 10, US 20, KR 30 |
+| P1 | JP 40, KR 50, US 60 |
+| P2 | KR 70, JP 80, US 90 |
 
-**해설.** 아니다. 실행 partition과 저장 partition의 조합·writer 규칙에 따라 달라진다. 실제 파일과 행·bytes를 확인한다.
+연산은 amount >= 20 Filter, region별 Sum, 결과 Write다. P0에서는 KR10이 제거되어 KR30과 US20이 남는다. P1과 P2의 모든 행은 남는다.
 
-### 문제 8. Driver OOM
+Shuffle 전 부분 상태를 Key별로 합치면 다음과 같다.
 
-Executor 메모리를 두 배로 늘렸지만 `toPandas()`에서 driver가 죽는다. 원인을 해결했다고 볼 수 있는가?
+| Partition | 부분 상태 |
+|---|---|
+| P0 | KR=30, US=20 |
+| P1 | JP=40, KR=50, US=60 |
+| P2 | KR=70, JP=80, US=90 |
 
-**해설.** 결과를 driver에 모으는 경로는 남아 있다. 분산 결과 저장·작은 요약·제한된 출력 등 요청 자체를 바꿀 필요가 있다.
+Exchange 뒤 같은 Key의 상태를 합치면 KR=30+50+70=150, US=20+60+90=170, JP=40+80=120이다. 최종 행은 세 개다.
 
-### 문제 9. Partition 평균 크기
+Writer가 이 세 행을 F0과 F1 두 File에 나누어 쓸 수 있다. File 두 개는 Executor 두 개라는 뜻이 아니다. 하나의 Executor가 순서대로 두 Writer Task를 실행할 수도 있고 여러 Executor가 만든 결과가 Commit Protocol에서 두 File로 공개될 수도 있다.
 
-Partition 10개 중 9개는 10 MiB, 하나는 910 MiB다. 평균은 얼마이며 평균만으로 task 메모리·시간을 판단해도 되는가?
+P2 Shuffle Block이 Executor Loss로 사라지면 P2 Source가 남아 있을 때 P2의 이전 Stage Task를 새 Attempt로 다시 실행해 부분 상태를 만든다. Task 안에서 외부 결제 API를 호출했다면 그 API 효과까지 Spark Lineage가 되돌리지 않는다.
 
-**해설.** 합계 1000 MiB, 평균 100 MiB다. 910 MiB partition이 지배하는 skew를 평균이 숨긴다.
+## 7. 문제 1 — 평균의 평균
 
-### 문제 10. Cache
+Partition A에는 값 10 하나, B에는 값 20 세 개가 있다. 부분 평균의 평균과 전체 평균을 구하고 왜 다른지 설명하라.
 
-DataFrame을 변수에 넣고 `count()` 다음 `write`를 호출했다. 입력을 반드시 한 번만 읽는가?
+**풀이:** A의 평균은 10, B의 평균은 20이므로 단순 평균은 (10+20)/2=15다. 그러나 실제 행은 10,20,20,20 네 개이므로 전체 평균은 70/4=17.5다. 단순 평균은 두 Partition에 같은 가중치를 줬지만 실제로 B에는 세 배의 행이 있다.
 
-**해설.** 변수 할당만으로 cache되지 않는다. Cache의 실제 채움·재사용·eviction과 실행 계획을 확인한다.
+정확히 합치려면 A=(sum 10,count 1), B=(sum 60,count 3)을 보낸다. 최종 상태는 (sum 70,count 4)이고 70/4=17.5다. Partition별 평균만 남기면 원래 Count 정보를 잃어 일반적으로 복구할 수 없다.
 
-## 3. Streaming·Iceberg·버전 문제
+## 8. 문제 2 — NULL과 0
 
-### 문제 11. 재전송과 exactly-once
+온도 20, 22, NULL에 COUNT(*), COUNT(temperature), AVG(temperature)를 적용하고 NULL을 0으로 채운 뒤 평균 변화를 설명하라.
 
-같은 업무 event ID가 Kafka의 서로 다른 offset 두 개에 있다. 각 offset을 정확히 한 번 처리하면 event도 하나만 남는가?
+**풀이:** COUNT(*)는 행을 세므로 3이다. COUNT(temperature)는 NULL이 아닌 값만 세므로 2다. AVG도 NULL을 제외해 (20+22)/2=21이다. NULL을 0으로 채우면 알려지지 않은 값을 실제 0도로 바꾸므로 (20+22+0)/3=14다.
 
-**해설.** 아니다. 원천 중복 제거는 별도 정책이다.
+14는 계산 오류가 아니라 다른 데이터 의미의 결과다. 결측을 0으로 바꾸려면 센서 고장이 실제 0도를 뜻한다는 업무 근거가 있어야 한다. 품질 분석에서는 전체 행 3, 유효 측정 2, 결측 1을 함께 기록한다.
 
-### 문제 12. Checkpoint 삭제
+## 9. 문제 3 — 지연 실행과 물질화
 
-Streaming job의 checkpoint를 지우고 `startingOffsets=earliest`로 다시 시작했다. 이전과 동일한 재시작인가?
+clean=raw.filter(...), summary=clean.groupBy(...).agg(...)를 실행했다. 결과 File과 Cache가 이미 만들어졌는가?
 
-**해설.** 새 query로 입력을 다시 읽을 수 있다. 이전 sink 결과와의 중복·state·query ID 정책을 고려한다.
-
-### 문제 13. SQL 조건과 삭제 파일
-
-`DELETE WHERE device_id='S2'`를 썼다. 반드시 equality delete file이 생성되는가?
-
-**해설.** SQL은 삭제할 논리 조건이다. 실제 표현은 엔진·COW/MOR 설정·테이블 포맷·지원 경로에 따라 다르다.
-
-### 문제 14. 최신 버전 조합
-
-Spark 최신 안정 릴리스와 Iceberg 최신 라이브러리를 설치했다. Artifact의 Spark·Scala suffix를 확인하지 않아도 되는가?
-
-**해설.** 아니다. 최신성은 실제 integration 지원을 보장하지 않는다. 이 책은 Spark 최신 설명과 4.0.4+Iceberg1.12.0 실습을 구분한다.
-
-### 문제 15. API 연결 방식
-
-Spark Connect에서 `df._jdf`나 RDD를 이용한 classic 코드를 그대로 실행해도 되는가?
-
-**해설.** Connect의 클라이언트·서버 분리와 지원 API 경계를 확인해야 한다. Driver JVM에 대한 private 접근과 SparkContext/RDD는 classic과 다르다.
-
-## 4. 연구 과제
-
-### 과제 A. 센서 파이프라인 설계
-
-장치 1000대가 분당 사건 하나를 보낸다. 입력은 3일 늦을 수 있고 중복된다. 원본·정제·일별 평균 테이블을 설계한다.
-
-제출할 항목은 source 위치·event ID·시간·단위 계약, schema와 불량 행 정책, partition·파일 크기 후보, streaming checkpoint·sink의 보장, input/output snapshot 기록이다.
-
-**해설 방향.** 하루 1,440,000건이지만 파일 크기는 실제 payload·포맷·압축을 측정해야 한다. 지연·중복·업무 의미를 엔진의 보장으로 대체하지 않는다.
-
-### 과제 B. 성능 가설 하나 검증
-
-동일 snapshot·SQL에서 join 또는 파일 배치 최적화를 비교하는 계획을 쓴다. 수정한 변수 하나와 결과 정확성 기준을 명시한다.
-
-**해설 방향.** Plan, task 분포, 읽기 bytes, shuffle, spill, elapsed time, 자원과 cache 조건을 기록한다. 결과를 다르게 만들고 속도만 비교하면 같은 작업의 비교가 아니다.
-
-### 과제 C. Kubernetes와 Spark 연결
-
-Driver pod 1개와 executor pod 3개를 그림에 배치한다. 각 executor가 4코어·8 GiB heap을 요청한다고 가정한다. Heap 밖 메모리와 container limit, storage 접근, service account, driver 종료와 checkpoint 보존을 설명한다.
-
-**해설 방향.** Pod와 task는 다른 단위다. Kubernetes는 자원을 배치하고 Spark는 계산을 계획한다. Container 재시작과 sink의 단 한 번 효과도 다른 계약이다.
-
-## 5. 용어사전
-
-| 용어 | 뜻 | 장 |
-| --- | --- | --- |
-| Application | Driver와 executor들로 이루어진 Spark 실행 프로그램 | 01 |
-| Driver | 사용자 흐름·계획·task 조정 주체 | 01 |
-| Executor | Task와 cache·shuffle을 처리하는 실행 프로세스 | 01 |
-| Cluster manager | Application의 실행 자원 관리자 | 01·10 |
-| JVM | Java·Scala 등의 코드를 실행하는 환경 | 00·01 |
-| PySpark | Python에서 Spark API를 쓰는 인터페이스 | 00·02 |
-| SparkSession | SQL·DataFrame·source 접근의 진입점 | 02 |
-| DataFrame | 이름과 타입을 가진 컬럼으로 계산을 표현 | 02 |
-| Schema | 컬럼 이름·타입·nullable 구조 | 02 |
-| NULL | 값 없음·알 수 없음의 표현 | 02 |
-| RDD | Lineage를 가진 분산 데이터 추상화 | 02·03 |
-| Lazy evaluation | 결과 요청 전 변환의 표현을 구성하는 실행 모델 | 03 |
-| Action | 결과 실행을 요청하는 연산 | 03 |
-| Logical plan | 무엇을 계산할지의 표현 | 03 |
-| Physical plan | 어떻게 계산할지의 실행 전략 | 03 |
-| Catalyst | Spark SQL 계획 분석·최적화 프레임워크 | 03 |
-| DAG | 순환 없는 방향 의존 그래프 | 03 |
-| Job | 실행 요청에서 생기는 병렬 계산 작업 | 03 |
-| Stage | Shuffle 등의 경계로 나뉜 task 집합 | 03 |
-| Task | Stage의 데이터 조각을 처리하는 실행 단위 | 03 |
-| Partition | 맥락에 따라 실행 조각 또는 저장 묶음 | 04·07 |
-| Shuffle | 필요한 분포로 데이터를 재분배 | 04 |
-| Exchange | 물리 계획에서 분포 변경을 나타내는 연산 | 03·04 |
-| Skew | Key·partition·task 부하의 치우침 | 04·06 |
-| Join | Key·조건으로 두 입력 행을 연결 | 05 |
-| Broadcast | 작은 입력을 task 쪽으로 전달하는 전략 | 05 |
-| AQE | Runtime 통계를 이용한 적응적 계획 조정 | 05 |
-| Heap | JVM이 객체를 관리하는 메모리 영역 | 06 |
-| Spill | 메모리 압박 시 중간 데이터를 디스크 등에 내려놓기 | 06 |
-| GC | 사용하지 않는 JVM 객체의 메모리 회수 | 01·06 |
-| Cache/Persist | 재사용할 계산 결과 보관 | 03·06 |
-| UDF | 사용자 정의 함수 | 06 |
-| Arrow | 컬럼 데이터의 메모리·교환 표현 | 06·13 |
-| Row group | Parquet 파일 내부의 행 묶음 | 07 |
-| Pushdown / Pruning | 아래 읽기 단계에 조건 전달 / 후보 제외 | 03·07 |
-| Micro-batch | 작은 입력 묶음의 반복 실행 | 08 |
-| Watermark | 늦은 데이터 처리·state 정리의 진행 기준 | 08 |
-| State | 이후 입력 처리에 필요한 누적 계산 상태 | 08 |
-| Checkpoint | 복구를 위한 진행·상태 저장 | 03·08 |
-| Idempotency | 재시도에도 원하는 효과가 중복되지 않는 성질 | 01·08 |
-| Catalog | 테이블 이름과 metadata·commit의 진입점 | 09 |
-| COW/MOR | 파일 재작성 / 읽기 시 삭제 정보 반영 | 09 |
-| Spark Connect | 논리 계획을 서버에 전달하는 분리 클라이언트 모델 | 10 |
-| Materialization | 계산 결과를 실제 저장 데이터로 만들기 | 12 |
-| Data leakage | 평가 시 알 수 없는 정보가 학습·feature에 유입 | 12 |
-
-## 6. 공식 자료 지도
-
-| 자료 | 읽을 내용 |
-| --- | --- |
-| [Spark 4.2.0 docs](https://spark.apache.org/docs/4.2.0/) | 최신 안정 릴리스의 문서 진입점 |
-| [Spark 4.0.4 docs](https://spark.apache.org/docs/4.0.4/) | 이 책의 실습 버전 |
-| [Cluster overview](https://spark.apache.org/docs/4.2.0/cluster-overview.html) | Driver·executor·task |
-| [SQL programming](https://spark.apache.org/docs/4.2.0/sql-programming-guide.html) | DataFrame·SQL |
-| [RDD programming](https://spark.apache.org/docs/4.2.0/rdd-programming-guide.html) | Lazy·lineage·RDD |
-| [SQL performance](https://spark.apache.org/docs/4.2.0/sql-performance-tuning.html) | Join·AQE·partition·통계 |
-| [Tuning](https://spark.apache.org/docs/4.2.0/tuning.html) | Memory·shuffle·직렬화 |
-| [Monitoring](https://spark.apache.org/docs/4.2.0/monitoring.html) | UI·event log |
-| [Structured Streaming](https://spark.apache.org/docs/4.2.0/streaming/index.html) | Source·state·checkpoint·sink |
-| [Spark Connect](https://spark.apache.org/docs/4.2.0/spark-connect-overview.html) | Client/server·API 경계 |
-| [Spark on Kubernetes](https://spark.apache.org/docs/4.2.0/running-on-kubernetes.html) | Pods·자원·인증·배포 |
-| [Iceberg multi-engine support](https://iceberg.apache.org/multi-engine-support/) | Runtime artifact 호환성 |
-
-## 7. 이 책에서 실행한 범위
-
-실제 실행 예제와 명령은 [11장](11-local-labs.md)에 있다. Local CPU 실습의 행 결과와 파일 round-trip을 실제 실행한 것과, 분산 클러스터·Kubernetes·Kafka·장애 실험의 설명·예상 결과를 구분한다. 최신 Spark 기능을 모든 connector에서 실행한 것으로 해석하지 않는다.
-
-[교재 처음으로](README.md) · [통합 learning 목차](../README.md)
+**풀이:** 두 문장은 Transformation Plan을 Driver에 만든다. 일반적으로 전체 입력을 읽는 Job이나 Output File Write는 아직 시작되지 않는다. 결과를 실제 Byte로 만드는 것을 물질화라고 하며 count, collect, write 같은 Action이 필요하다.
+
+cache를 호출했더라도 표시만 Lazy할 수 있다. 뒤 Action이 Partition을 계산하면서 Cache Block을 채운다. File Listing이나 Schema 추론 같은 Metadata 접근은 Action 전에도 생길 수 있으므로 "아무 I/O도 없다"로 과장하지 않는다.
+
+## 10. 문제 4 — Task 동시성과 실행 차수
+
+Executor 3개, 각 4 Core, Task당 CPU 1개, 다른 제한이 없을 때 120 Task의 최대 동시 실행 수와 최소 단순 차수는?
+
+**풀이:** 총 Core는 3×4=12이므로 약 12 Task가 동시에 실행된다. 모든 Task 시간이 같고 Scheduling Overhead가 없으면 120/12=10차수다.
+
+Task당 CPU 2개를 요청하면 동시성은 약 6이고 20차수가 된다. 실제로는 Memory, Locality, Dynamic Allocation, Skew, 실패 재시도가 있어 차수가 달라진다. Slot은 독립 Process가 아니라 이 동시성을 설명하는 편의적 표현이다.
+
+## 11. 문제 5 — Action 하나와 Job 수
+
+show 하나를 호출했으니 Spark UI에 Job이 반드시 하나여야 하는가?
+
+**풀이:** 보장할 수 없다. show는 하나의 Action이지만 Broadcast 관계를 준비하거나 내부 Subquery를 계산하는 과정, AQE 경로 때문에 여러 Job이 보일 수 있다. 반대로 좁은 Transformation 여러 개는 하나의 Job과 Stage 안에서 Pipeline될 수 있다.
+
+검증할 때 Action 수를 Job 수의 고정 공식으로 쓰지 않는다. Spark UI와 Event Log에서 Job이 어떤 SQL Execution과 Stage에 연결됐는지 확인한다.
+
+## 12. 문제 6 — Join Cardinality
+
+Events에는 S1 두 행, S2 한 행이 있고 Devices에는 S1 두 행, S2 한 행이 있다. device_id Inner Join의 행 수를 계산하고 품질 검사를 설계하라.
+
+**풀이:** S1은 왼쪽 2×오른쪽 2=4행, S2는 1×1=1행이므로 총 5행이다. Join은 같은 Key의 가능한 행 조합을 만든다.
+
+Devices가 장치당 한 행이어야 한다면 S1 중복은 기준 데이터 오류다. Join 전에 device_id별 Count가 1인지 검사하고, Join 뒤 Events의 고유 Event ID가 몇 번 나타났는지 확인한다. SQL 성공 여부는 업무 Cardinality가 맞다는 증거가 아니다.
+
+## 13. 문제 7 — Repartition과 File 수
+
+DataFrame을 repartition(4)하고 두 날짜 값으로 partitionBy("date")해 저장했다. File이 반드시 네 개인가?
+
+**풀이:** 아니다. repartition(4)은 Write 앞 실행 Partition을 네 개로 재분배하는 Plan이다. partitionBy는 저장 경로를 날짜 값별 디렉터리 또는 Table Partition으로 나누는 규칙이다. 한 Task가 여러 날짜를 가지면 날짜별 File을 만들 수 있고, AQE와 Writer 정책도 File 수에 영향을 준다.
+
+기존 원본 File도 repartition 호출만으로 바뀌지 않는다. Write Action과 Commit이 성공해야 새 File이 공개된다. 확인 항목은 실제 File 수, File별 Row와 Byte, Table Metadata다.
+
+## 14. 문제 8 — Driver OOM
+
+Executor Memory를 두 배로 늘렸지만 toPandas에서 Driver가 죽었다. 원인과 수정 방향은?
+
+**풀이:** toPandas는 분산 결과를 Driver Process로 모아 단일 Pandas DataFrame을 만든다. Executor Memory 증가는 각 Task 계산 공간을 넓히지만 Driver가 전체 결과를 담는 요구를 없애지 않는다.
+
+수정은 전체 결과를 분산 File로 쓰거나, 필요한 Aggregate만 가져오거나, 명시적 Limit와 표본을 사용하는 식으로 요구를 바꾸는 것이다. Driver Heap만 계속 키우면 Network 전송과 단일 Process 한계가 남는다.
+
+## 15. 문제 9 — 평균이 숨기는 Skew
+
+Partition 10개 중 9개가 10MiB, 하나가 910MiB다. 평균을 구하고 실행에 미치는 영향을 설명하라.
+
+**풀이:** 합계는 9×10+910=1,000MiB, 평균은 100MiB다. 평균만 보면 균등한 100MiB 10개처럼 보이지만 실제 마지막 Task는 다른 Task보다 약 91배 큰 입력을 처리한다.
+
+큰 Partition의 Task가 Stage 완료 시간을 지배하고 Memory Spill 또는 OOM을 일으킬 수 있다. Median, Max, p95 Task Duration과 Partition Byte를 보고, Key Skew라면 Salt, AQE Skew Join, 사전 집계 등 의미에 맞는 방법을 검토한다.
+
+## 16. 문제 10 — 변수와 Cache
+
+DataFrame을 변수에 넣고 count 다음 write를 호출했다. 입력은 반드시 한 번만 읽는가?
+
+**풀이:** 변수 할당은 Plan 손잡이를 저장할 뿐 Cache가 아니다. count Job이 계산한 중간 결과가 자동으로 write Job 전체에 영구 보존되지 않으므로 다시 읽을 수 있다.
+
+cache 또는 persist를 표시하고 첫 Action으로 물질화하면 두 번째 Action이 재사용할 수 있다. 그래도 Executor Loss, Eviction, Storage Level과 Plan 동일성에 따라 일부를 다시 계산할 수 있다. UI의 Storage와 Physical Plan에서 실제 재사용을 확인한다.
+
+## 17. 문제 11 — Offset Exactly-once와 업무 중복
+
+같은 event_id가 Kafka의 서로 다른 Offset 두 개에 있다. 각 Offset을 정확히 한 번 처리하면 결과 사건은 하나인가?
+
+**풀이:** 아니다. Source 처리 관점에서는 두 위치가 서로 다른 입력이므로 둘 다 한 번씩 처리된다. 업무 관점에서는 같은 사건이 재전송된 중복일 수 있다.
+
+event_id, Producer Sequence, Event Time 등으로 중복 정의를 만들고 대표 행 선택 규칙과 State Retention을 정한다. 무한히 중복을 기억할 수 없으므로 Watermark와 업무 지연 상한도 필요하다.
+
+## 18. 문제 12 — Checkpoint 삭제
+
+Streaming Checkpoint를 지우고 startingOffsets=earliest로 다시 시작했다. 이전 Query의 복구인가?
+
+**풀이:** 아니다. Offset, Commit Log, State와 Query Metadata를 잃은 새 시작이다. earliest는 보존된 과거 입력을 다시 읽으므로 기존 Sink 결과와 중복될 수 있다.
+
+복구하려면 원래 Checkpoint를 보존하고 호환되는 Runtime과 Plan으로 재시작한다. 새 Checkpoint가 필요하면 Cutover Offset, 격리 Sink, Upsert Key와 State 재구축을 설계한다.
+
+## 19. 문제 13 — SQL DELETE와 물리 Delete 표현
+
+DELETE WHERE device_id='S2'를 실행하면 반드시 Equality Delete File이 생기는가?
+
+**풀이:** 아니다. SQL은 제거할 논리 행 조건이다. Engine은 Table Property, COW/MOR Mode, Iceberg Format Version, 지원 구현에 따라 Data File Rewrite, Position Delete, Equality Delete 또는 다른 지원 표현을 선택할 수 있다.
+
+v3 Deletion Vector 지원 여부도 Runtime과 Engine 통합에 달려 있다. 결과 Snapshot의 Manifest와 File Content Type을 확인해야 실제 표현을 안다. 논리 결과와 물리 전략을 구분한다.
+
+## 20. 문제 14 — 최신 Version 조합
+
+Spark 최신 안정 Release와 Iceberg 최신 Release를 각각 설치하면 자동 호환되는가?
+
+**풀이:** 아니다. Iceberg 1.12.0 Release Page는 Spark 3.5, 4.0, 4.1 Runtime을 나열한다. Spark 4.2가 현재 Engine이어도 4.1 Runtime JAR를 공식 4.2 지원으로 간주하지 않는다.
+
+Spark Integration Suffix, Scala ABI, JDK, Python, Catalog, Storage Bundle까지 Matrix로 확인한다. Table Format v1/v2/v3 채택과 v4 개발 상태는 Product Release와 별도 축이다.
+
+## 21. 문제 15 — Classic 코드와 Spark Connect
+
+Spark Connect에서 df._jdf와 RDD를 사용하는 Classic 코드를 그대로 실행할 수 있는가?
+
+**풀이:** Connect Client는 논리 Plan을 원격 Server에 전달한다. Client Process에 Driver JVM Private Object가 있다는 가정을 할 수 없다. _jdf는 공개 호환 API가 아니며 SparkContext와 RDD 경로도 Classic과 다르다.
+
+DataFrame API 문서의 Connect 지원 표시를 확인하고, 사용자 함수가 Client와 Server 중 어디서 실행되는지, Dependency를 어디에 설치할지 정한다. 같은 메서드 이름이 보여도 Private JVM 접근까지 호환된다는 뜻은 아니다.
+
+## 22. 세 문제를 한 번에 연결하는 최종 추적
+
+P2 Executor가 KR70, JP80, US90의 Shuffle Block을 만든 뒤 사라졌다고 하자. Stage 1은 P2 Block Fetch에 실패한다. Driver는 P2의 Source Partition과 Filter·부분 집계 Lineage를 이용해 다른 Executor에 새 Attempt를 보낸다.
+
+재실행 결과는 KR70, JP80, US90이어야 한다. 현재 연산은 결정적이므로 최종 KR150, US170, JP120은 같다. 그러나 Task 안에 "API 호출 횟수 증가"가 있었다면 두 Attempt가 모두 외부 효과를 만들 수 있다. Spark가 최종 Shuffle 결과 하나를 채택해도 외부 API 상태를 되돌리지는 않는다.
+
+Writer가 F0, F1을 만든 뒤 Driver가 Commit 응답을 잃었다면 File 목록만 보고 전체 재실행하지 않는다. Sink의 Commit ID 또는 Iceberg Snapshot을 확인한다. 성공 Snapshot이 있으면 재실행은 중복 데이터를 만들 수 있고, 실패했다면 Orphan File 정리와 재시도 경로가 필요하다.
+
+작은 최종 세 행 collect는 Driver에 안전하지만 Source 전체 9행이라는 이유가 아니라 결과 크기가 작기 때문이다. Production에서 Group Key가 수억 개면 같은 코드는 위험하다.
+
+## 23. 개념을 질문으로 기억하기
+
+용어를 만났을 때 다음 다섯 질문을 답하면 서로 섞이지 않는다.
+
+1. 이것은 Process, Plan, Data Byte, Metadata, 실행 시도 중 무엇인가?
+2. Driver, Executor, Cluster Manager, Catalog, Storage 중 누가 관리하는가?
+3. Application, Job, Stage, Task, Snapshot, Retention 중 어느 수명을 갖는가?
+4. 실패하면 재계산하는가, 지속 상태에서 복구하는가, Commit 여부를 조회하는가?
+5. 행 결과의 의미와 성능 중 무엇을 바꾸는가?
+
+Partition은 Task의 실행 조각일 수도 있고 Table의 저장 분류일 수도 있다. Checkpoint는 지속 복구 상태이며 Cache는 재계산 가능한 임시 Block이다. Snapshot은 Commit된 Table 상태이고 Source File은 그 상태가 참조하는 Byte 중 하나다. 같은 단어를 외우는 대신 이 관계를 추적해야 실제 장애에서 다음 확인 위치를 찾을 수 있다.
+
+## 24. 공식 자료
+
+Driver·Executor·Task 관계는 [Spark Cluster Overview](https://spark.apache.org/docs/4.2.0/cluster-overview.html), 계획과 SQL은 [Spark SQL Guide](https://spark.apache.org/docs/4.2.0/sql-programming-guide.html), Shuffle·Memory는 [Spark Tuning Guide](https://spark.apache.org/docs/4.2.0/tuning.html), Streaming 상태는 [Structured Streaming Guide](https://spark.apache.org/docs/4.2.0/streaming/index.html)를 기준으로 했다.
+
+Iceberg Runtime 호환성은 [Multi-engine Support](https://iceberg.apache.org/multi-engine-support/), Format 상태는 [Iceberg Spec](https://iceberg.apache.org/spec/)에 근거한다.
+
+[교재 처음으로](README.md) · [통합 Learning 목차](../README.md)

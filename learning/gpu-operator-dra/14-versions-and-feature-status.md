@@ -147,7 +147,13 @@ flowchart LR
 
 최신 managed workflow의 최소 조건은 Kubernetes **1.34.2 이상**, NVIDIA driver **580 이상**, 필요한 API와 runtime 지원이다. 별도 upstream driver 문서의 넓은 최소 버전과 Operator-managed 조합의 최소 버전을 섞지 않는다.
 
-동일 클러스터에 `ClusterPolicy`와 `GPUCluster`를 동시에 두는 구성과, standalone DRA Helm release를 managed DRA와 중복 설치하는 구성은 지원되지 않는다. 기존 구성에서 `GPUCluster`로 **in-place migration도 지원되지 않는다**. 자세한 제한과 설치 경로는 [Operator 26.7 DRA 문서](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/26.7/dra-intro-install.html)와 [10장](10-deployment-compatibility-and-gitops.md)을 따른다.
+동일 클러스터에 `ClusterPolicy`와 `GPUCluster`를 동시에 두는 구성과, standalone DRA Helm release를 managed DRA와 중복 설치하는 구성은 지원되지 않는다. 기존 구성에서 `GPUCluster`로 **in-place migration도 지원되지 않는다**. 이 제한은 [Operator 26.7 공식 DRA 문서](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/26.7/dra-intro-install.html)의 지원 조건이다.
+
+이 조건을 설치의 입력과 출력으로 풀어 보자. 먼저 어떤 관리 객체가 노드의 GPU 구성요소를 원하는 상태로 유지할지 하나를 선택한다. `ClusterPolicy`는 기존 device plugin 경로의 관리 선언이고, `GPUCluster`는 Operator가 관리하는 DRA 경로의 선언이다. 기존 객체의 이름이나 `kind`만 바꾸면 이미 실행 중인 구성요소와 장치 할당까지 변환된다고 가정할 수 없다. 지원되는 이전 경로가 없다는 것은 새 관리 체계를 단순한 YAML 교체로 기존 배포에 덮어씌울 수 있다는 근거가 없다는 뜻이다.
+
+다음으로 GPU를 제어하는 호스트 드라이버와 컨테이너 런타임을 준비한다. `GPUCluster`를 만들었다고 커널 드라이버까지 그 객체가 설치하는 것은 아니다. 별도의 `NVIDIADriver` 관리 또는 사전 설치 드라이버가 그 역할을 맡는다. **CDI(Container Device Interface)**는 선택한 장치를 컨테이너에 연결할 장치 파일·마운트 등의 정보를 런타임이 읽는 형식이다. 런타임이 이를 처리할 수 있어야 DRA 드라이버의 준비 결과가 실제 컨테이너 접근으로 이어진다.
+
+마지막으로 Operator 관리 DRA와 별도 DRA Helm 배포를 중복 소유자로 만들지 않는다. **Helm release**는 차트에 정의된 Kubernetes 객체들을 특정 설치 이름으로 관리하는 배포 단위다. 별도 release가 있고 Operator도 같은 역할을 관리하면 설치 성공 메시지 하나로 구성의 지원 여부를 판단할 수 없다. 실제 사용 준비는 ResourceSlice에 장치 정보가 광고되는 단계, ResourceClaim에 할당 결과가 생기는 단계, kubelet의 `NodePrepareResources` 호출이 성공하는 단계, 런타임이 장치를 연결하는 단계, 컨테이너의 CUDA 계산이 완료되는 단계로 각각 확인한다. 앞 단계의 성공은 뒤 단계가 자동으로 성공했다는 뜻이 아니다.
 
 ## 14.4 Kubernetes 1.37의 DRA 단계
 

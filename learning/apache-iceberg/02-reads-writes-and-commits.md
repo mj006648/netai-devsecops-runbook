@@ -1,13 +1,5 @@
 # 02. 읽기·쓰기·동시성
 
-## 두 writer의 pointer 경쟁
-
-시작 pointer가 metadata v5라고 하자. W1은 data-A와 v6 후보를, W2는 data-B와 별도 v6 후보를 만든다. W1이 현재 pointer가 v5라는 조건으로 v6A를 게시한다. W2의 같은 조건은 실패한다. W2는 최신 v6A를 읽고 충돌 검사 뒤 A와 B를 포함한 v7B를 게시할 수 있다. 같은 partition overwrite처럼 논리 충돌이면 안전한 rebase가 불가능하다.
-
-100개 manifest 중 90개를, 남은 1,000개 data file 중 통계로 950개를 제외하면 50개가 task 후보다. pruning은 결과 계산이 아니다. NULL count, 잘린 bound, transform을 잘못 해석해 false negative를 만들면 정답 파일을 잃는다.
-
-commit timeout은 실패 확정이 아니므로 pointer와 operation ID를 확인한다. COW는 writer가 영향 data file을 다시 쓰고, MOR은 delete file 또는 DV를 게시해 reader가 병합한다. 엔진 command·설정·지원 기능이 전략을 선택한다.
-
 [이 책의 목차](README.md) · [이전 장](01-metadata-and-files.md)
 
 이 장에서는 `SELECT`와 `INSERT`를 내부 작업으로 펼친다. 엔진은 계산을 수행하고 Iceberg의 파일·메타데이터 규칙과 카탈로그의 커밋 경로를 사용한다.
@@ -186,6 +178,14 @@ Pointer 갱신 전에는 B와 C가 저장소에 있어도 reader의 현재 상�
 
 구체적인 설정 이름과 기본값은 [공식 설정 문서](https://iceberg.apache.org/docs/latest/configuration/)에서 해당 버전을 확인한다. “Iceberg는 항상 모든 작업에서 모든 DB의 serializable과 동일하다”거나 “엔진을 바꿔도 격리 동작이 자동 동일하다”는 가정을 피한다.
 
+## 두 writer의 pointer 경쟁
+
+시작 pointer가 metadata v5라고 하자. W1은 data-A와 v6 후보를, W2는 data-B와 별도 v6 후보를 만든다. W1이 현재 pointer가 v5라는 조건으로 v6A를 게시한다. W2의 같은 조건은 실패한다. W2는 최신 v6A를 읽고 충돌 검사 뒤 A와 B를 포함한 v7B를 게시할 수 있다. 같은 partition overwrite처럼 논리 충돌이면 안전한 rebase가 불가능하다.
+
+100개 manifest 중 90개를, 남은 1,000개 data file 중 통계로 950개를 제외하면 50개가 task 후보다. pruning은 결과 계산이 아니다. NULL count, 잘린 bound, transform을 잘못 해석해 false negative를 만들면 정답 파일을 잃는다.
+
+commit timeout은 실패 확정이 아니므로 pointer와 operation ID를 확인한다. COW는 writer가 영향 data file을 다시 쓰고, MOR은 delete file 또는 DV를 게시해 reader가 병합한다. 엔진 command·설정·지원 기능이 전략을 선택한다.
+
 ## 8. 확인 질문과 해설
 
 **질문.** 파일 B가 저장되어 있는데 조회에 나타나지 않는다. 무엇을 확인할까?
@@ -200,7 +200,7 @@ Pointer 갱신 전에는 B와 C가 저장소에 있어도 reader의 현재 상�
 
 **해설.** 아니다. 그 범위의 행이 있을 가능성만 남는다. 통계에서 존재 여부를 완전히 추론할 수 없다.
 
-## 근거와 더 읽기
+## 공식 출처
 
 원자적 교체와 동시성 설명은 [Reliability](https://iceberg.apache.org/docs/latest/reliability/), 스캔 필터는 [Performance](https://iceberg.apache.org/docs/latest/performance/), 충돌과 재시도 속성은 [Configuration](https://iceberg.apache.org/docs/latest/configuration/)을 확인한다. 표의 실행 순서와 금액은 교육용 예시다.
 

@@ -1,19 +1,13 @@
 # 00. 신호에서 프레임과 패킷까지
 
-## 추가 전체 계산: payload가 선로의 신호가 되기까지
-
-애플리케이션 payload 1,400 byte에 TCP header 20 byte와 IPv4 header 20 byte가 붙으면 IP packet은 1,440 byte다. Ethernet header 14 byte와 FCS 4 byte를 더하면 frame은 1,458 byte다. MTU 1,500은 보통 Ethernet payload인 IP packet 상한을 가리키므로 이 예는 MTU 안에 든다.
-
-선로 점유를 더 정확히 비교하려면 preamble·SFD 8 byte와 inter-packet gap에 해당하는 12 byte 시간도 고려한다. 교육용 합계는 `1458+8+12=1478 byte`, bit로 `1478×8=11,824 bit`다. 1 Gbit/s에서 순수 직렬화 시간은 `11,824/1,000,000,000≈11.824 μs`다. queue 대기, 전파, switch 처리는 포함하지 않는다.
-
-### 추가 문제 5
-
-payload가 1,480 byte이고 TCP 20, IPv4 20 byte라면 IP packet은 1,520 byte다. MTU 1,500을 20 byte 넘는다. IPv4 fragmentation 허용 여부나 TCP MSS 조정, IPv6 송신자의 packet 분할 전략을 확인해야 하며 “선로가 알아서 보낸다”고 할 수 없다.
-
 범위: 이 장은 네트워크를 처음 보는 사람이 “정보가 어떻게 전기·빛·무선 신호가 되고, 다시 bit(0 또는 1인 정보 단위), frame(한 링크의 전달 묶음), packet(여러 network를 건너는 IP 전달 묶음)으로 해석되는가”를 잡기 위한 바닥 장이다.
 뒤 장의 container network, 이름 조회, 통신 보호를 보기 전에 필요한 가장 낮은 단위를 다룬다.
 실제 PHY 칩, 광모듈, 무선 변조, Ethernet 표준의 모든 세부 구현은 훨씬 복잡하다.
 여기서는 운영자가 packet 경로와 MTU(Maximum Transmission Unit, 한 번에 실을 수 있는 네트워크 계층 단위의 크기 상한), latency(지연 시간), encapsulation(상위 계층 byte를 아래 계층 payload에 넣고 header를 덧붙이는 포장)을 이해하는 데 필요한 모델을 세운다. payload(페이로드)는 현재 계층이 운반할 내용이고, header(헤더)는 그 내용을 처리하는 데 필요한 주소·길이·순서 같은 앞부분 정보다.
+
+프로그램이 보내려는 실제 내용을 **페이로드(payload)**라고 한다. **TCP(Transmission Control Protocol)**는 데이터를 바이트의 순서가 보존되는 흐름으로 전달하기 위한 규칙이며, 송수신 상태와 순서를 표현하는 TCP 헤더를 붙인다. **IPv4(Internet Protocol version 4)**는 목적지 주소와 여러 네트워크를 건너 전달하는 규칙을 더해 **IP 패킷(packet)**을 만든다.
+
+같은 **이더넷(Ethernet)** 링크에서는 이 패킷을 이더넷 헤더와 오류 검사용 **FCS(Frame Check Sequence)**로 감싼 **프레임(frame)**을 보낸다. FCS는 받은 바이트로 계산한 검사값이 송신자가 붙인 값과 같은지 확인하는 데 쓰인다. **MTU(Maximum Transmission Unit)**는 한 번에 실을 수 있는 네트워크 계층 데이터의 크기 상한이다. 패킷, 프레임, 선로의 신호는 같은 내용이 서로 다른 단계에서 표현된 것이므로, 각 단계에서 추가되는 바이트와 처리 시간을 따로 계산한다.
 
 ```mermaid
 flowchart LR
@@ -366,6 +360,12 @@ sequenceDiagram
 | CRC가 있으니 보안상 안전하다 | CRC는 우발적 손상 검출용이지 인증이나 암호화가 아니다 |
 | OSI 7계층은 실제 커널 코드 구조와 같다 | 좋은 학습 모델이지만 구현은 더 섞여 있다 |
 
+## 한 프레임이 선로를 점유하는 시간 계산
+
+애플리케이션 payload 1,400 byte에 TCP header 20 byte와 IPv4 header 20 byte가 붙으면 IP packet은 1,440 byte다. Ethernet header 14 byte와 FCS 4 byte를 더하면 frame은 1,458 byte다. MTU 1,500은 보통 Ethernet payload인 IP packet 상한을 가리키므로 이 예는 MTU 안에 든다.
+
+선로 점유를 더 정확히 비교하려면 preamble·SFD 8 byte와 inter-packet gap에 해당하는 12 byte 시간도 고려한다. 교육용 합계는 `1458+8+12=1478 byte`, bit로 `1478×8=11,824 bit`다. 1 Gbit/s에서 순수 직렬화 시간은 `11,824/1,000,000,000≈11.824 μs`다. queue 대기, 전파, switch 처리는 포함하지 않는다.
+
 ## 16. 해설 문제
 
 ### 문제 1
@@ -410,7 +410,12 @@ IP source/destination은 일반 forwarding에서는 최종 통신 당사자를 �
 TTL 같은 IP header 일부는 바뀔 수 있다.
 Ethernet source/destination MAC은 링크마다 새로 붙으므로 hop마다 바뀐다.
 
-## 17. 1차 출처와 더 읽기
+### 문제 5: MTU를 넘는 입력
+
+
+payload가 1,480 byte이고 TCP 20, IPv4 20 byte라면 IP packet은 1,520 byte다. MTU 1,500을 20 byte 넘는다. IPv4 fragmentation 허용 여부나 TCP MSS 조정, IPv6 송신자의 packet 분할 전략을 확인해야 하며 “선로가 알아서 보낸다”고 할 수 없다.
+
+## 17. 공식 출처
 
 - IPv4 datagram, routing, TTL, checksum, IP의 비신뢰성: [RFC 791](https://www.rfc-editor.org/rfc/rfc791.html)
 - IP over Ethernet, Ethernet data field, padding, IPv4 EtherType, 1500 octet IP datagram: [RFC 894](https://www.rfc-editor.org/rfc/rfc894.html)

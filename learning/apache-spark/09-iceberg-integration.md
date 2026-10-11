@@ -1,316 +1,345 @@
-# 09. Spark와 Iceberg를 함께 읽는 법
+# 09. Spark와 Iceberg: SQL 한 줄이 Snapshot Commit이 되는 전 과정
 
-## SQL에서 snapshot commit까지
+[이전: Structured Streaming](08-structured-streaming.md) · [목차](README.md) · [다음: 배포와 Spark Connect](10-deployment-and-connect.md)
 
-Spark는 SQL을 계획하고 task를 실행하는 엔진이고 Iceberg는 파일 집합·schema·history를 metadata로 관리하는 table format이다. catalog는 이름을 metadata JSON에 연결하고 snapshot은 manifest list, manifest, data/delete file을 잇는다. Spark plan은 driver memory, task batch는 executor memory, Iceberg metadata와 Parquet는 저장소에 있다.
+Spark와 Iceberg는 모두 데이터를 다루지만 같은 종류의 시스템이 아니다. Spark는 SQL을 분석하고 CPU에서 Task를 실행하는 **계산 엔진**이다. Iceberg는 여러 Data File을 하나의 Table 상태로 묶고 Schema, Snapshot, 삭제와 Commit 규칙을 정하는 **테이블 포맷**이다. Parquet은 각 File 내부의 행과 열 Byte를 배치하는 **파일 형식**이다. Catalog는 Table 이름을 현재 Iceberg Metadata 위치에 연결하는 **이름·Commit 경계**다.
 
-snapshot 50의 data-A=(KR10,US20,KR30), data-B=(JP40,KR50,US60)을 읽으면 Spark 집계는 KR90,US80,JP40이다. manifest 통계로 다른 18파일을 제외했다 해도 A와 B 내부 행 filter는 남는다.
-
-DELETE amount=20을 COW로 실행하면 A를 읽어 KR10,KR30인 새 C를 쓰고 snapshot 51이 C와 B를 가리킨다. MOR라면 A를 유지하고 position/equality delete 또는 지원 DV를 게시해 reader가 병합한다. SQL equality 조건이 equality-delete 파일을 보장하지 않으며 engine·property·format version이 전략을 고른다.
-
-task upload와 catalog pointer commit은 다른 사건이다. 동시 writer가 먼저 commit하면 append는 충돌 검사 뒤 rebase할 수 있지만 겹친 overwrite는 실패할 수 있다. timeout은 성공 여부 불확실이므로 snapshot을 확인한다.
-
-### 완전 풀이 문제 5개
-1. 초기 KR 합은? **해설:** 10+30+50=90이다.
-2. COW 뒤 A는 현재인가? **해설:** C로 교체됐다면 아니다.
-3. MOR reader 책임은? **해설:** data와 적용 delete를 병합한다.
-4. upload 성공이 commit인가? **해설:** catalog 게시가 남았다.
-5. v3면 과거 position delete를 무시하는가? **해설:** 혼재 reader가 기존 파일도 읽어야 한다.
-
-[이 책 목차](README.md) · [이전: Structured Streaming](08-structured-streaming.md) · [다음: 배포와 Spark Connect](10-deployment-and-connect.md)
-
-Spark와 Iceberg를 처음 함께 쓰면 이름이 모두 “데이터 시스템”처럼 보여 역할이 섞이기 쉽다. 이 장의 목표는 SQL 한 줄이 어느 계층을 지나 어떤 파일과 메타데이터를 바꾸는지 설명하는 것이다. Iceberg 내부 형식의 자세한 설명은 [별도 Iceberg 교재](../apache-iceberg/README.md)에 맡기고, 여기서는 Spark가 그 형식을 어떻게 사용하는지에 집중한다.
+이 장은 SELECT와 DELETE가 이 네 계층을 어떻게 통과하는지 파일과 숫자로 끝까지 추적한다. 별도 교재를 보라는 문장으로 핵심 원리를 넘기지 않는다.
 
 ![Spark가 Iceberg 테이블을 읽고 쓰는 흐름](assets/iceberg-write.svg)
 
-## 1. 네 가지 역할부터 분리한다
+## 1. 객체가 존재하는 위치와 수명
 
-| 구성 요소 | 맡는 일 | 맡지 않는 일 |
-| --- | --- | --- |
-| Spark 엔진 | SQL 분석, 실행 계획 작성, task 분배, 파일 읽기·쓰기 | 테이블의 영구 이력 자체가 되지는 않음 |
-| Iceberg 테이블 포맷 | snapshot, schema, partition, data/delete file 관계와 commit 규칙 정의 | CPU·메모리를 배정해 쿼리를 실행하지 않음 |
-| Parquet 파일 | 실제 행을 columnar 형식으로 저장 | 어떤 파일이 현재 테이블에 속하는지 결정하지 않음 |
-| Catalog | `prod.sales.orders` 같은 이름을 현재 Iceberg metadata 위치로 연결 | SQL join 순서나 executor 수를 결정하지 않음 |
+| 객체 | 실제 위치 | 관리자 | 수명 |
+|---|---|---|---|
+| SQL 문자열 | Client 또는 Driver Memory | 사용자 프로그램 | 요청이 분석될 때까지 |
+| Logical/Physical Plan | Driver Memory | Spark | Query 실행 동안 |
+| Task와 Attempt | Driver 상태·Executor Thread | Spark Scheduler | Partition 계산 동안 |
+| Catalog 이름 연결 | Catalog Service 또는 Metadata Store | Catalog 구현 | Table이 존재하는 동안 |
+| Table Metadata JSON | Object/File Storage | Iceberg Writer와 Catalog | Retention으로 정리될 때까지 |
+| Snapshot | Metadata 안의 Table 상태 참조 | Iceberg | 만료되기 전까지 |
+| Manifest List와 Manifest | Storage의 Metadata File | Iceberg | 참조 Snapshot과 보존 정책에 따라 |
+| Data File | Storage의 Parquet/Avro/ORC | Writer | Snapshot이 참조하고 정리 전까지 |
+| Delete File 또는 DV | Storage | Writer와 Reader | 적용 대상과 Snapshot 보존에 따라 |
 
-**엔진**은 계산을 수행하는 프로그램이고 **테이블 포맷**은 파일 집합을 테이블로 해석하는 계약이다. **파일 형식**은 각 파일 내부의 byte 배치를 정의하며, **catalog**는 이름을 테이블 metadata로 해석한다.
+**Metadata JSON**은 Table의 Schema, Partition Spec, 속성, Snapshot 목록과 현재 Snapshot 같은 정보를 담는 파일이다. **Manifest List**는 한 Snapshot이 사용하는 Manifest들을 나열한다. **Manifest**는 Data File이나 Delete File 항목, Partition 값과 통계를 담는다. 이 계층 덕분에 Reader는 Storage 전체를 무작정 Listing하지 않고 현재 Snapshot의 File 후보를 찾는다.
 
-```mermaid
-flowchart LR
-    U["사용자 SQL"] --> S["Spark parser와 optimizer"]
-    S --> I["Iceberg Spark integration"]
-    I --> C["Catalog: 이름을 metadata로 해석"]
-    I --> M["Iceberg snapshot과 manifest"]
-    M --> P["Parquet data files"]
-    M --> D["delete file 또는 Puffin DV"]
-```
+Data File이 Storage에 존재한다는 사실만으로 현재 Table 소속은 아니다. 현재 Metadata→Snapshot→Manifest 경로가 그 File을 참조해야 한다. 반대로 과거 File이 남아 있어도 현재 Snapshot이 참조하지 않으면 현재 SELECT 결과에 자동으로 포함되지 않는다.
 
-`SELECT * FROM prod.sales.orders`를 실행할 때 Spark는 파일 이름을 추측하지 않는다. `prod` catalog에서 `sales.orders`를 찾고, 현재 metadata와 snapshot을 따라가며 읽을 data/delete file을 계획한다. 이 계층 구조는 Iceberg [Spark configuration](https://iceberg.apache.org/docs/latest/spark-configuration/)과 [Table specification](https://iceberg.apache.org/spec/)에 정의되어 있다.
+## 2. 실행 조합은 실제 Runtime Artifact로 고정한다
 
-## 2. 실행 조합은 네 숫자를 함께 고정한다
+이 책의 교육용 검증 기준선은 다음 조합이다.
 
-이 책의 실제 검증 기준선은 다음과 같다.
+| 축 | 값 |
+|---|---|
+| PySpark Engine | 4.0.4 |
+| Java | 21 |
+| Scala Binary ABI | 2.13 |
+| Iceberg Product | 1.12.0 |
+| Runtime Artifact | iceberg-spark-runtime-4.0_2.13:1.12.0 |
 
-| 항목 | 고정값 |
-| --- | --- |
-| PySpark | `4.0.4` |
-| Scala binary | `2.13` |
-| Java | `21` |
-| Iceberg | `1.12.0` |
-| runtime artifact | `org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.12.0` |
+Iceberg 1.12.0은 2026-09-29 발표되었다. 공식 Release Page는 Spark 3.5, 4.0, 4.1용 Runtime을 나열하지만 Spark 4.2용 Artifact는 나열하지 않는다. Spark 4.2 문서에 Iceberg 관련 새 Metric이 보여도 Iceberg 1.12.0의 4.1 JAR를 공식 4.2 Runtime이라고 단정할 수 없다. Engine 기능과 Connector Integration 지원은 별도 축이다.
 
-2026-10-09 현재 Spark의 최신 안정 계열은 4.2.0이지만, Iceberg 1.12.0 공식 지원표에는 Spark 3.5, 4.0, 4.1 integration이 있고 4.2 runtime artifact는 없다. 따라서 “각 프로젝트의 최신 버전”을 조합하면 된다고 생각하면 안 된다. 실제 지원 artifact가 있는 조합을 고른다. 근거는 Spark [4.2.0 release](https://spark.apache.org/releases/spark-release-4-2-0.html), Iceberg [1.12.0 release](https://iceberg.apache.org/blog/apache-iceberg-1.12.0-release/), [multi-engine support](https://iceberg.apache.org/multi-engine-support/)에서 확인한다.
-
-다음은 읽기용 고정 설정 예시다. 의존성을 내려받는 명령이므로 이 문서에서는 실행하지 않는다.
-
-```text
+~~~text
 spark-submit \
   --packages org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.12.0 \
   app.py
-```
+~~~
 
-```text
-# 문서 예시: 실행 환경에는 해당 Iceberg JAR가 먼저 있어야 한다.
-from pyspark.sql import SparkSession
+이 명령은 Dependency Download가 가능한 환경을 전제로 한 예시이며 이 원고 작성 과정에서 실행하지 않았다. 운영에서는 Artifact Hash, Repository, Storage Bundle과 Classpath 중복을 고정한다.
 
-spark = (
-    SparkSession.builder
-    .appName("iceberg-reader")
-    .master("local[2]")
-    .config(
-        "spark.sql.extensions",
-        "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
-    )
-    .config("spark.sql.catalog.lab", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.lab.type", "hadoop")
-    .config("spark.sql.catalog.lab.warehouse", "/tmp/iceberg-warehouse")
-    .getOrCreate()
-)
-```
+## 3. SQL 이름에서 현재 Snapshot까지
 
-`IcebergSparkSessionExtensions`는 Iceberg의 행 변경 SQL과 procedure 같은 확장을 Spark에 연결한다. `SparkCatalog`는 Spark catalog API 요청을 Iceberg catalog 작업으로 바꾼다. 운영에서는 `/tmp`가 아니라 지속 저장소와 적절한 catalog를 사용한다.
+다음 SQL을 실행한다고 하자.
 
-이 `/tmp` HadoopCatalog 구성은 한 프로세스 교육용이며 여러 writer의 동시 commit 안전성을 검증한 구성이 아니다.
+~~~sql
+SELECT country, SUM(amount) AS total
+FROM prod.sales.orders
+WHERE amount >= 20
+GROUP BY country
+~~~
 
-## 3. 이름은 어떻게 실제 테이블이 되는가
+prod는 SparkSession에 등록된 Catalog 이름, sales는 Namespace, orders는 Table 이름이다. 처리 순서는 다음과 같다.
 
-`lab.analytics.events`는 세 부분 이름이다.
+1. Spark Parser가 SQL을 관계 연산 표현으로 바꾼다.
+2. Analyzer가 prod.sales.orders를 Catalog에 조회한다.
+3. Iceberg Catalog 구현이 현재 Table Metadata 위치를 돌려준다.
+4. Iceberg Integration이 Metadata JSON의 현재 Snapshot을 찾는다.
+5. Snapshot이 Manifest List를, Manifest List가 Manifest들을 가리킨다.
+6. Manifest의 Partition 값과 Column 통계로 읽지 않아도 되는 File을 제외한다.
+7. 남은 Data/Delete File을 Spark Input Partition으로 계획한다.
+8. Driver가 Stage와 Task를 만들고 Executor가 File을 읽는다.
+9. Reader가 적용 가능한 Delete를 병합한 논리 행에 Filter와 Aggregate를 수행한다.
+10. 최종 결과 일부가 Driver 또는 다음 Sink로 전달된다.
 
-- `lab`: Spark session에 등록된 catalog 이름
-- `analytics`: namespace
-- `events`: table 이름
-
-```mermaid
+~~~mermaid
 sequenceDiagram
-    participant Q as "Spark SQL"
-    participant C as "lab catalog"
-    participant T as "Iceberg TableOperations"
-    participant O as "Object storage"
-    Q->>C: "analytics.events 식별"
-    C->>T: "현재 metadata 위치 요청"
-    T->>O: "metadata JSON과 manifest 읽기"
-    O-->>Q: "읽을 파일과 통계 반환"
-```
+    participant U as Client
+    participant D as Spark Driver
+    participant C as Catalog
+    participant M as Iceberg Metadata
+    participant E as Executors
+    U->>D: SQL 제출
+    D->>C: prod.sales.orders 조회
+    C-->>D: current metadata 위치
+    D->>M: snapshot·manifest 읽기
+    M-->>D: scan file 후보와 통계
+    D->>E: input partition별 task
+    E->>M: data/delete file 읽기
+    E-->>D: 집계 결과와 상태
+    D-->>U: 결과 응답
+~~~
 
-Iceberg의 Spark integration은 Hadoop, Hive, REST, Glue, JDBC, Nessie 등의 catalog 구성을 지원한다. 이름은 비슷해도 동시 commit, 인증, 잠금 또는 원자적 pointer 갱신 방식이 다르므로 backend 문서를 함께 읽는다. 구성 종류는 공식 [Spark configuration](https://iceberg.apache.org/docs/latest/spark-configuration/)에 정리되어 있다.
+Catalog가 Table을 찾았다고 Data File 접근이 보장되는 것은 아니다. Driver는 Metadata를 읽을 수 있지만 Executor Credential이 Data Prefix를 읽지 못하면 Task에서 실패할 수 있다.
 
-REST catalog 예시는 다음과 같다.
+## 4. Snapshot 50 읽기를 숫자로 추적한다
 
-```text
-spark.sql.catalog.prod=org.apache.iceberg.spark.SparkCatalog
-spark.sql.catalog.prod.type=rest
-spark.sql.catalog.prod.uri=https://catalog.example.internal
-spark.sql.catalog.prod.warehouse=analytics
-```
+Snapshot 50의 현재 Data File이 다음과 같다고 하자.
 
-이 예시는 자격 증명과 TLS 설정을 생략했다. 실제 값은 catalog 운영자가 제공해야 한다.
+| File | 물리 행 |
+|---|---|
+| data-A.parquet | (KR,10), (US,20), (KR,30) |
+| data-B.parquet | (JP,40), (KR,50), (US,60) |
 
-## 4. SQL 조건과 delete file 형식을 혼동하지 않는다
+Manifest 통계가 다른 18개 File의 amount 최대값이 20 미만임을 보여 줘 제외했다고 하자. 이를 **File Pruning**이라고 한다. A와 B는 amount 범위가 조건과 겹치므로 Reader가 연다.
 
-```sql
-DELETE FROM lab.analytics.events
-WHERE customer_id = 7;
-```
+Filter amount>=20 뒤 A에는 US20, KR30이 남고 B의 세 행은 모두 남는다. Partition별 부분 합은 다음과 같다.
 
-여기서 `customer_id = 7`은 사용자가 원하는 **논리 조건**이다. 이 SQL을 썼다고 반드시 equality delete file이 생기는 것은 아니다. Spark와 Iceberg integration은 테이블 설정, 포맷 버전, 실행 계획에 따라 data file rewrite, position delete, deletion vector 등을 선택할 수 있다.
+| Task 입력 | 부분 합 |
+|---|---|
+| A | US=20, KR=30 |
+| B | JP=40, KR=50, US=60 |
 
-| 층 | 질문 | 예시 |
-| --- | --- | --- |
-| SQL | 어떤 행을 결과에서 없앨까? | `customer_id = 7` |
-| write mode | 기존 data file을 다시 쓸까? | COW 또는 MOR |
-| delete 표현 | MOR 삭제를 물리적으로 어떻게 기록할까? | v2 position/equality delete, v3 DV |
+Shuffle 뒤 최종 합은 KR=80, US=80, JP=40이다. 원문 첫 설명의 KR90은 Filter 이전 KR 10+30+50 합이다. amount>=20 조건이 있는 Query 결과라면 KR10이 제거되어 KR80이다. 조건 없는 집계에서는 KR90이다. 조건과 결과 숫자를 함께 기록해야 한다.
 
-Spark의 `DELETE`, `UPDATE`, `MERGE` 동작은 Iceberg [Spark writes](https://iceberg.apache.org/docs/latest/spark-writes/)에 설명되어 있고, delete 형식 자체는 [Iceberg 교재 05장](../apache-iceberg/05-format-v1-v2.md)과 [06장](../apache-iceberg/06-format-v3.md)에서 더 자세히 다룬다.
+Manifest 통계로 18개 File을 제외해도 A와 B 안에서 조건 평가가 남을 수 있다. File 통계는 "이 File에는 조건을 만족할 행이 절대 없다"를 증명해 제외할 수 있지만, 후보 File의 모든 행이 반드시 조건을 만족한다고 일반화할 수 없다.
 
-## 5. COW와 MOR은 작업별 설정이다
+## 5. Delete SQL과 물리 삭제 표현
 
-Iceberg의 Spark write property는 delete, update, merge마다 따로 있다. 기본값은 `copy-on-write`다.
+~~~sql
+DELETE FROM prod.sales.orders
+WHERE amount = 20
+~~~
 
-```sql
-ALTER TABLE lab.analytics.events SET TBLPROPERTIES (
-  'write.delete.mode' = 'merge-on-read',
-  'write.update.mode' = 'merge-on-read',
-  'write.merge.mode' = 'copy-on-write'
-);
-```
+amount=20은 제거할 논리 행 조건이다. 어떤 물리 File이 만들어지는지는 Table Format, 작업별 Write Mode, Engine Integration과 조건 범위에 달려 있다.
 
-| 작업 | property | 기본값 |
-| --- | --- | --- |
-| `DELETE` | `write.delete.mode` | `copy-on-write` |
-| `UPDATE` | `write.update.mode` | `copy-on-write` |
-| `MERGE INTO` | `write.merge.mode` | `copy-on-write` |
+| 층 | 결정 내용 |
+|---|---|
+| SQL 조건 | 어떤 논리 행을 삭제할지 |
+| Scan/Validation | 어느 Data File과 Row가 영향받는지 |
+| COW/MOR Mode | Data File을 Rewrite할지 Delete 정보를 추가할지 |
+| v2/v3 표현 | Position/Equality Delete 또는 DV 등 지원 표현 |
+| Commit | 새 상태를 Snapshot으로 공개할지 |
 
-COW는 영향받은 data file을 읽고 살아남은 행으로 새 파일을 만든다. MOR는 기존 data file을 유지하고 삭제 정보를 추가한 뒤 reader가 합쳐 읽는다. 전체 partition이나 data file이 조건에 완전히 포함되면 metadata에서 그 파일 참조를 제거하는 최적화가 가능하므로 “DELETE 한 번은 delete file 한 개”라는 계산은 맞지 않는다. property 기본값은 공식 [Configuration](https://iceberg.apache.org/docs/latest/configuration/)에서 확인한다.
+DELETE 조건이 customer_id=7이라는 Equality 조건이어도 Equality Delete File 생성을 보장하지 않는다. Engine은 Position 기반 결과를 만들거나 COW Rewrite를 할 수 있다. 사용자는 Metadata Table과 Manifest Entry를 보고 실제 생성물을 확인해야 한다.
 
-```mermaid
-flowchart TD
-    X["DELETE / UPDATE / MERGE"] --> P{"해당 작업의 write mode"}
-    P -->|"copy-on-write"| C["영향 data file을 새 파일로 rewrite"]
-    P -->|"merge-on-read"| V{"Iceberg format과 엔진 지원"}
-    V -->|"v2"| D["position 또는 equality delete 경로"]
-    V -->|"v3"| B["position 삭제를 Puffin DV로 표현 가능"]
-    C --> N["새 snapshot commit"]
-    D --> N
-    B --> N
-```
+## 6. COW 전체 Trace
 
-v3라고 모든 변경이 DV가 되는 것도 아니다. COW라면 data file을 다시 쓰며, 파일 전체 삭제는 metadata-only가 될 수 있다. 실제 생성물을 확인하려면 SQL 문장보다 metadata table을 본다.
+**COW, Copy-on-Write**는 영향을 받은 기존 Data File을 읽고 삭제·수정 결과를 반영한 새 Data File을 쓰는 방식이다. 기본 Write Property는 Delete, Update, Merge별로 copy-on-write다.
 
-## 6. 읽기는 논리 테이블과 물리 파일을 함께 해석한다
+Snapshot 50에서 data-A의 US20을 삭제한다고 하자.
 
-`SELECT` 결과에는 현재 snapshot에서 유효한 data file 행만 나타난다. 과거 snapshot이 참조하는 옛 Parquet 파일이 저장소에 남아 있어도 현재 쿼리는 그것을 자동으로 합치지 않는다. 반대로 MOR의 현재 data file에는 논리적으로 삭제된 row byte가 남을 수 있으며 reader가 delete 정보를 적용한다.
+1. Driver가 A가 영향받는 File임을 계획한다.
+2. Executor Task가 A의 세 행을 읽는다.
+3. amount=20인 US20을 제거한다.
+4. 살아남은 KR10, KR30을 data-C.parquet에 쓴다.
+5. Writer가 새 Manifest와 Metadata 후보를 만든다.
+6. Commit이 성공하면 Snapshot 51은 C와 B를 현재 File로 참조한다.
+7. A는 Storage에 당장 남을 수 있지만 Snapshot 51의 현재 Data File은 아니다.
+8. 과거 Snapshot 50을 보존하는 동안 Time Travel이 A를 필요로 할 수 있다.
 
-```text
-논리 결과 = 현재 snapshot의 data rows
-          - 적용 가능한 delete rows
-          + 같은 snapshot에서 추가된 rows
-```
+COW의 읽기는 새 Data File만 읽으면 되어 단순할 수 있다. Write는 A의 삭제되지 않은 행까지 복사하므로 큰 File에서 한 행 삭제도 많은 Byte를 Rewrite할 수 있다. Spark 4.2 이상의 Iceberg Integration 문서에는 삭제 행과 COW에서 복사한 행 수 Summary Metric이 설명되지만, 그 문서 기능과 Iceberg 1.12.0의 공식 Spark 4.2 Runtime 지원 여부를 섞지 않는다.
 
-따라서 객체 저장소에서 `*.parquet`를 직접 glob하여 읽는 코드는 Iceberg 테이블 읽기와 다르다.
+## 7. MOR, v2 Delete File과 적용 조건
 
-```text
-# Iceberg metadata와 delete를 적용하는 테이블 읽기
-df = spark.table("lab.analytics.events")
+**MOR, Merge-on-Read**는 기존 Data File을 유지하고 삭제 정보를 별도로 Commit한 뒤 Reader가 읽을 때 두 정보를 합치는 방식이다. v2 이상에서 Write Mode를 merge-on-read로 설정할 수 있다.
 
-# 단순 Parquet glob: Iceberg 테이블의 현재 상태를 보장하지 않는다.
-raw = spark.read.parquet("/warehouse/analytics/events/data/*.parquet")
-```
+**Position Delete**는 Data File 경로와 0부터 시작하는 물리 Row Position을 기록한다. A의 두 번째 물리 행 US20은 Position 1이다.
 
-## 7. schema와 partition evolution은 ID와 변환으로 읽는다
+~~~text
+(file_path="data-A.parquet", pos=1)
+~~~
 
-Iceberg는 column 이름만이 아니라 field ID로 schema를 추적한다. 이름을 바꾸어도 같은 field ID라면 과거 파일의 열과 연결할 수 있다. partition evolution에서는 과거 파일과 새 파일이 서로 다른 partition spec을 사용할 수 있고, Spark reader는 각 파일의 spec을 이용해 계획한다. 자세한 내부 규칙은 [Iceberg 교재 03장](../apache-iceberg/03-schema-and-partition-evolution.md)을 본다.
+이 Delete는 data-B의 Position 1에 적용되지 않는다. File 경로와 Position의 쌍이 대상이다. File을 Rewrite해 Row 순서가 바뀌면 이전 Position을 새 File에 그대로 적용하지 않는다.
 
-```sql
-ALTER TABLE lab.analytics.events RENAME COLUMN payload TO event_payload;
+**Equality Delete**는 Field ID와 값의 조합으로 삭제 후보를 표현한다. customer_id Field ID 4의 값 7이라면 적용 범위와 Sequence 조건을 만족하는 Data File의 해당 값 행을 제거한다. 단순히 열 이름 문자열이 같은지만 보는 것이 아니다. Partition과 Data/Delete Sequence Number가 어떤 Data File에 적용되는지 제한한다.
 
-ALTER TABLE lab.analytics.events
-ADD PARTITION FIELD days(event_time);
-```
+MOR Reader의 결과는 다음 관계로 생각할 수 있다.
 
-사용자는 원래 열 조건을 작성한다.
+~~~text
+논리 행 = 현재 Snapshot의 Data 행
+        - 그 Data File에 적용되는 Position/Equality Delete
+~~~
 
-```sql
-SELECT event_id, event_payload
-FROM lab.analytics.events
-WHERE event_time >= TIMESTAMP '2026-10-01 00:00:00';
-```
+Delete File이 작아 보여도 Reader가 많은 Delete를 병합하면 Read Cost가 커질 수 있다. Rewrite Maintenance로 Delete를 Data File에 반영하는 이유다.
 
-Iceberg 통합은 partition 값과 file 통계로 읽을 파일을 줄이고, Parquet reader는 필요한 column과 row group을 더 줄일 수 있다. 이를 각각 partition pruning, file pruning, column pruning, predicate pushdown이라고 부른다. 필터가 있다고 항상 파일을 0 byte만 읽는 것은 아니며 통계·변환·지원 연산에 따라 범위가 달라진다. Spark의 계획은 `EXPLAIN`, Iceberg의 실제 선택 파일은 metadata table과 실행 metric으로 확인한다.
+## 8. v3 Deletion Vector와 Puffin
 
-## 8. 현재 파일을 관찰하는 metadata SQL
+Iceberg v3의 **Deletion Vector, DV**는 한 Data File의 삭제된 Row Position을 Bitmap으로 표현한다. Position P의 Bit가 1이면 그 File의 P번째 Row가 삭제되었다는 뜻이다. Position Delete의 의미를 File별 Bitmap으로 압축해 찾을 수 있다.
 
-```sql
-SELECT file_path, file_format, record_count, file_size_in_bytes
-FROM lab.analytics.events.files
-ORDER BY file_path;
+DV Blob은 **Puffin** 파일에 저장된다. Puffin은 Parquet보다 가벼운 대체 Data File 형식이 아니다. Table Data 행을 Column으로 저장하는 Parquet과 목적이 다르다. Puffin은 Manifest에 직접 넣기 어려운 Index, Statistics, DV 같은 Blob과 그 Blob을 해석할 Metadata를 담는 Container 형식이다.
 
-SELECT committed_at, snapshot_id, operation, summary
-FROM lab.analytics.events.snapshots
-ORDER BY committed_at DESC;
+Puffin 구조는 개념적으로 다음과 같다.
 
-SELECT content, file_path, record_count, equality_ids
-FROM lab.analytics.events.entries;
-```
+~~~text
+Magic | Blob1 | Blob2 | ... | Footer
+~~~
 
-`files`는 현재 snapshot의 파일 관찰에 유용하고, `snapshots`는 commit 이력을 보여 준다. `entries`의 실제 schema는 포맷과 버전에 따라 달라질 수 있으므로 `DESCRIBE`로 먼저 확인한다. 목록은 공식 [Spark queries](https://iceberg.apache.org/docs/latest/spark-queries/)를 따른다.
+Footer는 각 Blob의 Type, Offset, Length와 속성을 설명한다. deletion-vector-v1 Blob의 속성에는 적용 대상 Data File 위치와 Cardinality가 포함된다. 하나의 Puffin File에 여러 DV Blob이 들어갈 수 있고, Manifest Entry는 Puffin File Path뿐 아니라 해당 Blob의 Content Offset과 Size를 가리킨다.
 
-고수준 `spark.table(...).show()`는 논리 결과를 보여 준다. metadata table과 저장소 listing은 물리 상태를 조사하는 수단이다. 둘의 행 수가 같아야 한다는 기대를 하지 않는다.
+A의 Position 1만 삭제하면 A용 DV Bitmap에서 Bit 1이 켜진다. Reader는 A를 읽을 때 그 DV를 찾아 Position 1을 제외한다. 다른 Data File에는 적용하지 않는다.
 
-## 9. procedure는 테이블 유지보수 작업이다
+v3에서 Position Delete File은 Deprecated다. 그렇다고 v3 Reader가 과거 v2 Position Delete를 무시한다는 뜻은 아니다. Table Upgrade 전부터 있던 Delete를 계속 읽어야 혼재 Table의 결과가 유지된다. 새 Write가 항상 DV를 만드는 것도 아니다. COW, File 전체 Metadata Delete, Integration 지원과 작업 설정에 따라 경로가 달라진다.
 
-```sql
-CALL lab.system.rewrite_data_files(
-  table => 'analytics.events',
+## 9. File 전체 조건과 Metadata-only Delete
+
+DELETE 조건이 Partition 전체 또는 Data File 전체를 확실히 포함하면 행을 하나씩 읽고 Rewrite하지 않고 Manifest에서 File 참조를 제거할 수 있다. 이를 **Metadata-only Delete**라고 부른다.
+
+예를 들어 Table이 event_date로 Partition되어 있고 2026-09-01 Partition 전체를 삭제하는 조건이 정확히 일치한다면 해당 Partition File Entry를 새 Snapshot에서 제거할 수 있다. 실제 가능 여부는 Partition Transform과 조건 변환, 통계 신뢰성에 달려 있다.
+
+따라서 DELETE 한 번을 다음처럼 고정 계산하면 틀린다.
+
+- 항상 새 Data File 하나
+- 항상 Delete File 하나
+- 항상 Puffin 하나
+- 항상 기존 File 즉시 삭제
+
+실제 Snapshot Summary, files, entries, manifests Metadata Table을 확인한다.
+
+## 10. Write Task에서 Snapshot Commit까지
+
+Append 또는 Rewrite Write의 전체 흐름은 다음과 같다.
+
+1. Driver가 Table의 기준 Metadata A와 Snapshot ID를 읽는다.
+2. Physical Plan이 필요한 Shuffle과 Writer Task를 만든다.
+3. Executor가 새 Data/Delete File을 Storage에 Upload한다.
+4. Task Commit Message가 File Path, Count, Size, Metric을 Driver에 보낸다.
+5. Driver의 Iceberg Writer가 결과를 모아 Manifest와 새 Metadata B를 준비한다.
+6. Commit 전에 기준 Snapshot 이후 변경과 작업 조건의 충돌을 검증한다.
+7. Catalog에 "현재가 여전히 A이면 B로 교체"하는 원자적 갱신을 요청한다.
+8. 성공하면 새 Snapshot이 독자에게 한 번에 보인다.
+9. 실패하면 안전한 경우 최신 Metadata에 Rebase해 재검증하고 Commit을 다시 시도한다.
+10. 재시도 불가능한 충돌이면 Operation을 Abort한다.
+
+7번은 **Compare-and-Swap, CAS**처럼 Expected Current Pointer와 New Pointer를 비교·교체하는 원리다. Catalog마다 Lock, Version Token, Database Transaction 등 실제 구현은 다르지만 중간 Table 상태가 현재로 노출되지 않게 해야 한다.
+
+Task Upload 성공은 Commit 성공이 아니다. 반대로 Commit은 성공했지만 응답 Network가 끊겨 Driver가 실패로 볼 수도 있다. 이때 같은 Append를 즉시 다시 실행하면 중복될 수 있다.
+
+## 11. 동시 Writer와 검증
+
+Writer W1과 W2가 모두 Metadata A에서 시작했다고 하자.
+
+~~~mermaid
+sequenceDiagram
+    participant W1 as Writer 1
+    participant W2 as Writer 2
+    participant C as Catalog
+    W1->>C: expected A, publish B
+    C-->>W1: success
+    W2->>C: expected A, publish C
+    C-->>W2: current is B, conflict
+    W2->>W2: refresh + validate + retry 또는 abort
+~~~
+
+두 Writer가 서로 다른 새 Partition에 Append했다면 W2가 B를 기준으로 자기 새 File을 다시 적용해 안전하게 Commit할 수 있을 수 있다. 이를 **Rebase**라고 한다. W1이 W2가 Rewrite하려던 같은 File을 바꿨다면 W2의 계획은 오래된 입력에 기반하므로 Validation이 실패해야 한다.
+
+**Serializable Isolation**에서는 Operation의 조건과 겹치는 동시 변경을 검증해 마치 어떤 직렬 순서로 실행된 것처럼 결과를 보호한다. Snapshot Isolation은 검증 범위가 다를 수 있다. Property 이름만 바꾸기 전에 삭제·Update의 업무 충돌 의미를 정해야 한다.
+
+## 12. Abort와 고아 File
+
+Commit이 실패하면 Writer는 자기 새 File을 삭제하려고 Abort Cleanup을 수행할 수 있다. 그러나 Executor가 Upload한 뒤 Driver가 죽거나 Network가 끊기면 모든 File을 정확히 추적·삭제하지 못할 수 있다.
+
+**Orphan File, 고아 파일**은 Storage에 존재하지만 어떤 유효 Snapshot Metadata에서도 참조되지 않는 File이다. Table 결과에는 포함되지 않지만 비용을 차지한다. 모든 현재 File을 Orphan으로 오인해 삭제하면 Table을 파괴하므로 Maintenance는 보존 시간과 Catalog 상태를 신중히 사용해야 한다.
+
+Commit Outcome이 불명확하면 먼저 현재 Snapshot과 Operation ID, Summary를 확인한다. 새 Snapshot이 실제로 Commit됐다면 그 File은 고아가 아니다. 즉시 Storage Listing만 비교해 삭제하지 않는다.
+
+## 13. Maintenance가 바꾸는 것
+
+**rewrite_data_files**는 작은 File을 합치거나 MOR Delete를 새 Data File에 반영해 Read Amplification을 줄일 수 있다. 논리 행 결과를 유지해야 하지만 새 Snapshot과 새 File을 만든다.
+
+**expire_snapshots**는 오래된 Snapshot 참조를 제거해 Time Travel과 Rollback 가능 범위를 줄인다. Snapshot이 만료되어야 더 이상 참조되지 않는 옛 File을 정리할 수 있다.
+
+**remove_orphan_files**는 어떤 Metadata에서도 참조되지 않는 오래된 File 후보를 제거한다. 최근 Commit 중이거나 결과 불확실 상태의 File을 지우지 않도록 충분한 보존 간격과 일관된 File Listing이 필요하다.
+
+~~~sql
+CALL prod.system.rewrite_data_files(
+  table => 'sales.orders',
   options => map('target-file-size-bytes', '536870912')
 );
 
-CALL lab.system.expire_snapshots(
-  table => 'analytics.events',
+CALL prod.system.expire_snapshots(
+  table => 'sales.orders',
   older_than => TIMESTAMP '2026-09-01 00:00:00',
   retain_last => 5
 );
-```
+~~~
 
-`rewrite_data_files`는 작은 파일이나 삭제 상태를 새 data file로 정리할 수 있다. `expire_snapshots`는 시간 여행·rollback 가능 범위를 줄일 수 있는 운영 작업이다. 위 날짜와 크기는 예시이며 그대로 운영에 적용하지 않는다. 지원 인자와 안전 조건은 [Spark procedures](https://iceberg.apache.org/docs/latest/spark-procedures/)와 [Maintenance](https://iceberg.apache.org/docs/latest/maintenance/)를 확인한다.
+512MiB, 날짜, Snapshot 5개는 교육용 값이다. Workload, Object Storage 비용, 감사와 연구 재현 기간을 측정해 정한다.
 
-## 10. commit은 원자적이지만 결과 불확실성은 남는다
+## 14. 관찰해야 할 Metadata
 
-writer는 새 파일과 metadata를 준비한 다음 catalog의 현재 metadata pointer를 원자적으로 바꾸려 시도한다. 충돌하면 검증·재시도 규칙에 따라 다시 commit할 수 있다. 독자는 이전 snapshot 전체 또는 새 snapshot 전체를 보며 중간 파일 집합을 현재 테이블로 보지 않는다.
+~~~sql
+SELECT file_path, file_format, record_count, file_size_in_bytes
+FROM prod.sales.orders.files;
 
-```mermaid
-sequenceDiagram
-    participant W as "Spark writer"
-    participant F as "파일 저장소"
-    participant C as "Catalog"
-    W->>F: "새 data와 metadata 작성"
-    W->>C: "기준 metadata A를 B로 교체 요청"
-    alt "원자적 교체 성공"
-        C-->>W: "commit 성공"
-    else "다른 writer가 먼저 commit"
-        C-->>W: "충돌, 검증 후 재시도 가능"
-    else "응답이 유실"
-        C--xW: "결과 불명확"
-    end
-```
+SELECT committed_at, snapshot_id, operation, summary
+FROM prod.sales.orders.snapshots
+ORDER BY committed_at DESC;
 
-네트워크가 끊겨 응답을 받지 못했다고 commit 실패로 단정할 수 없다. catalog에는 새 pointer가 반영되었을 수 있다. 이것이 **unknown commit outcome**이다. 동일 작업을 무조건 다시 실행하면 중복 효과가 날 수 있으므로 현재 table state와 snapshot을 먼저 확인하고 Iceberg가 제공하는 commit 상태 확인·재시도 경로를 따른다. commit 원리는 [Reliability](https://iceberg.apache.org/docs/latest/reliability/)와 [Table specification](https://iceberg.apache.org/spec/)을 참고한다.
+SELECT content, file_path, record_count, equality_ids
+FROM prod.sales.orders.entries;
+~~~
 
-## 11. 자주 생기는 오해
+Metadata Table Schema는 Version과 Format에 따라 달라질 수 있으므로 먼저 DESCRIBE로 확인한다. 논리 SELECT Row Count와 Data File Record Count를 단순 비교하면 MOR Delete 때문에 차이가 날 수 있다.
 
-| 오해 | 정확한 설명 |
-| --- | --- |
-| Spark가 테이블 포맷이다 | Spark는 실행 엔진이고 Iceberg가 테이블 포맷이다 |
-| Parquet 폴더가 곧 Iceberg 테이블이다 | 현재 snapshot과 manifest가 파일 membership을 결정한다 |
-| `WHERE id=7`이면 equality delete다 | SQL 조건과 delete 파일의 물리 표현은 별개다 |
-| v3이면 항상 DV다 | COW, metadata-only, 지원 여부에 따라 다른 경로가 가능하다 |
-| catalog는 파일 목록만 저장한다 | 이름 해석과 current metadata pointer commit 경계에도 관여한다 |
-| 최신 Spark와 최신 Iceberg는 자동 호환된다 | Spark·Scala suffix가 맞는 공식 runtime artifact를 확인해야 한다 |
+EXPLAIN은 Spark의 실행 Plan을 보여 주고 Metadata Table은 Iceberg의 File 상태를 보여 준다. Storage Listing은 물리 Object 존재를 보여 준다. 세 관찰은 서로 다른 층이다.
 
-## 12. 연습 문제
+## 15. 8개 종합 문제와 완전 풀이
 
 ### 문제 1
+Snapshot 50에서 조건 없는 국가별 합과 amount>=20 합을 각각 구하라.
 
-`DELETE ... WHERE account_id=9`를 실행한 뒤 Puffin 파일이 생기지 않았다. 가능한 이유를 세 가지 적어라.
+**풀이:** 조건 없이는 KR=10+30+50=90, US=20+60=80, JP=40이다. Filter가 있으면 KR10이 제거되어 KR=80이고 US80, JP40이다. 같은 File을 읽어도 SQL 조건이 결과를 바꾼다.
 
 ### 문제 2
+COW로 amount=20을 삭제한 Snapshot 51의 현재 Data File과 행은?
 
-현재 논리 테이블은 90행인데 data Parquet를 직접 읽으면 100행이다. 어느 경로가 잘못되었다고 단정할 수 있는가?
+**풀이:** A를 대체한 C=(KR10,KR30)과 기존 B=(JP40,KR50,US60)가 현재다. A는 과거 Snapshot 50 때문에 Storage에 남을 수 있지만 현재 Snapshot File은 아니다.
 
 ### 문제 3
+MOR에서 data-A Position 1을 삭제하면 data-B Position 1도 지워지는가?
 
-팀이 Spark 4.2.0과 Iceberg 1.12.0을 각각 최신이므로 바로 묶겠다고 한다. 무엇을 먼저 확인해야 하는가?
+**풀이:** 아니다. Position Delete와 DV는 적용 대상 Data File을 식별한다. data-A의 Position 1인 US20만 삭제된다.
 
-## 13. 해설
+### 문제 4
+Puffin은 Parquet보다 가벼운 행 저장 형식인가?
 
-### 해설 1
+**풀이:** 비교 목적이 다르다. Parquet은 Table 행을 열 단위로 저장하고 Puffin은 DV, Index, Statistics 같은 Blob과 Footer Metadata를 담는다. Puffin 크기만으로 Parquet 대체 여부를 판단하지 않는다.
 
-COW로 설정되어 data file이 rewrite되었을 수 있다. 조건이 파일 전체와 맞아 metadata-only 삭제가 되었을 수 있다. v2 table이거나 해당 Spark/Iceberg 경로가 v3 DV를 쓰지 않았을 수도 있다. `snapshots`, `files`, `entries`를 함께 확인한다.
+### 문제 5
+v3 Table이면 기존 v2 Position Delete를 무시해도 되는가?
 
-### 해설 2
+**풀이:** 아니다. Upgrade 뒤에도 기존 Delete가 참조될 수 있다. Reader는 혼재 상태를 처리해야 논리 결과가 유지된다. v3의 새 Position Delete가 Deprecated인 것과 과거 Delete 읽기는 다른 문제다.
 
-Parquet 직접 읽기는 Iceberg snapshot과 delete 정보를 적용하지 않으므로 논리 테이블 읽기가 아니다. MOR 삭제 row가 byte로 남아 있거나 과거 snapshot의 파일이 섞였을 수 있다. 100행만으로 파일 손상을 단정하지 않는다.
+### 문제 6
+W1 Commit 뒤 W2가 CAS 충돌을 받으면 W2는 항상 실패하는가?
 
-### 해설 3
+**풀이:** Append처럼 동시 변경과 겹치지 않으면 Refresh, Rebase, Validation 뒤 재시도할 수 있다. 같은 File Rewrite나 Delete 조건과 겹치면 Validation이 실패해 Abort해야 할 수 있다.
 
-Iceberg가 Spark 4.2·Scala 2.13용 runtime artifact를 제공하고 해당 기능을 지원하는지 확인해야 한다. Iceberg 1.12.0 공식 범위에는 4.2 runtime이 없으므로 이 책은 검증된 4.0.4 조합을 사용한다.
+### 문제 7
+Driver가 Commit 응답을 못 받았다. 같은 Write를 다시 실행해도 되는가?
 
-다음 장에서는 이 엔진을 local, standalone, YARN, Kubernetes에 배치할 때 driver와 executor가 어디에서 실행되는지, Spark Connect가 classic client와 무엇이 다른지 살펴본다.
+**풀이:** 먼저 Catalog의 현재 Metadata와 Snapshot Summary를 확인한다. Commit이 성공했는데 응답만 잃었다면 재실행은 중복을 만든다. Outcome 확인과 Operation ID가 필요하다.
+
+### 문제 8
+remove_orphan_files를 즉시 실행하면 실패한 Upload를 안전하게 지울 수 있는가?
+
+**풀이:** 최근 진행 중 Commit File이나 Outcome 불명확 File을 잘못 지울 수 있다. Snapshot 참조, 충분한 보존 시간, Storage Listing 일관성, Maintenance 공식 안전 조건을 확인한다.
+
+## 16. 공식 근거와 호환성 경계
+
+Spark SQL Write 경로와 COW/MOR 설정은 [Iceberg Spark Writes](https://iceberg.apache.org/docs/latest/spark-writes/)와 [Configuration](https://iceberg.apache.org/docs/latest/configuration/)을 기준으로 했다. Snapshot·Manifest·v2/v3 Delete와 DV는 [Iceberg Table Spec](https://iceberg.apache.org/spec/), Puffin 구조와 deletion-vector-v1은 [Puffin Spec](https://iceberg.apache.org/puffin-spec/)에 근거한다. 유지보수는 [Maintenance](https://iceberg.apache.org/docs/latest/maintenance/)의 안전 조건을 따른다.
+
+Iceberg 1.12.0의 공식 Spark Runtime 축은 [Releases](https://iceberg.apache.org/releases/)와 [Multi-engine Support](https://iceberg.apache.org/multi-engine-support/)에서 확인한다. Spark 4.2 Engine 문서의 기능을 Iceberg 1.12.0 Spark 4.2 Runtime 지원으로 확대하지 않는다.
+
+[이전: Structured Streaming](08-structured-streaming.md) · [목차](README.md) · [다음: 배포와 Spark Connect](10-deployment-and-connect.md)
