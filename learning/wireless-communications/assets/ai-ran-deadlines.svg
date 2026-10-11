@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">RAN과 AI: 1 ms 창의 시간 예산</title><desc id="desc">직렬 교육 모형에서 1 ms 중 RAN 0.6 ms와 보호 여유 0.1 ms를 제외하면 AI가 쓸 수 있는 예산은 0.3 ms다. 실제 병렬 GPU 동작과 최악 시간 보장은 별도 검증이 필요하다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">RAN과 AI: 1 ms 창의 시간 예산</text>
+<text x="40" y="99" font-size="17" fill="#334155" font-weight="400" text-anchor="start">직렬 계산 모형이다. 실제 NR의 모든 slot이나 GPU 실행이 항상 1 ms라는 뜻은 아니다.</text>
+<rect x="40" y="190" width="672" height="100" fill="#dbeafe" stroke="#64748b"/>
+<text x="376.0" y="250" font-size="22" fill="#334155" font-weight="700" text-anchor="middle">RAN 0.6 ms</text>
+<rect x="712" y="190" width="112" height="100" fill="#fef3c7" stroke="#64748b"/>
+<text x="768.0" y="250" font-size="22" fill="#334155" font-weight="700" text-anchor="middle">여유</text>
+<rect x="824" y="190" width="336" height="100" fill="#dcfce7" stroke="#64748b"/>
+<text x="992.0" y="250" font-size="22" fill="#334155" font-weight="700" text-anchor="middle">AI 0.3 ms</text>
+<text x="40" y="325" font-size="19" fill="#334155" font-weight="400" text-anchor="middle">0</text>
+<text x="712" y="325" font-size="19" fill="#334155" font-weight="400" text-anchor="middle">0.6</text>
+<text x="824" y="325" font-size="19" fill="#334155" font-weight="400" text-anchor="middle">0.7</text>
+<text x="1160" y="325" font-size="19" fill="#334155" font-weight="400" text-anchor="middle">1.0 ms</text>
+<rect x="40" y="390" width="520" height="160" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="420" font-size="20" fill="#334155" font-weight="700" text-anchor="start">AI 예산 0.2 ms</text>
+<text x="56" y="451" font-size="15" fill="#334155" font-weight="400" text-anchor="start">0.2 ≤ 0.3: 모형상 허용</text>
+<text x="56" y="472" font-size="15" fill="#334155" font-weight="400" text-anchor="start">보호 여유를 침범하지 않음</text>
+<rect x="640" y="390" width="520" height="160" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="656" y="420" font-size="20" fill="#334155" font-weight="700" text-anchor="start">AI 예산 0.5 ms</text>
+<text x="656" y="451" font-size="15" fill="#334155" font-weight="400" text-anchor="start">0.5 &gt; 0.3: 이 창에는 거절</text>
+<text x="656" y="472" font-size="15" fill="#334155" font-weight="400" text-anchor="start">다른 창·다른 장치 등 검토</text>
+<text x="40" y="629" font-size="17" fill="#334155" font-weight="400" text-anchor="start">평균 시간이 짧아도 최악 지연을 보장하지 않는다. DRA 장치 할당도 이 시간 예산을 자동으로 보장하지 않는다.</text>
+</g></svg>

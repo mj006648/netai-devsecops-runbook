@@ -81,3 +81,5 @@ flowchart LR
 다음으로 [전기·비트·논리회로](../hardware/learning/server-hardware/00-physical-bits-to-computer.md)를 읽고 [서버 전체 지도](../hardware/learning/server-hardware/01-system-map.md), [운영체제의 공통 원리](operating-systems/README.md), [Linux의 구현](../linux/learning/linux-kernel/00-why-operating-systems.md)로 이어간다. 원하는 답을 찾는 계산 절차와 자료구조를 배우려면 [알고리즘 교재](algorithms/README.md)를 연다. 예를 들어 같은 숫자 목록에서 답을 찾는 절차는 알고리즘의 질문이고, 그 절차를 실행하는 프로그램에 CPU와 메모리를 배정하는 일은 운영체제의 질문이다. 두 관점은 같은 실행을 서로 다른 위치에서 설명한다.
 
 단어를 다시 찾으려면 [공통 용어사전](GLOSSARY.md), 전체 경로는 [통합 목차](README.md)를 사용한다.
+
+무선 구간을 더 알고 싶으면 [무선통신·AI-RAN](wireless-communications/README.md)에서 주파수·전력·비트부터 시작한다. Ubuntu에서 실제 프로세스의 자원 제한과 비동기 파일 I/O를 더 깊게 배우려면 [Ubuntu·Linux 내부 심화](ubuntu-linux-internals/README.md)로 이어간다.

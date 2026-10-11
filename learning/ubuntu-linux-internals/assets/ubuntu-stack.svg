@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Ubuntu 프로그램 실행 계층</title>
+  <desc id="desc">사용자 프로그램에서 runtime과 system call을 거쳐 kernel subsystem, driver, hardware로 내려가며 cgroup과 보안 정책이 실행을 제한하는 구조</desc>
+  <rect width="1200" height="680" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle">
+    <text x="600" y="42" font-size="28" fill="#0f172a">Ubuntu 프로그램에서 장치까지</text>
+    <g stroke-width="2">
+      <rect x="90" y="80" width="1020" height="80" rx="14" fill="#dbeafe" stroke="#2563eb" /><text x="600" y="128" font-size="22">사용자 프로그램 · Python · 서비스</text>
+      <rect x="150" y="195" width="900" height="75" rx="14" fill="#e0e7ff" stroke="#4f46e5" /><text x="600" y="240" font-size="21">libc·언어 실행 환경·라이브러리</text>
+      <rect x="250" y="305" width="700" height="65" rx="14" fill="#fef3c7" stroke="#d97706" /><text x="600" y="345" font-size="21">시스템 호출 경계</text>
+      <rect x="90" y="410" width="1020" height="100" rx="14" fill="#dcfce7" stroke="#16a34a" />
+      <text x="600" y="442" font-size="21">Linux 커널의 하위 기능</text><text x="600" y="480" font-size="18">CPU 배정·메모리·VFS·네트워크·io_uring</text>
+      <rect x="180" y="550" width="360" height="75" rx="14" fill="#fee2e2" stroke="#dc2626" /><text x="360" y="594" font-size="20">드라이버·블록 계층</text>
+      <rect x="660" y="550" width="360" height="75" rx="14" fill="#f3e8ff" stroke="#9333ea" /><text x="840" y="594" font-size="20">CPU·메모리·장치</text>
+    </g>
+    <g fill="#334155" font-size="17"><text x="1050" y="235">cgroup 자원 계정</text><text x="1045" y="330">seccomp · LSM</text></g>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M600 160V195" /><path d="M600 270V305" /><path d="M600 370V410" /><path d="M500 510L390 550" /><path d="M700 510L810 550" /></g>
+  <g stroke="#dc2626" stroke-width="3" stroke-dasharray="9 7" fill="none"><path d="M1020 260L950 335" /><path d="M950 335L1020 430" /></g>
+</svg>

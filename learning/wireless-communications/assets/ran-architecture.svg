@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
+<title id="title">RAN과 core: 사용자 데이터와 제어의 경로</title><desc id="desc">아래 실선 경로는 UE에서 RU DU CU-UP UPF edge 서버로 가는 사용자 데이터다. CU-CP와 AMF SMF는 별도 제어 관계를 가진다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">RAN과 core: 사용자 데이터와 제어의 경로</text>
+<rect x="315" y="135" width="260" height="145" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="331" y="165" font-size="20" fill="#334155" font-weight="700" text-anchor="start">CU-CP</text>
+<text x="331" y="196" font-size="15" fill="#334155" font-weight="400" text-anchor="start">RRC와 제어 기능</text>
+<text x="331" y="217" font-size="15" fill="#334155" font-weight="400" text-anchor="start">CU-UP·DU와 협력</text>
+<rect x="725" y="135" width="330" height="145" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="741" y="165" font-size="20" fill="#334155" font-weight="700" text-anchor="start">core 제어: AMF·SMF</text>
+<text x="741" y="196" font-size="15" fill="#334155" font-weight="400" text-anchor="start">등록·이동·세션 관리</text>
+<text x="741" y="217" font-size="15" fill="#334155" font-weight="400" text-anchor="start">사용자 데이터 전달과 구별</text>
+<line x1="575" y1="205" x2="725" y2="205" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+<rect x="30" y="380" width="200" height="130" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="46" y="410" font-size="20" fill="#334155" font-weight="700" text-anchor="start">UE</text>
+<text x="46" y="441" font-size="15" fill="#334155" font-weight="400" text-anchor="start">단말</text>
+<line x1="230" y1="445" x2="265" y2="445" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="265" y="380" width="200" height="130" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="281" y="410" font-size="20" fill="#334155" font-weight="700" text-anchor="start">RU</text>
+<text x="281" y="441" font-size="15" fill="#334155" font-weight="400" text-anchor="start">RF·무선 처리</text>
+<line x1="465" y1="445" x2="500" y2="445" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="500" y="380" width="200" height="130" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="516" y="410" font-size="20" fill="#334155" font-weight="700" text-anchor="start">DU</text>
+<text x="516" y="441" font-size="15" fill="#334155" font-weight="400" text-anchor="start">PHY·MAC·RLC</text>
+<line x1="700" y1="445" x2="735" y2="445" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="735" y="380" width="200" height="130" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="751" y="410" font-size="20" fill="#334155" font-weight="700" text-anchor="start">CU-UP</text>
+<text x="751" y="441" font-size="15" fill="#334155" font-weight="400" text-anchor="start">PDCP·SDAP</text>
+<line x1="935" y1="445" x2="970" y2="445" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="970" y="380" width="200" height="130" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="986" y="410" font-size="20" fill="#334155" font-weight="700" text-anchor="start">UPF</text>
+<text x="986" y="441" font-size="15" fill="#334155" font-weight="400" text-anchor="start">사용자 IP 전달</text>
+<line x1="445" y1="280" x2="550" y2="380" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+<line x1="890" y1="280" x2="1070" y2="380" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+<text x="225" y="359" font-size="16" fill="#334155" font-weight="400" text-anchor="start">전파</text>
+<rect x="710" y="600" width="450" height="140" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="726" y="630" font-size="20" fill="#334155" font-weight="700" text-anchor="start">edge·인터넷 서버</text>
+<text x="726" y="661" font-size="15" fill="#334155" font-weight="400" text-anchor="start">UPF 뒤의 사용자 데이터망</text>
+<text x="726" y="682" font-size="15" fill="#334155" font-weight="400" text-anchor="start">앱 요청 처리와 AI 추론</text>
+<path d="M 1070 510 L 1070 595" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="40" y="651" font-size="17" fill="#334155" font-weight="400" text-anchor="start">실선: 사용자 데이터　점선: 제어 관계</text>
+<text x="40" y="696" font-size="17" fill="#334155" font-weight="400" text-anchor="start">기능 분할을 단순화한 예다.</text>
+<text x="40" y="721" font-size="17" fill="#334155" font-weight="400" text-anchor="start">각 interface·배치는 본문에서 구분한다.</text>
+</g></svg>

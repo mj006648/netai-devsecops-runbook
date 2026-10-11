@@ -36,6 +36,8 @@ flowchart LR
 
 완전 입문자는 00→01을 천천히 읽고 08장의 작은 예제와 함께 진행한다. 04장 전에 [하드웨어 메모리 장](../../../hardware/learning/server-hardware/02-cpu-memory-numa.md)을 읽으면 DRAM·캐시와 가상 메모리를 구별하기 쉽다. 파일 저장을 우선 배우려면 01→05와 [데이터 시스템 01·02](../../../kubernetes/storage/data-systems-foundations/01-linux-read-write.md)를 연결한다.
 
+이 책의 원리를 Ubuntu의 실제 자원·I/O 인터페이스로 더 깊게 연결하려면 **[Ubuntu·Linux 내부 심화](../../../learning/ubuntu-linux-internals/README.md)**를 읽는다. systemd와 cgroup v2의 계층, CPU quota·weight·cpuset, memory.high/max·OOM·PSI, io_uring의 SQ/CQ·버퍼 수명·완료 순서·polling과 최신 기능을 별도 17개 장에서 자세히 다룬다.
+
 ## 운영체제를 볼 때 반복할 다섯 질문
 
 1. **누가 실행하는가?** 사용자 스레드인가, 커널 작업인가, 장치인가?

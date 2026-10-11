@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">io_uring 실행 mode와 cancel race</title>
+  <desc id="desc">일반 interrupt 경로, polling 경로, cancellation 경로가 서로 다른 대기와 완료 흐름을 가지며 모두 CQE로 request ID를 확인하는 그림</desc>
+  <rect width="1200" height="700" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle"><text x="600" y="42" font-size="28" fill="#0f172a">io_uring 실행 방식과 요청 수명</text>
+    <g stroke-width="2"><rect x="60" y="100" width="300" height="90" rx="14" fill="#dbeafe" stroke="#2563eb" /><text x="210" y="138" font-size="20">일반 인터럽트 경로</text><text x="210" y="168" font-size="16">제출 뒤 완료 대기</text>
+      <rect x="450" y="100" width="300" height="90" rx="14" fill="#dcfce7" stroke="#16a34a" /><text x="600" y="138" font-size="20">polling: 반복 확인</text><text x="600" y="168" font-size="16">커널·앱의 polling 조건</text>
+      <rect x="840" y="100" width="300" height="90" rx="14" fill="#fee2e2" stroke="#dc2626" /><text x="990" y="138" font-size="20">취소와 완료의 경쟁</text><text x="990" y="168" font-size="16">대상 완료와 취소가 경쟁</text>
+      <rect x="60" y="285" width="300" height="105" rx="14" fill="#e0f2fe" stroke="#0284c7" /><text x="210" y="328" font-size="18">스레드 깨우기·CQE 확인</text><text x="210" y="360" font-size="16">대기 방식은 설정에 따름</text>
+      <rect x="450" y="285" width="300" height="105" rx="14" fill="#bbf7d0" stroke="#15803d" /><text x="600" y="328" font-size="18">반복 확인에 CPU 사용</text><text x="600" y="360" font-size="16">CPU 예산과 함께 판단</text>
+      <rect x="840" y="285" width="300" height="105" rx="14" fill="#fecaca" stroke="#b91c1c" /><text x="990" y="322" font-size="18">대상 CQE·취소 CQE</text><text x="990" y="352" font-size="16">종료 상태를 한 번 확정</text>
+      <rect x="240" y="500" width="720" height="100" rx="14" fill="#fef3c7" stroke="#d97706" /><text x="600" y="540" font-size="21">완료 ID로 요청 상태 확인</text><text x="600" y="574" font-size="17">대응 완료 뒤 버퍼를 한 번만 해제</text></g>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M210 190V285" /><path d="M600 190V285" /><path d="M990 190V285" /><path d="M210 390L430 500" /><path d="M600 390V500" /><path d="M990 390L770 500" /></g>
+</svg>

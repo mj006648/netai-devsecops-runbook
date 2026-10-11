@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="830" viewBox="0 0 1200 830" role="img" aria-labelledby="title desc">
+<title id="title">O-RAN: 서로 다른 시간 척도의 제어</title><desc id="desc">Non-RT RIC의 rApp은 A1을 통해 Near-RT RIC에 정책을 연결하고 xApp은 E2 node를 관측 제어한다. SMO는 O1로 network function O2로 O-Cloud를 관리한다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">O-RAN: 서로 다른 시간 척도의 제어</text>
+<rect x="40" y="135" width="490" height="165" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="165" font-size="20" fill="#334155" font-weight="700" text-anchor="start">SMO·Non-RT RIC·rApp</text>
+<text x="56" y="196" font-size="15" fill="#334155" font-weight="400" text-anchor="start">장기 정책·모델·관리</text>
+<text x="56" y="217" font-size="15" fill="#334155" font-weight="400" text-anchor="start">제어 시간: 1초 초과</text>
+<rect x="670" y="135" width="490" height="165" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="686" y="165" font-size="20" fill="#334155" font-weight="700" text-anchor="start">Near-RT RIC·xApp</text>
+<text x="686" y="196" font-size="15" fill="#334155" font-weight="400" text-anchor="start">관측을 바탕으로 제어</text>
+<text x="686" y="217" font-size="15" fill="#334155" font-weight="400" text-anchor="start">제어 시간: 10 ms ~ 1 s</text>
+<line x1="530" y1="215" x2="670" y2="215" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="584" y="201" font-size="21" fill="#334155" font-weight="700" text-anchor="start">A1</text>
+<rect x="670" y="450" width="490" height="155" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="686" y="480" font-size="20" fill="#334155" font-weight="700" text-anchor="start">E2 node: O-CU·O-DU 등</text>
+<text x="686" y="511" font-size="15" fill="#334155" font-weight="400" text-anchor="start">E2로 지원하는 관측·제어</text>
+<text x="686" y="532" font-size="15" fill="#334155" font-weight="400" text-anchor="start">PHY·MAC의 빠른 처리와 구별</text>
+<line x1="915" y1="300" x2="915" y2="450" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="937" y="389" font-size="21" fill="#334155" font-weight="700" text-anchor="start">E2</text>
+<rect x="40" y="450" width="490" height="155" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="480" font-size="20" fill="#334155" font-weight="700" text-anchor="start">O-Cloud</text>
+<text x="56" y="511" font-size="15" fill="#334155" font-weight="400" text-anchor="start">계산·가상화·workload 기반</text>
+<text x="56" y="532" font-size="15" fill="#334155" font-weight="400" text-anchor="start">관리 경로와 packet 경로는 다름</text>
+<line x1="285" y1="300" x2="285" y2="450" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+<text x="307" y="389" font-size="21" fill="#334155" font-weight="700" text-anchor="start">O2</text>
+<path d="M 475 300 L 575 350 L 575 520 L 665 520" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="565" y="422" font-size="21" fill="#334155" font-weight="700" text-anchor="start">O1</text>
+<text x="40" y="695" font-size="17" fill="#334155" font-weight="400" text-anchor="start">O1: network function 관리　O2: cloud 기반 관리　A1/E2: RIC의 정책·관측·제어</text>
+<text x="40" y="751" font-size="17" fill="#334155" font-weight="400" text-anchor="start">RIC의 10 ms~1 s 루프를 모든 PHY 심벌·slot의 MAC scheduler로 설명하면 시간 척도를 혼동한다.</text>
+</g></svg>

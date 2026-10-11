@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">CPU quota와 memory pressure 증거 흐름</title>
+  <desc id="desc">CPU quota 0.5와 memory high 256 max 384 MiB가 workload 대기, PSI, latency로 이어지며 서로 다른 counter로 구분되는 흐름</desc>
+  <rect width="1200" height="700" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle">
+    <text x="600" y="42" font-size="28" fill="#0f172a">같은 지연, 다른 자원 압박</text>
+    <rect x="70" y="95" width="470" height="95" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2" /><text x="305" y="130" font-size="21">CPU 예산 50 ms / 100 ms</text><text x="305" y="162" font-size="18">두 스레드가 0.5 CPU 공유</text>
+    <rect x="660" y="95" width="470" height="95" rx="14" fill="#fee2e2" stroke="#dc2626" stroke-width="2" /><text x="895" y="130" font-size="21">memory.high 256 MiB</text><text x="895" y="162" font-size="18">memory.max 384 MiB</text>
+    <rect x="70" y="245" width="470" height="105" rx="14" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" /><text x="305" y="282" font-size="20">예산 소진 뒤 실행 제한</text><text x="305" y="316" font-size="17">cpu.stat 누적값의 차이</text>
+    <rect x="660" y="245" width="470" height="105" rx="14" fill="#fecaca" stroke="#b91c1c" stroke-width="2" /><text x="895" y="282" font-size="20">회수·장치 반영·대기</text><text x="895" y="316" font-size="17">memory.events · memory.stat</text>
+    <rect x="220" y="420" width="760" height="95" rx="14" fill="#fef3c7" stroke="#d97706" stroke-width="2" /><text x="600" y="455" font-size="21">PSI: some·full·total 차이</text><text x="600" y="488" font-size="17">압박 시간과 증상 구간을 맞춘다</text>
+    <rect x="330" y="575" width="540" height="75" rx="14" fill="#dcfce7" stroke="#16a34a" stroke-width="2" /><text x="600" y="620" font-size="21">응답 지연의 원인을 구분</text>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M305 190V245" /><path d="M895 190V245" /><path d="M305 350L470 420" /><path d="M895 350L730 420" /><path d="M600 515V575" /></g>
+</svg>

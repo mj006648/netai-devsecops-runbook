@@ -45,6 +45,8 @@ flowchart LR
 
 처음에는 00→01→02→03→04를 읽는다. 05부터는 [Linux의 프로세스·커널·메모리 입문](../../../linux/learning/linux-kernel/01-programs-processes-and-shell.md)을 먼저 읽으면 좋다. 06장부터 시작하면 `커널·주소·드라이버·hook`이 한꺼번에 나와 어렵다. eBPF에 관심이 있어도 앞의 패킷 경로부터 연결한다.
 
+전파·주파수·변조·OFDM·MIMO와 Wi-Fi·5G의 무선 접속 동작은 **[무선통신·AI-RAN 교재](../../../learning/wireless-communications/README.md)**에서 이어 읽는다. 이 책의 IP·TCP·HTTP가 무선 링크 위에서 어떻게 기지국·core·서버로 이어지는지 연결하고, O-RAN 제어와 AI-RAN의 세 목적을 구별한다.
+
 ## 계속 사용할 작은 네트워크
 
 종합 문제에서는 문서용 주소를 사용한다. 실제 사내 네트워크 설정값이 아니다.

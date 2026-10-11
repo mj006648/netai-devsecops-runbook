@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">MIMO와 빔포밍: 안테나 수와 공간 계층</title><desc id="desc">왼쪽은 두 송신 신호가 두 수신 안테나에서 섞이는 2대2 채널이다. 오른쪽은 여러 안테나의 위상과 크기를 조절해 원하는 방향의 신호를 강화하는 빔포밍이다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">MIMO와 빔포밍: 안테나 수와 공간 계층</text>
+<text x="40" y="109" font-size="20" fill="#334155" font-weight="700" text-anchor="start">공간 다중화: 채널에서 신호를 구분</text>
+<text x="640" y="109" font-size="20" fill="#334155" font-weight="700" text-anchor="start">빔포밍: 원하는 방향을 강화</text>
+<circle cx="100" cy="210" r="30" fill="#dbeafe" stroke="#64748b"/>
+<circle cx="100" cy="320" r="30" fill="#dbeafe" stroke="#64748b"/>
+<circle cx="390" cy="210" r="30" fill="#dbeafe" stroke="#64748b"/>
+<circle cx="390" cy="320" r="30" fill="#dbeafe" stroke="#64748b"/>
+<line x1="135" y1="210" x2="355" y2="210" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<line x1="135" y1="210" x2="355" y2="320" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<line x1="135" y1="320" x2="355" y2="210" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<line x1="135" y1="320" x2="355" y2="320" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="100" y="175" font-size="17" fill="#334155" font-weight="400" text-anchor="middle">송신 2개</text>
+<text x="390" y="175" font-size="17" fill="#334155" font-weight="400" text-anchor="middle">수신 2개</text>
+<text x="185" y="370" font-size="22" fill="#334155" font-weight="400" text-anchor="start">y = Hx + noise</text>
+<circle cx="700" cy="190" r="17" fill="#ede9fe" stroke="#64748b"/>
+<line x1="725" y1="190" x2="1060" y2="280" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<circle cx="700" cy="250" r="17" fill="#ede9fe" stroke="#64748b"/>
+<line x1="725" y1="250" x2="1060" y2="280" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<circle cx="700" cy="310" r="17" fill="#ede9fe" stroke="#64748b"/>
+<line x1="725" y1="310" x2="1060" y2="280" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<circle cx="700" cy="370" r="17" fill="#ede9fe" stroke="#64748b"/>
+<line x1="725" y1="370" x2="1060" y2="280" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="785" y="230" font-size="19" fill="#334155" font-weight="400" text-anchor="start">위상·크기 조절</text>
+<text x="1020" y="320" font-size="18" fill="#334155" font-weight="400" text-anchor="start">수신 방향</text>
+<rect x="40" y="450" width="510" height="145" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="480" font-size="20" fill="#334155" font-weight="700" text-anchor="start">공간 계층 수는 조건에 달린다</text>
+<text x="56" y="511" font-size="15" fill="#334155" font-weight="400" text-anchor="start">채널의 rank·SNR·수신 처리에 제한</text>
+<text x="56" y="532" font-size="15" fill="#334155" font-weight="400" text-anchor="start">안테나 4개라고 언제나 4계층은 아님</text>
+<rect x="620" y="450" width="540" height="145" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="636" y="480" font-size="20" fill="#334155" font-weight="700" text-anchor="start">빔 수와 데이터 계층 수도 다르다</text>
+<text x="636" y="511" font-size="15" fill="#334155" font-weight="400" text-anchor="start">한 계층을 여러 안테나로 보낼 수 있음</text>
+<text x="636" y="532" font-size="15" fill="#334155" font-weight="400" text-anchor="start">방향 강화가 항상 속도 배수를 뜻하지 않음</text>
+</g></svg>

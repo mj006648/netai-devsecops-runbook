@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">실제 kernel workload와 교육 모형의 경계</title>
+  <desc id="desc">실제 application이 system call, scheduler, memory, filesystem, device를 거치는 위쪽 경로와 Python 계산 모형이 고정 입력과 assert만 다루는 아래쪽 경로를 분리한 그림</desc>
+  <rect width="1200" height="700" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle"><text x="600" y="40" font-size="28" fill="#0f172a">실제 경로와 안전한 계산 모형</text>
+    <text x="120" y="86" font-size="19" fill="#1e3a8a">실제 Linux 경로</text>
+    <g stroke-width="2"><rect x="60" y="110" width="210" height="80" rx="12" fill="#dbeafe" stroke="#2563eb" /><text x="165" y="157" font-size="18">애플리케이션</text><rect x="330" y="110" width="210" height="80" rx="12" fill="#fef3c7" stroke="#d97706" /><text x="435" y="157" font-size="18">시스템 호출</text><rect x="600" y="110" width="250" height="80" rx="12" fill="#dcfce7" stroke="#16a34a" /><text x="725" y="143" font-size="18">CPU 배정·메모리 관리</text><text x="725" y="170" font-size="18">VFS · io_uring</text><rect x="910" y="110" width="230" height="80" rx="12" fill="#fee2e2" stroke="#dc2626" /><text x="1025" y="157" font-size="18">실제 하드웨어 장치</text></g>
+    <rect x="40" y="255" width="1120" height="8" fill="#64748b" /><text x="600" y="292" font-size="18" fill="#475569">이 선 아래 모형은 실제 시스템 호출과 자원 변경을 수행하지 않는다</text>
+    <text x="135" y="350" font-size="19" fill="#581c87">Python 순수 계산 모형</text>
+    <g stroke-width="2"><rect x="70" y="390" width="260" height="95" rx="12" fill="#f3e8ff" stroke="#9333ea" /><text x="200" y="425" font-size="18">고정 숫자 입력</text><text x="200" y="457" font-size="16">시간 예산·페이지·요청 ID</text><rect x="470" y="390" width="260" height="95" rx="12" fill="#fae8ff" stroke="#a21caf" /><text x="600" y="425" font-size="18">상태 전이 계산</text><text x="600" y="457" font-size="16">예산·수명·회수</text><rect x="870" y="390" width="260" height="95" rx="12" fill="#fce7f3" stroke="#db2777" /><text x="1000" y="425" font-size="18">처리 기록과 기대값 확인</text><text x="1000" y="457" font-size="16">작은 입력 정확성만 확인</text></g>
+    <rect x="240" y="570" width="720" height="80" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2" /><text x="600" y="605" font-size="19">실제 커널·시간·회수 결과의 예측은 아님</text><text x="600" y="632" font-size="16">운영 판단에는 별도 읽기 전용 증거가 필요</text>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M270 150H330" /><path d="M540 150H600" /><path d="M850 150H910" /><path d="M330 438H470" /><path d="M730 438H870" /><path d="M600 485V570" /></g>
+</svg>

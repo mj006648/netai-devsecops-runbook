@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">io_uring 요청과 buffer 수명주기</title>
+  <desc id="desc">요청 101과 102가 SQE로 제출되고 kernel 실행 뒤 순서가 바뀐 CQE로 완료되며 ID matching 후 각각의 buffer가 해제되는 과정</desc>
+  <defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" /></marker></defs><rect width="1200" height="680" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle">
+    <text x="600" y="42" font-size="28" fill="#0f172a">SQE 제출부터 대응 CQE 확인까지</text>
+    <g stroke-width="2"><rect x="45" y="110" width="210" height="110" rx="12" fill="#dbeafe" stroke="#2563eb" /><text x="150" y="150" font-size="19">요청 정보</text><text x="150" y="183" font-size="17">101→buf-A</text><text x="150" y="207" font-size="17">102→buf-B</text>
+      <rect x="325" y="110" width="210" height="110" rx="12" fill="#e0e7ff" stroke="#4f46e5" /><text x="430" y="150" font-size="19">공유 제출 큐 SQ</text><text x="430" y="183" font-size="17">SQE 101 · SQE 102</text>
+      <rect x="605" y="110" width="210" height="110" rx="12" fill="#dcfce7" stroke="#16a34a" /><text x="710" y="150" font-size="19">커널의 처리</text><text x="710" y="183" font-size="17">순서 독립 처리 가능</text>
+      <rect x="885" y="110" width="270" height="110" rx="12" fill="#fef3c7" stroke="#d97706" /><text x="1020" y="150" font-size="19">공유 완료 큐 CQ</text><text x="1020" y="183" font-size="17">CQE 102 뒤에 CQE 101</text>
+      <rect x="180" y="340" width="350" height="110" rx="12" fill="#fae8ff" stroke="#a21caf" /><text x="355" y="380" font-size="19">CQE 102 · res=2048</text><text x="355" y="414" font-size="17">요청 ID 확인 → buf-B</text>
+      <rect x="670" y="340" width="350" height="110" rx="12" fill="#fee2e2" stroke="#dc2626" /><text x="845" y="380" font-size="19">CQE 101 · res=-EINVAL</text><text x="845" y="414" font-size="17">요청 ID 확인 → buf-A</text>
+      <rect x="180" y="535" width="350" height="80" rx="12" fill="#f3e8ff" stroke="#9333ea" /><text x="355" y="582" font-size="19">종료 확인 → buf-B 해제</text>
+      <rect x="670" y="535" width="350" height="80" rx="12" fill="#f3e8ff" stroke="#9333ea" /><text x="845" y="582" font-size="19">종료 확인 → buf-A 해제</text></g>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M255 165H325" /><path d="M535 165H605" /><path d="M815 165H885" /><path d="M1020 220L355 340" /><path d="M1020 220L845 340" /><path d="M355 450V535" /><path d="M845 450V535" /></g>
+</svg>

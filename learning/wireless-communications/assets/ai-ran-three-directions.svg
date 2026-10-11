@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840" role="img" aria-labelledby="title desc">
+<title id="title">AI-RAN: 세 방향의 입력과 결과</title><desc id="desc">AI-for-RAN은 무선망 개선, AI-and-RAN은 계산 기반 공유, AI-on-RAN은 사용자 AI 서비스를 목표로 한다. 각 방향의 입력 계산 결과를 세 열로 구분한다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">AI-RAN: 세 방향의 입력과 결과</text>
+<text x="200" y="117" font-size="25" fill="#334155" font-weight="700" text-anchor="middle">AI-for-RAN</text>
+<rect x="40" y="155" width="340" height="145" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="185" font-size="20" fill="#334155" font-weight="700" text-anchor="start">입력</text>
+<text x="56" y="216" font-size="15" fill="#334155" font-weight="400" text-anchor="start">채널·KPI·무선 상태</text>
+<line x1="210" y1="300" x2="210" y2="345" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="345" width="340" height="145" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="375" font-size="20" fill="#334155" font-weight="700" text-anchor="start">계산</text>
+<text x="56" y="406" font-size="15" fill="#334155" font-weight="400" text-anchor="start">예측·제어 정책</text>
+<text x="56" y="427" font-size="15" fill="#334155" font-weight="400" text-anchor="start">무선망의 성능 개선</text>
+<line x1="210" y1="490" x2="210" y2="535" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="535" width="340" height="145" rx="15" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="565" font-size="20" fill="#334155" font-weight="700" text-anchor="start">결과</text>
+<text x="56" y="596" font-size="15" fill="#334155" font-weight="400" text-anchor="start">자원·빔·에너지 결정</text>
+<text x="56" y="617" font-size="15" fill="#334155" font-weight="400" text-anchor="start">피드백과 fallback</text>
+<text x="590" y="117" font-size="25" fill="#334155" font-weight="700" text-anchor="middle">AI-and-RAN</text>
+<rect x="430" y="155" width="340" height="145" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="446" y="185" font-size="20" fill="#334155" font-weight="700" text-anchor="start">입력</text>
+<text x="446" y="216" font-size="15" fill="#334155" font-weight="400" text-anchor="start">RAN 작업·AI 작업</text>
+<line x1="600" y1="300" x2="600" y2="345" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="430" y="345" width="340" height="145" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="446" y="375" font-size="20" fill="#334155" font-weight="700" text-anchor="start">계산</text>
+<text x="446" y="406" font-size="15" fill="#334155" font-weight="400" text-anchor="start">GPU·CPU·메모리 공유</text>
+<text x="446" y="427" font-size="15" fill="#334155" font-weight="400" text-anchor="start">deadline과 간섭 관리</text>
+<line x1="600" y1="490" x2="600" y2="535" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="430" y="535" width="340" height="145" rx="15" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="446" y="565" font-size="20" fill="#334155" font-weight="700" text-anchor="start">결과</text>
+<text x="446" y="596" font-size="15" fill="#334155" font-weight="400" text-anchor="start">허용·배치·자원 예산</text>
+<text x="446" y="617" font-size="15" fill="#334155" font-weight="400" text-anchor="start">기지국 시간 제약 유지</text>
+<text x="980" y="117" font-size="25" fill="#334155" font-weight="700" text-anchor="middle">AI-on-RAN</text>
+<rect x="820" y="155" width="340" height="145" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="836" y="185" font-size="20" fill="#334155" font-weight="700" text-anchor="start">입력</text>
+<text x="836" y="216" font-size="15" fill="#334155" font-weight="400" text-anchor="start">단말의 앱 요청</text>
+<line x1="990" y1="300" x2="990" y2="345" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="820" y="345" width="340" height="145" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="836" y="375" font-size="20" fill="#334155" font-weight="700" text-anchor="start">계산</text>
+<text x="836" y="406" font-size="15" fill="#334155" font-weight="400" text-anchor="start">가까운 edge AI 서버</text>
+<text x="836" y="427" font-size="15" fill="#334155" font-weight="400" text-anchor="start">사용자 서비스 추론</text>
+<line x1="990" y1="490" x2="990" y2="535" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="820" y="535" width="340" height="145" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="836" y="565" font-size="20" fill="#334155" font-weight="700" text-anchor="start">결과</text>
+<text x="836" y="596" font-size="15" fill="#334155" font-weight="400" text-anchor="start">영상·음성·언어 결과</text>
+<text x="836" y="617" font-size="15" fill="#334155" font-weight="400" text-anchor="start">사용자 데이터로 반환</text>
+<text x="40" y="775" font-size="17" fill="#334155" font-weight="400" text-anchor="start">세 목적은 같은 제품·실험 안에서 함께 나타날 수 있다. 분류 이름만으로 구현과 성능을 판단하지 않는다.</text>
+</g></svg>

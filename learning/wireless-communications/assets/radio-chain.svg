@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">무선 송수신: 비트와 I/Q, RF의 연결</title><desc id="desc">송신에서 부호화와 변조, 디지털 신호와 DAC, RF를 거쳐 전파를 보낸다. 수신에서는 역순으로 비트를 복원한다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">무선 송수신: 비트와 I/Q, RF의 연결</text>
+<text x="40" y="103" font-size="19" fill="#334155" font-weight="700" text-anchor="start">송신: 왼쪽에서 오른쪽으로</text>
+<rect x="30" y="150" width="200" height="125" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="46" y="180" font-size="20" fill="#334155" font-weight="700" text-anchor="start">비트·FEC</text>
+<text x="46" y="211" font-size="15" fill="#334155" font-weight="400" text-anchor="start">오류 정정 정보 추</text>
+<text x="46" y="232" font-size="15" fill="#334155" font-weight="400" text-anchor="start">가</text>
+<line x1="230" y1="214" x2="265" y2="214" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="265" y="150" width="200" height="125" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="281" y="180" font-size="20" fill="#334155" font-weight="700" text-anchor="start">변조·OFDM</text>
+<text x="281" y="211" font-size="15" fill="#334155" font-weight="400" text-anchor="start">심벌과 I/Q 샘플</text>
+<line x1="465" y1="214" x2="500" y2="214" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="500" y="150" width="200" height="125" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="516" y="180" font-size="20" fill="#334155" font-weight="700" text-anchor="start">DAC</text>
+<text x="516" y="211" font-size="15" fill="#334155" font-weight="400" text-anchor="start">숫자를 연속 신호로</text>
+<line x1="700" y1="214" x2="735" y2="214" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="735" y="150" width="200" height="125" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="751" y="180" font-size="20" fill="#334155" font-weight="700" text-anchor="start">RF 처리</text>
+<text x="751" y="211" font-size="15" fill="#334155" font-weight="400" text-anchor="start">주파수 변환·증폭</text>
+<line x1="935" y1="214" x2="970" y2="214" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="970" y="150" width="200" height="125" rx="15" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="986" y="180" font-size="20" fill="#334155" font-weight="700" text-anchor="start">안테나</text>
+<text x="986" y="211" font-size="15" fill="#334155" font-weight="400" text-anchor="start">전파를 방사</text>
+<rect x="30" y="400" width="200" height="125" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="46" y="430" font-size="20" fill="#334155" font-weight="700" text-anchor="start">안테나·RF</text>
+<text x="46" y="461" font-size="15" fill="#334155" font-weight="400" text-anchor="start">수신·필터·변환</text>
+<line x1="230" y1="464" x2="265" y2="464" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="265" y="400" width="200" height="125" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="281" y="430" font-size="20" fill="#334155" font-weight="700" text-anchor="start">ADC</text>
+<text x="281" y="461" font-size="15" fill="#334155" font-weight="400" text-anchor="start">연속 신호를 샘플로</text>
+<line x1="465" y1="464" x2="500" y2="464" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="500" y="400" width="200" height="125" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="516" y="430" font-size="20" fill="#334155" font-weight="700" text-anchor="start">동기·FFT</text>
+<text x="516" y="461" font-size="15" fill="#334155" font-weight="400" text-anchor="start">시간·주파수 맞춤</text>
+<line x1="700" y1="464" x2="735" y2="464" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="735" y="400" width="200" height="125" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="751" y="430" font-size="20" fill="#334155" font-weight="700" text-anchor="start">복조·FEC</text>
+<text x="751" y="461" font-size="15" fill="#334155" font-weight="400" text-anchor="start">비트 후보·오류 정</text>
+<text x="751" y="482" font-size="15" fill="#334155" font-weight="400" text-anchor="start">정</text>
+<line x1="935" y1="464" x2="970" y2="464" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="970" y="400" width="200" height="125" rx="15" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="986" y="430" font-size="20" fill="#334155" font-weight="700" text-anchor="start">복원한 비트</text>
+<text x="986" y="461" font-size="15" fill="#334155" font-weight="400" text-anchor="start">상위 계층으로 전달</text>
+<path d="M 1070 275 L 1070 335 L 130 335 L 130 395" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="310" y="325" font-size="19" fill="#334155" font-weight="400" text-anchor="start">채널: 경로 손실·다중 경로·잡음·간섭</text>
+<text x="40" y="598" font-size="17" fill="#334155" font-weight="400" text-anchor="start">I/Q는 디지털 기저대역 신호의 두 성분이다. 실제 하드웨어의 RF·안테나 구성이 한 가지로 고정되지는 않는다.</text>
+</g></svg>

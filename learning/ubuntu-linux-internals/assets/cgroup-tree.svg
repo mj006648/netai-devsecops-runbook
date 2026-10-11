@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">cgroup v2와 systemd slice tree</title>
+  <desc id="desc">Root 아래 system.slice, user.slice, machine.slice가 있고 service cgroup에 CPU와 memory controller 설정과 process accounting이 적용되는 계층</desc>
+  <rect width="1200" height="680" fill="#f8fafc" />
+  <g font-family="sans-serif" text-anchor="middle" stroke-width="2">
+    <rect x="430" y="55" width="340" height="75" rx="12" fill="#dbeafe" stroke="#2563eb" /><text x="600" y="98" font-size="22">cgroup v2 최상위 그룹</text>
+    <rect x="90" y="210" width="280" height="75" rx="12" fill="#e0e7ff" stroke="#4f46e5" /><text x="230" y="253" font-size="20">system.slice</text>
+    <rect x="460" y="210" width="280" height="75" rx="12" fill="#e0e7ff" stroke="#4f46e5" /><text x="600" y="253" font-size="20">user.slice</text>
+    <rect x="830" y="210" width="280" height="75" rx="12" fill="#e0e7ff" stroke="#4f46e5" /><text x="970" y="253" font-size="20">machine.slice</text>
+    <rect x="90" y="375" width="280" height="90" rx="12" fill="#dcfce7" stroke="#16a34a" /><text x="230" y="412" font-size="19">radio.service</text><text x="230" y="442" font-size="16">cpu.max · memory.high</text>
+    <rect x="460" y="375" width="280" height="90" rx="12" fill="#dcfce7" stroke="#16a34a" /><text x="600" y="412" font-size="19">user-1000.slice</text><text x="600" y="442" font-size="16">하위 그룹의 자원 계정</text>
+    <rect x="830" y="375" width="280" height="90" rx="12" fill="#dcfce7" stroke="#16a34a" /><text x="970" y="412" font-size="19">container.scope</text><text x="970" y="442" font-size="16">프로세스 묶음의 경계</text>
+    <rect x="90" y="540" width="280" height="80" rx="12" fill="#fef3c7" stroke="#d97706" /><text x="230" y="575" font-size="18">PID 410 · worker A</text><text x="230" y="602" font-size="18">PID 411 · worker B</text>
+  </g>
+  <g stroke="#475569" stroke-width="4" fill="none"><path d="M600 130V170H230V210" /><path d="M600 170V210" /><path d="M600 170H970V210" /><path d="M230 285V375" /><path d="M600 285V375" /><path d="M970 285V375" /><path d="M230 465V540" /></g>
+  <g font-family="sans-serif" font-size="17" fill="#334155"><text x="50" y="335">부모 설정과 controller</text><text x="50" y="358">활성 범위를 먼저 확인</text><text x="760" y="585">회계 단위는 host 전체가 아니라</text><text x="760" y="610">선택한 subtree일 수 있다</text></g>
+</svg>

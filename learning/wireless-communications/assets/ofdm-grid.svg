@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+<title id="title">OFDM: 시간과 주파수의 자원 격자</title><desc id="desc">교육용 8개 subcarrier와 6개 OFDM symbol의 격자다. 색은 데이터 배정과 기준 신호를 구분한다. CP는 각 시간 심벌의 앞에 붙는 복사 구간이다.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1200" height="100%" fill="#f8fafc"/>
+<g font-family="Noto Sans KR, Malgun Gothic, sans-serif" fill="#0f172a">
+<text x="40" y="52" font-size="29" font-weight="700">OFDM: 시간과 주파수의 자원 격자</text>
+<text x="40" y="96" font-size="17" fill="#334155" font-weight="400" text-anchor="start">교육용 격자: 실제 NR의 RB·pilot 배치를 그대로 그린 것이 아니다.</text>
+<text x="40" y="160" font-size="20" fill="#334155" font-weight="700" text-anchor="start">주파수</text>
+<text x="190" y="193" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f7</text>
+<rect x="250" y="168" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="365" y="168" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="480" y="168" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="595" y="168" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="710" y="168" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="825" y="168" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="190" y="231" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f6</text>
+<rect x="250" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="365" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="480" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="595" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="710" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="825" y="206" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="190" y="269" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f5</text>
+<rect x="250" y="244" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="365" y="244" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="480" y="244" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="595" y="244" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="710" y="244" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="825" y="244" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="190" y="307" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f4</text>
+<rect x="250" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="365" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="480" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="595" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="710" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<rect x="825" y="282" width="108" height="31" rx="4" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="190" y="345" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f3</text>
+<rect x="250" y="320" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="365" y="320" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="480" y="320" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="595" y="320" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="710" y="320" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="825" y="320" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="190" y="383" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f2</text>
+<rect x="250" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="365" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="480" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="595" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="710" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="825" y="358" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="190" y="421" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f1</text>
+<rect x="250" y="396" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="365" y="396" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="480" y="396" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="595" y="396" width="108" height="31" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+<rect x="710" y="396" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="825" y="396" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="190" y="459" font-size="18" fill="#334155" font-weight="400" text-anchor="start">f0</text>
+<rect x="250" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="365" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="480" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="595" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="710" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<rect x="825" y="434" width="108" height="31" rx="4" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="302" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s0</text>
+<text x="417" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s1</text>
+<text x="532" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s2</text>
+<text x="647" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s3</text>
+<text x="762" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s4</text>
+<text x="877" y="501" font-size="18" fill="#334155" font-weight="400" text-anchor="middle">s5</text>
+<text x="966" y="502" font-size="20" fill="#334155" font-weight="400" text-anchor="start">시간 →</text>
+<text x="260" y="550" font-size="18" fill="#334155" font-weight="400" text-anchor="start">파랑: 사용자 A   초록: 사용자 B   회색: 기준 신호 예</text>
+<text x="40" y="603" font-size="20" fill="#334155" font-weight="700" text-anchor="start">각 OFDM 심벌의 시간 샘플: CP 2개 + 유효 샘플 8개</text>
+<rect x="110" y="627" width="83" height="52" rx="6" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="151" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">6</text>
+<rect x="200" y="627" width="83" height="52" rx="6" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="241" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">7</text>
+<rect x="290" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="331" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">0</text>
+<rect x="380" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="421" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">1</text>
+<rect x="470" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="511" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">2</text>
+<rect x="560" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="601" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">3</text>
+<rect x="650" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="691" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">4</text>
+<rect x="740" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="781" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">5</text>
+<rect x="830" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="871" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">6</text>
+<rect x="920" y="627" width="83" height="52" rx="6" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="961" y="660" font-size="20" fill="#334155" font-weight="400" text-anchor="middle">7</text>
+<text x="40" y="731" font-size="17" fill="#334155" font-weight="400" text-anchor="start">CP는 심벌 끝의 샘플 6·7을 앞에 복사한다. 이 모형의 유효 비율은 8/(8+2)=80%다.</text>
+</g></svg>
