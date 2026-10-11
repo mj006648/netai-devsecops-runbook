@@ -1,5 +1,28 @@
 # 14. 실험을 설계하고 근거를 읽는 법
 
+## 원시 자료에서 주장까지의 추적표
+
+실험 row 하나에는 query id, 입력 snapshot, plan hash, estimated와 actual rows, read page·file·byte, spill byte, 결과 checksum, planning과 execution time, 오류를 둔다. cost는 optimizer 상대 단위이고 ms는 관측 단위다. checksum이 다르면 빠른 실행도 성능 후보에서 제외한다.
+
+10회 시간이 [90,91,92,93,94,95,96,97,150,300]ms면 평균은 119.8ms, 중앙값은 94.5ms다. 평균 하나는 두 긴 지연을 숨긴다. cold는 catalog·footer·DB buffer·OS cache 중 무엇을 비웠는지 적고 warm은 어떤 객체를 재사용했는지 적는다. 순서를 교차해 온도와 백그라운드 작업이 한 조건에 몰리지 않게 한다.
+
+QOaaS prototype을 기존 optimizer와 비교할 때 동일 SQL 결과, 통계와 engine capability를 고정한다. planning time, execution time, unsupported plan을 분리하고 모든 Spark workload 우위로 확대하지 않는다. filtered-vector preprint는 exact filtered top-k를 기준으로 filter correctness, ANN recall@k, pruning byte와 cold/warm latency를 따로 본다.
+
+| 단계 | 원시 관측 | 잘못된 해석 |
+|---|---|---|
+| plan | cost 120, rows 100 | 120ms 실행 보장 |
+| scan | 40파일, 800MiB | 결과 40행 |
+| ANN | recall@10 0.9 | SQL filter 90% 정확 |
+| timing | warm 40ms | cold storage도 40ms |
+
+### 완전 풀이 문제 5개
+
+1. estimate100, actual10,000은? **해설:** 100배 과소 추정이다.
+2. [1,1,1,1,46] 평균과 중앙값은? **해설:** 평균10, 중앙1로 tail이 크다.
+3. 결과가 다르면 시간 비교를 계속하는가? **해설:** 정확성 gate 실패로 중단한다.
+4. recall과 filter correctness가 다른 이유는? **해설:** 전자는 관련 이웃 회수율, 후자는 조건 준수 계약이다.
+5. QOaaS planning이 빨라도 전체가 느릴 수 있는가? **해설:** 선택 plan 실행과 데이터 이동 비용이 더 클 수 있다.
+
 [이전: 로컬 실행 모델](13-local-models.md) · [목차](README.md) · [다음: 종합 문제와 용어](15-exercises-glossary-and-sources.md)
 
 데이터베이스 실험은 명령을 한 번 실행하고 걸린 시간을 적는 일이 아니다. 무엇을 바꾸었는지, 무엇을 고정했는지, 어느 층의 시간을 재었는지 설명할 수 있어야 결과를 다시 사용할 수 있다. 이 장의 예시는 실험 설계 모형이며 실제 PostgreSQL에서 측정했다는 주장이 아니다.

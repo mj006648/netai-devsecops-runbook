@@ -1,5 +1,23 @@
 # 13. 로컬 교육 모델
 
+## 코드의 각 숫자를 손으로 먼저 계산한다
+
+MVCC 모델의 Version은 실제 heap tuple이 아니라 value, creator, ended 세 필드의 Python 객체다. Snapshot은 committed 집합과 self_xid를 가진다. visible 함수는 최신 버전부터 creator가 자기 자신이거나 committed인지 확인하고, ended가 자기 자신이거나 committed이면 옛 버전을 끝난 것으로 본다.
+
+v1=(100,creator10,ended30), v2=(80,creator30,ended없음)일 때 old snapshot committed={10},self=20은 v2 creator 30을 인정하지 않고 v1의 ended 30도 committed로 보지 않아 100을 반환한다. new snapshot committed={10,30},self=40은 v2 creator를 인정해 80을 반환한다. self=40이 만든 v3=70은 자기 snapshot에는 보이지만 committed에 40이 없는 다른 XID 41에는 보이지 않는다. 이 모형은 command ID, subtransaction, hint bit와 wraparound를 생략한다.
+
+join 모델의 customers=(100행,10page), orders=(10,000행,500page)에서 page nested loop는 10 + 100×500 = 50,010 단위다. hash는 page 510과 CPU 0.01×10,100=101을 더해 611이다. 단위는 ms가 아니다. customers가 1,000행으로 바뀌면 nested는 500,010이지만 hash row CPU는 110이 되어 합 620이다. 실제 hash가 memory를 넘으면 이 식에 없는 spill 비용이 생긴다.
+
+WAL 모델의 disk page가 value=A,LSN=10이고 committed record가 LSN20,value=B이면 20>10이라 적용해 B,20이 된다. 같은 recovery를 다시 실행하면 20>20이 거짓이라 건너뛴다. abort record LSN30,value=C를 committed 필터가 제외하면 B가 남는다. 실제 PostgreSQL은 미커밋 변화도 물리 redo할 수 있고 최종 가시성은 MVCC 상태가 판단하므로 이 모델을 실제 redo 구현으로 해석하지 않는다.
+
+### 완전 풀이 문제 5개
+
+1. committed={10}에서 creator30 버전은? **해설:** 자기 XID도 아니므로 숨긴다.
+2. inner page가 500에서 50으로 줄면 100 outer nested cost는? **해설:** 10+100×50=5,010이다.
+3. disk LSN25와 record20이면? **해설:** 이미 더 앞선 상태라 skip한다.
+4. assert 통과가 PostgreSQL 증명인가? **해설:** 고정 입력의 교육 invariant만 확인한다.
+5. 모델 시간을 benchmark로 쓸 수 있는가? **해설:** Python 객체 계산이며 storage·concurrency가 없어 불가하다.
+
 [이 책 목차](README.md) · [이전: Spark, Iceberg와 최적화](12-spark-iceberg-and-optimization.md) · [다음: 실험과 연구 설계](14-experiments-and-research.md)
 
 이 장은 외부 database를 띄우지 않고 세 가지 핵심 상태 전이를 Python 표준 라이브러리만으로 재현한다.

@@ -1,10 +1,85 @@
 # 07. Antenna·MIMO·beamforming
 
+## antenna element, port, layer를 구분한다
+
+**antenna element**는 RF 전류와 공간 field를 결합하는 물리 구조 하나다. **antenna port**는 receiver가 같은 channel 특성으로 추정하는 논리 신호 기준이며 물리 element와 1:1일 필요가 없다. **layer**는 독립적으로 전달하려는 데이터 stream이다.
+
+element 네 개로 layer 하나를 서로 다른 위상·진폭으로 보내면 beamforming이다. 두 layer를 보내려면 receiver가 channel에서 두 독립 성분을 구별할 수 있어야 한다. element 수가 곧 layer 수는 아니다.
+
+## channel matrix와 rank
+
+2개 송신 antenna, 2개 수신 antenna면 `y=Hx+n`으로 쓸 수 있다. x는 두 송신 신호, y는 두 수신 관측, H의 각 원소는 특정 송신→수신 경로의 복소 gain이다.
+
+`H=[[1,0],[0,1]]`이면 y1=x1, y2=x2라 두 layer를 쉽게 분리한다. `H=[[1,1],[1,1]]`이면 두 수신 antenna가 같은 합 `x1+x2`만 보므로 두 원래 값을 유일하게 찾기 어렵고 rank가 1이다.
+
+| H 모형 | rank | 가능한 독립 layer 의미 |
+|---|---:|---|
+| `[[1,0],[0,1]]` | 2 | 두 stream 분리 가능 |
+| `[[1,1],[1,1]]` | 1 | 한 독립 방향 |
+| 한 열이 다른 열의 0.9배 | 거의 종속 | noise에서 분리 불안정 |
+
+rank는 matrix의 독립 열·행 수다. antenna 수가 많아도 경로가 강하게 correlated하면 rank가 낮다.
+
+## precoding과 beamforming
+
+**precoding**은 layer vector에 weight matrix W를 곱해 antenna별 송신 신호를 만든다. 목적은 원하는 방향에서 더해지고 다른 방향 간섭을 줄이거나, receiver가 layer를 분리하기 좋게 만드는 것이다.
+
+네 element가 한 layer를 보낼 때 목표 방향의 경로 위상을 `[0°,90°,180°,270°]`로 관측했다면 송신 weight에 반대 위상 `[0°,-90°,-180°,-270°]`를 넣어 목표에서 같은 위상으로 도착하게 할 수 있다. 각 element power를 1/4로 나눠 전체 power를 유지한다는 조건도 필요하다.
+
+weight를 바꿔도 antenna pattern, quantized phase shifter, calibration, PA 제한 때문에 이상 합과 다를 수 있다. beam은 레이저처럼 경계가 딱 잘린 선이 아니라 main lobe와 side lobe가 있는 방향 패턴이다.
+
+## CSI의 생성과 수명
+
+**CSI(Channel State Information)** 는 주파수·antenna 쌍의 complex channel 추정이다. receiver가 pilot를 측정하고 추정하며, TDD reciprocity calibration이나 feedback으로 transmitter가 사용한다. CSI에는 측정 시간, 주파수, beam, UE 위치 조건이 붙는다.
+
+UE가 15 m/s로 움직이고 channel coherence time이 5 ms인 환경에서 CSI가 20 ms 늦게 도착하면 이미 네 coherence interval이 지나 낡았을 수 있다. 오래된 CSI precoder는 원하는 UE에서 상쇄되고 다른 UE에 간섭을 줄 수 있다.
+
+| 시각 | 주체 | 상태 |
+|---:|---|---|
+| 0 ms | UE | pilot 측정 |
+| 2 ms | UE | CSI quantize·feedback |
+| 6 ms | gNB | CSI 수신 |
+| 10 ms | scheduler | precoder 선택 |
+| 20 ms | gNB | 실제 전송, channel 변화 가능 |
+
+## MIMO 세 목적의 조건
+
+spatial diversity는 같은 정보를 여러 경로로 보내 신뢰성을 높인다. spatial multiplexing은 독립 layer로 rate를 높인다. beamforming은 특정 방향에 에너지를 집중하거나 간섭을 제어한다. 같은 antenna array가 상황에 따라 세 목적 중 하나나 조합으로 쓰인다.
+
+SNR이 낮고 rank 1이면 두 layer multiplexing보다 한 layer beamforming이 낫다. 높은 SNR과 rank 2 channel이면 두 layer가 throughput을 높일 수 있다. “4×4 MIMO=항상 4배”가 아닌 이유다.
+
+## 두 수치 추적
+
+첫째 H가 identity이고 x=[1,-1]이면 y=[1,-1]이다. receiver가 그대로 두 layer를 얻는다. H가 all-ones면 y=[0,0]이 되어 이 x 조합은 완전히 상쇄된다.
+
+둘째 총 송신 power 100 mW를 layer 하나의 네 antenna에 균등 분배하면 element당 25 mW다. 네 신호가 목표에서 coherent하게 더해지는 이상 조건의 field 합과 다른 방향 결과는 단순 전력 100 mW 분산과 같지 않으며 antenna gain·array factor로 계산해야 한다.
+
+## AI beam 연구 조건
+
+AI가 beam을 선택해도 입력 CSI·위치·과거 beam의 수명과 codebook을 명시해야 한다. 다른 band channel 예측은 파장과 산란 차이 때문에 단순 복사가 아니다. [physics-guided cross-band 연구](https://arxiv.org/abs/2605.31279)는 해당 simulation과 평가 조건의 연구이며 표준 beam 성능 보장이 아니다.
+
+## 추가 문제와 완전 해설
+
+### 1. 송신 4, 수신 2 antenna의 matrix 크기는?
+수신×송신이므로 2×4다.
+
+### 2. H 두 열이 완전히 같으면 최대 rank는?
+독립 열이 하나이므로 1이다.
+
+### 3. element 8개면 layer 8개인가?
+아니다. channel rank, UE antenna, SNR, 구현이 layer 수를 제한한다.
+
+### 4. CSI가 늦으면?
+실제 channel과 다른 precoder를 선택해 gain 손실·간섭이 생긴다.
+
+### 5. diversity와 multiplexing 차이는?
+전자는 같은 정보의 신뢰성, 후자는 독립 정보 stream의 rate가 주목적이다.
+
 [이 책 목차](README.md)
 
 [← 이전](06-ofdm-time-frequency-and-resources.md) · [다음 →](08-wifi-and-medium-access.md)
 
-## antenna
+## 핵심 계산 복습: antenna
 
 안테나는 전송선 전기 신호와 공간 전자기파를 연결한다.
 gain은 특정 방향으로 energy를 집중한 정도다.

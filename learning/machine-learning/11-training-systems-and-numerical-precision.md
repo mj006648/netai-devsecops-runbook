@@ -1,5 +1,33 @@
 # 11. 학습 system과 수치 정밀도
 
+## 같은 실수를 다른 bit로 저장한다는 뜻
+
+부동소수점은 대략 부호, 지수(exponent), 유효숫자(mantissa/significand)로 값을 나타낸다. 지수 bit는 큰 값과 작은 값의 범위, 유효숫자 bit는 가까운 값 사이 정밀도에 영향을 준다. 모든 실수를 정확히 저장할 수 없어 가장 가까운 표현값으로 **반올림(rounding)**한다.
+
+FP32는 4 bytes, FP16과 BF16은 2 bytes지만 둘은 같다가 아니다. BF16은 FP32와 비슷한 지수 범위를 유지하고 유효숫자가 짧다. FP16은 더 많은 유효숫자 bit를 가지지만 지수 범위가 좁어 overflow·underflow 위험이 다르다.
+
+예를 들어 parameter 1,000,000개 payload는 FP32 약 4 MB, 16-bit 약 2 MB다. 실제 training peak에는 gradient, optimizer state, activation, workspace가 더해져 정확히 절반이라고 단정할 수 없다.
+
+**Overflow**는 표현 가능한 최대 범위를 넘어 infinity가 되는 일이고 **underflow**는 작은 값이 0 또는 매우 거친 값으로 사라지는 일이다. Gradient `1e-8`에 loss scale 1024를 곱하면 `1.024e-5`가 된다. Backward 뒤 **unscale**로 1024를 나눠 원래 크기로 돌린 다음 clipping과 optimizer step을 수행한다.
+
+큰 gradient도 1024배 되어 overflow하면 유한값 검사에서 step을 건너뛰고 scale을 줄일 수 있다. Loss scaling은 FP16에서 특히 쓰이며 BF16에도 무조건 같은 필요가 있다고 일반화하지 않는다.
+
+**Gradient accumulation**은 여러 microbatch backward 결과를 buffer에 더하고 한 번 update하는 방법이다. Microbatch A gradient 2, B gradient 6을 평균하려면 `(2+6)/2=4`를 쓴다. 합 8을 그대로 쓰면 학습률 효과가 두 배가 된다. 유효 token 수가 다르면 단순 batch 수 평균이 token 평균과 다를 수 있다.
+
+Train/eval mode는 dropout과 BatchNorm 동작을 바꾼다. Train dropout은 일부 activation을 무작위로 끄고, eval은 모두 사용한다. BatchNorm train은 batch 통계를 사용·갱신하고 eval은 저장된 running 통계를 사용한다.
+
+Gradient mode는 별도다. Eval이어도 gradient 기록이 켜질 수 있고, no-grad여도 model이 train mode면 dropout은 무작위일 수 있다. 두 상태를 목적에 맞게 각각 설정한다.
+
+FlashInfer 같은 serving 연구에서 CUDA Graph는 반복 launch overhead를 줄일 수 있지만 dynamic request shape와 KV layout이 graph 재사용을 제한할 수 있다. Training mixed precision의 수치 안정성과 serving graph 최적화는 같은 문제가 아니다.
+
+## 유도 문제 5개
+
+1. FP32 2M parameter payload는? **해설:** 8,000,000 bytes로 약 7.63 MiB다.
+2. Gradient `1e-5`, scale 1024의 scaled 값은? **해설:** 0.01024다.
+3. Unscale 전 clipping하면? **해설:** 확대된 기준으로 잘라 원래 의도와 다른 threshold가 된다.
+4. Eval이 autograd를 끄는가? **해설:** 아니다. Layer mode와 gradient 기록은 별도다.
+5. BF16과 FP16 차이는? **해설:** 둘 다 16-bit지만 지수 범위와 유효숫자 배분이 달라 overflow·정밀도 trade-off가 다르다.
+
 [← 이전](10-attention-and-transformers.md) · [목차](README.md) · [다음 →](12-ai-ran-and-operational-evaluation.md)
 
 학습 system은 data loader, CPU, accelerator, memory, network가 함께 동작한다.

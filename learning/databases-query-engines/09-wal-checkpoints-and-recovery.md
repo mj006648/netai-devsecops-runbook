@@ -6,6 +6,26 @@ WAL(Write-Ahead Log)은 data page 변경 내용을 복구할 log로 먼저 기�
 
 모든 출력과 수치는 교육용이며 실제 PostgreSQL·Spark·Iceberg 실행 결과가 아니다.
 
+## LSN과 세 종류의 진행 위치
+
+**LSN**은 WAL byte stream 안의 순서 위치다. WAL buffer는 메모리에 있고, segment file은 지속 저장소에 있다. dirty page는 버퍼 풀의 변경된 사본이며 page LSN은 그 페이지에 반영된 최신 로그 위치를 나타낸다. backend가 변경을 만들고 WAL writer가 로그를 flush하며, background writer/checkpointer가 데이터 페이지를 쓴다. recovery process는 checkpoint 정보에서 출발해 WAL stream을 순서대로 읽는다.
+
+초기 디스크 page42가 value=50,pageLSN=100이라고 하자. UPDATE가 WAL 120과 메모리 value=60,pageLSN=120을 만든다. commit record는 140이고 WAL이 140까지 durable해진 뒤 ACK가 나간다. 데이터 page는 여전히 50일 수 있다. crash 뒤 recovery는 pageLSN 100을 보고 WAL 120의 physical redo를 적용해 60으로 만든다. 이미 pageLSN 120인 사본에는 같은 변경을 다시 적용하지 않는 조건이 반복 안전성을 돕는다.
+
+체크포인트는 모든 작업을 멈추고 완전한 파일 복사본을 만드는 사건이 아니다. 복구 시작 정보를 기록하고 dirty page 쓰기를 진행해 재시작 때 스캔할 로그 범위를 제한한다. 너무 드물면 복구할 WAL과 dirty 집합이 커지고, 너무 잦으면 정상 실행 중 쓰기 압력이 커질 수 있다. WAL 보존은 checkpoint뿐 아니라 replica, archive, backup 복구 지점의 요구를 받는다.
+
+WAL stream의 physical redo와 MVCC visibility를 구분한다. redo는 페이지에 필요한 바이트 변화를 재구성하지만, 어떤 튜플 버전이 특정 snapshot에 보이는지는 creator/ended XID와 commit 상태 규칙이 결정한다. 로그를 재생했다고 모든 버전이 모든 독자에게 보이는 것은 아니다.
+
+이 책의 WAL 모델이 committed transaction의 record만 골라 최종 값을 만드는 방식이라면 실제 crash recovery의 모든 동작을 표현하지 않는다. 실제 엔진은 미커밋 변경이 페이지에 존재할 가능성, commit/abort 상태, page LSN, full-page image를 함께 다룬다. `commit-filtered` 결과 모형은 트랜잭션 의미 확인용이지 물리 redo 검증기가 아니다.
+
+### 문제 5개
+
+1. durable WAL=140, disk pageLSN=100이면 commit 가능한가? **해설:** 계약이 WAL 140 durable을 요구한다면 가능하고 crash 뒤 redo한다.
+2. pageLSN=120에 WAL120을 다시 적용해야 하는가? **해설:** 일반 모형에서는 이미 반영되어 건너뛴다. 실제 레코드 규칙을 따른다.
+3. checkpoint 뒤 WAL을 모두 지워도 되는가? **해설:** replica·archive·backup과 미완료 복구 범위가 필요할 수 있어 아니다.
+4. WAL만 있으면 빈 디스크에서 복구 가능한가? **해설:** 시작 base data와 연속된 필요한 WAL chain이 필요하다.
+5. redo와 visibility 차이는? **해설:** redo는 물리 상태 복원, visibility는 snapshot별 논리 버전 선택이다.
+
 ![09. WAL, checkpoint와 recovery 흐름](assets/wal-recovery.svg)
 
 ## 1. 단어와 위치

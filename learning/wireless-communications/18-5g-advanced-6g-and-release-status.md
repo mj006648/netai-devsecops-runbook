@@ -1,5 +1,44 @@
 # 18. 5G-Advanced, 6G, Release 상태 읽기
 
+## 새 기능 이름보다 먼저 “어느 단계의 주장인가”를 묻는다
+
+표준화 문서에 연구 항목이 생겼다는 것, 규범 규격이 합의됐다는 것, 제품이 구현됐다는 것, 시험 기관이 적합성을 확인했다는 것, 사업자가 상용망에 켰다는 것은 서로 다른 상태다.
+
+가능성과 요구사항을 조사하는 작업을 **Study Item**이라 한다. 구현이 따라야 할 메시지·절차를 만드는 작업은 **Work Item**과 규범 문서로 이어진다. **freeze**는 특정 단계의 변경 범위를 안정시키는 사건이지 모든 코드·제품·상용망이 같은 날 완성된다는 뜻이 아니다.
+
+| 주장 | 실제 객체 | 담당 주체 | 아직 남은 일 |
+|---|---|---|---|
+| study 시작 | 보고서·후보 기술 | 3GPP 그룹 | 규범 절차 |
+| 기능 freeze | 기능 범위 | 표준 그룹 | 상세 protocol |
+| Stage 3 freeze | 메시지·상태 절차 | protocol 그룹 | ASN.1/OpenAPI |
+| 제품 지원 | modem·gNB software | 공급사 | 시험·배포 |
+| 상용 운영 | 실제 망·상품 | 사업자 | 지속 운영 |
+
+Release Portal의 End date는 해당 행의 TSG SA meeting 표기다. Closure date가 비어 있다면 이를 release 전체의 ASN.1/OpenAPI freeze 날짜라고 바꾸어 읽지 않는다. Rel-20 계획은 Stage 3와 ASN.1/OpenAPI freeze를 별도 milestone으로 구분한다.
+
+## 6G 연구와 사용자 서비스 사이
+
+ITU IMT-2030은 6G framework와 requirements를 만드는 단계다. 후보 use case와 성능 목표는 평가 방향을 정하지만 현재 모든 장비가 그 수치를 제공한다는 뜻이 아니다. 3GPP study, normative work, spectrum 결정, chipset, device, interoperability, 사업자 투자 순서가 남는다.
+
+AI-RAN 논문이 simulation에서 KPI를 높였어도 표준 interface 지원, 실제 RAN timing, safety fallback, 다른 vendor 상호 운용을 별도로 검증한다. O-RAN R005의 AI lifecycle 항목은 interface·lifecycle specification이며 특정 model 성능 논문이 아니다.
+
+## 추가 문제와 완전 해설
+
+### 1. Study Item 포함은 상용 지원인가?
+아니다. 가능성·요구 조사 단계다.
+
+### 2. End date와 ASN.1 freeze를 같다고 볼 수 있는가?
+portal 열과 별도 freeze milestone을 확인해야 하며 자동 동일시하면 안 된다.
+
+### 3. 규범 규격 freeze 뒤 남는 일은?
+구현, 적합성·상호운용 시험, 조달·배포가 남는다.
+
+### 4. 현장 demo가 상용 운영인가?
+아니다. 제한 조건 시험과 지속 서비스는 다르다.
+
+### 5. 6G 목표 수치가 현재 보장인가?
+아니다. framework·requirements와 구현·상용 결과를 구분한다.
+
 [이전: RAN edge AI inference](17-ai-on-ran-edge-inference.md) · [목차](README.md) · [다음: 로컬 모델과 연구](19-local-models-and-research.md)
 
 자료 확인일: **2026-10-11**

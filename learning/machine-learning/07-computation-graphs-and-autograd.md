@@ -1,5 +1,39 @@
 # 07. 계산 graph와 자동미분
 
+## 갈라졌다 합쳐지는 graph를 순서대로 역전파하기
+
+**Node**는 tensor 값이나 연산을 나타내고 **edge**는 한 값이 다음 연산의 입력이 되는 의존 관계다. **Local derivative**는 한 연산이 자기 입력을 조금 바꿨을 때 출력을 얼마나 바꾸는지 나타낸다. **Chain rule**은 경로의 local derivative를 곱해 먼 parameter가 loss에 미치는 영향을 구한다.
+
+```text
+w=2
+a=3w=6
+b=w²=4
+c=a+b=10
+loss=0.5(c-4)²=18
+```
+
+Backward는 loss에서 1로 시작한다. `dL/dc=c-4=6`이다. 덧셈 c=a+b의 local derivative는 두 입력 모두 1이므로 `dL/da=6`, `dL/db=6`이다.
+
+a=3w 경로는 `da/dw=3`이므로 w에 `6×3=18`을 보낸다. b=w² 경로는 `db/dw=2w=4`이므로 `6×4=24`를 보낸다. 같은 leaf w로 온 두 기여를 더해 `w.grad=42`다.
+
+**Gradient buffer**는 이 42를 저장하는 공간이다. Backward가 끝나도 w 값은 아직 2다. Optimizer가 학습률 0.01로 `w←w-0.01×42=1.58`을 수행해야 parameter가 바뀐다.
+
+여러 microbatch에서 backward를 호출하면 framework는 기본적으로 같은 buffer에 더할 수 있다. 첫 batch gradient 42, 둘째 -10이면 buffer는 32다. 의도한 accumulation이면 평균·분모를 맞추고, 새 step이면 먼저 buffer를 0으로 만든다.
+
+Forward 때 b=w²의 backward에는 당시 w가 필요하다. Autograd는 필요한 값을 saved tensor나 context에 보관할 수 있다. Backward 전 w를 제자리 수정하면 version 불일치나 잘못된 gradient 위험이 있다.
+
+`requires_grad`가 켜진 입력이 기록 가능한 연산을 지나야 grad_fn 관계가 생긴다. No-grad 영역이나 gradient가 필요 없는 입력에서는 graph가 기록되지 않을 수 있다. PyTorch main 문서는 개발 문서이므로 특정 출시 version의 고정 API라고 단정하지 않는다.
+
+반례로 autograd가 42를 정확히 계산해도 모델 식, label, loss가 잘못됐으면 학습은 잘못된다. Autograd는 기록된 graph의 미분을 수행하지 연구 문제의 타당성을 보장하지 않는다.
+
+## 유도 문제 5개
+
+1. 두 경로가 w에 5와 -2를 보내면? **해설:** 같은 leaf gradient는 더해져 3이다.
+2. Backward 직후 w는 바뀌는가? **해설:** 아니다. Buffer만 채우고 optimizer update가 별도다.
+3. 두 batch gradient 4와 6을 평균 누적하면? **해설:** 합 10을 batch 수 2로 나눠 5를 optimizer에 사용한다.
+4. Saved tensor가 필요한 이유는? **해설:** local derivative가 forward 당시 입력·출력을 필요로 할 수 있다.
+5. Gradient가 정확하면 모델도 옳은가? **해설:** 아니다. 식과 data 의미가 잘못돼도 그 graph의 미분은 정확할 수 있다.
+
 [← 이전](06-regularization-and-data-quality.md) · [목차](README.md) · [다음 →](08-neural-networks-and-activations.md)
 
 계산 graph는 값이 어떤 연산을 거쳐 loss가 되었는지 나타낸다.

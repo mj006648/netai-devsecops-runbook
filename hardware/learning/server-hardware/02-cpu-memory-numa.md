@@ -479,7 +479,40 @@ A7 작업일지에는 NUMA0 논리 CPU가 0–31·64–95, NUMA1 논리 CPU가 3
 
 두 상황의 해법은 다르다. 용량 문제는 필요한 바이트 수와 배치 정책을, 대역폭 문제는 채널 사용·측정 처리량·동시 작업을 살핀다. DIMM 증설은 둘 모두에 영향을 줄 수 있지만 **무엇이 병목이었는지**를 확인한 뒤 효과를 판단한다.
 
-## 8. 스스로 계산해 보기
+## 8. 주소 하나가 DRAM의 행과 NUMA 경로에 도달하는 추적 모형
+
+CPU가 가상주소 `0x20ABC`를 load한다고 하자. 4KiB page이므로 offset은 아래 12비트 `0xABC`, VPN은 `0x20`이다. TLB에 VPN 0x20이 없으면 page table walk가 PTE를 찾는다. PTE가 valid이고 PFN 0x777, read 권한이 있으면 물리주소는 `0x777000+0xABC=0x777ABC`다. TLB miss는 번역 캐시에 없다는 뜻이고, valid PTE를 찾았으므로 page fault는 아니다.
+
+물리주소는 메모리 controller의 주소 매핑 함수에 들어가 channel, rank, bank, row, column 선택으로 나뉜다. 정확한 비트 배치는 플랫폼마다 다르므로 `0x777ABC`에서 특정 bank 번호를 임의로 단정하지 않는다. 대신 controller가 이 주소를 node1의 channel0, rank0, bank3, row10, column 위치로 해석했다고 가정해 이후 명령을 추적한다.
+
+| 시점 | 주체 | bank의 전 상태 | 명령·이동 | 뒤 상태 |
+|---:|---|---|---|---|
+| t0 | core·TLB | 번역 없음 | page walk로 PFN·권한 획득 | TLB에 번역 저장 |
+| t1 | cache 계층 | 요청 line 없음 | memory controller로 물리주소 전달 | miss queue 항목 생성 |
+| t2 | controller | bank3에 row9 열림 | PRE로 기존 row 닫기 | precharged |
+| t3 | controller·DRAM | 열린 row 없음 | ACT row10, 셀 전하를 row buffer가 감지·복원 | row10 활성 |
+| t4 | controller·DRAM | row10 활성 | READ column, burst로 cache line 전송 | line 반환 |
+| t5 | cache·core | line 도착 | 요청 offset의 값 선택 | load 목적 레지스터 갱신 |
+
+같은 bank의 row10을 곧 다시 읽으면 PRE와 ACT를 생략할 수 있는 row hit가 된다. row11이면 최소 타이밍을 지키며 row10을 닫고 새 행을 열어야 한다. 다른 bank 요청은 일부 겹칠 수 있지만 channel의 command·data bus와 controller queue는 공유한다. “bank가 많으니 지연이 1/bank 수로 줄어든다”는 결론은 틀리다.
+
+이 page가 node1 DRAM에 있는데 thread가 node0 CPU에서 실행되면 load 요청과 반환이 소켓 간 interconnect를 지난다. node는 CPU 하나와 일대일인 이름이 아니다. 여러 core와 memory controller가 한 node에 속할 수 있고 BIOS 설정은 한 socket을 여러 node로 노출할 수 있다. CPU affinity를 node1로 옮겨도 이미 node0에서 first-touch한 page가 자동으로 따라간다고 가정할 수 없다.
+
+### 공정한 NUMA·채널 측정과 실패 반례
+
+같은 배열 크기, 같은 접근 순서, 같은 thread 수로 local 배치와 remote 배치를 비교한다. 실행 CPU뿐 아니라 page가 실제 어느 node에 있는지 확인하고, 첫 접근 주체를 통제한다. 배열이 LLC에 들어가면 DRAM·NUMA 비교가 아니라 cache 비교가 되므로 working set도 기록한다. 순차 접근과 무작위 접근은 prefetch와 row locality가 달라 별도 실험으로 둔다.
+
+DIMM을 더 장착한 전후에는 용량, 채널 분산, 지원 속도, rank 구성, 실제 작업 처리량을 함께 기록한다. 새 DIMM 때문에 지원 데이터율이 바뀌면 “채널 수만 증가”한 실험이 아니다. remote 실행이 느렸다는 한 결과로 DRAM 자체가 느리다고 결론내면 interconnect와 coherence 비용을 놓친다. A7의 기존 구성 관측은 그대로 사실이지만 작업 병목은 동일 입력의 전후 측정 없이는 확정되지 않는다.
+
+## 9. 추가 문제와 전체 유도 해설
+
+1. `0x20ABC`에서 page offset이 `0xABC`인 이유는 무엇인가? 4KiB가 `2^12`바이트이므로 아래 12비트가 page 안 위치이고 나머지가 VPN이다.
+2. TLB miss 뒤 valid PTE를 찾았다. fault인가? 아니다. 번역 cache만 비었고 page는 존재하며 권한도 허용된다.
+3. bank에 row10이 열린 상태에서 같은 row의 다른 column을 읽으면 무엇을 아끼는가? PRE와 ACT를 생략할 수 있어 row buffer의 값을 READ한다.
+4. thread만 node1 CPU로 옮기면 node1 local이 되는가? 아니다. page 배치는 별도이며 first-touch와 memory policy를 확인해야 한다.
+5. DIMM 추가 뒤 처리량이 그대로라면 증설이 실패했는가? 용량 확보 목적이면 성공일 수 있다. 성능 목적이라면 workload가 계산·cache·장치 병목인지와 실제 채널 사용을 다시 측정한다.
+
+## 10. 스스로 계산해 보기
 
 1. EPYC 9355 두 개가 있고 각 CPU가 32코어·64스레드라면 물리 코어와 논리 CPU는 각각 몇 개인가?
 2. DDR5-6400의 64비트 데이터 채널 하나에서 제어·명령 오버헤드를 무시한 초당 데이터량은 얼마인가? 두 채널을 *서로 다른 소켓에서* 동시에 쓰면 산술 합계는 얼마인가?

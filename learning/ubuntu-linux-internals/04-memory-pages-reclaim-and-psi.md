@@ -4,164 +4,126 @@
 
 [← 이전: CPU scheduling](03-cpu-scheduling-and-pressure.md) · [다음: cgroup v2 hierarchy →](05-cgroup-v2-hierarchy-and-delegation.md)
 
-## virtual memory
+프로그램이 보는 주소와 RAM 칩의 위치는 같은 것이 아니다. kernel은 process마다 가상 주소 공간을 만들고 page 단위 mapping과 권한을 관리한다. 메모리가 부족하면 단순히 “free가 0이 됐다”고 죽이는 대신 cache를 회수하고 dirty page를 writeback하며, 이 과정의 지연이 memory pressure로 나타난다.
 
-process는 virtual address를 본다.
-page table이 virtual page를 physical frame과 permission에 연결한다.
-TLB는 최근 변환을 cache한다.
-page fault는 mapping/permission으로 access를 완료할 수 없을 때 kernel로 들어가는 사건이다.
+## 1. 가상 주소에서 page까지
+
+**가상 주소(virtual address)**는 process가 load/store instruction에 사용하는 주소다. **page table**은 virtual page를 physical frame과 읽기·쓰기·실행 권한에 연결한다. **TLB**는 최근 주소 변환을 CPU 안에 cache한다. TLB miss면 page table walk가 필요하다.
+
+**page fault**는 CPU가 현재 translation·permission만으로 접근을 완료하지 못해 kernel handler로 들어가는 사건이다. 합법적인 file mapping의 아직 안 읽은 page라면 kernel이 storage에서 가져와 mapping한 뒤 instruction을 재시도할 수 있다. 존재하지 않는 주소나 금지된 쓰기라면 signal로 process를 종료할 수 있다. page fault라는 이름이 항상 오류를 뜻하지 않는다.
 
 ```mermaid
 flowchart TD
-    A[VA access] --> T{TLB hit}
-    T -->|yes| R[frame access]
-    T -->|no| W[page table walk]
-    W --> P{present+permission}
-    P -->|yes| F[TLB fill] --> R
-    P -->|no| X[page fault]
-    X --> H[kernel fault handler]
+    A[task가 virtual address 접근] --> T{TLB hit?}
+    T -->|예| P{권한 허용?}
+    T -->|아니오| W[page table walk]
+    W --> P
+    P -->|예·present| R[physical frame 접근]
+    P -->|없음 또는 특별 처리| F[page fault handler]
+    F -->|합법·자원 확보| M[frame 할당·memcg charge·PTE 연결]
+    M --> R
+    F -->|불법 또는 실패| E[signal·allocation 실패·OOM 가능]
 ```
 
-## RSS와 VSZ
+## 2. VSZ·RSS·PSS가 다른 이유
 
-VSZ/VIRT는 process가 가진 virtual mapping 범위의 크기다.
-RSS는 현재 RAM에 resident한 page 크기의 근사다.
-둘은 실제 고유 physical memory와 같지 않다.
+**VSZ/VIRT**는 process의 virtual mapping 범위다. `mmap()`으로 10GiB 범위를 예약해도 실제 touch가 100MiB면 VSZ는 10GiB, RSS는 약 100MiB일 수 있다. **RSS(resident set size)**는 현재 RAM에 resident한 page 관점이지만 shared page가 여러 process RSS에 반복 계산될 수 있다. **PSS(proportional set size)**는 shared page 비용을 공유 process에 나눠 귀속한다.
 
-shared page는 여러 process RSS에 각각 보일 수 있다.
-PSS는 shared page를 나누어 귀속하는 관점이다.
+따라서 RSS 두 개를 더한 값과 host 물리 사용량이 항상 같지 않다. copy-on-write page, shared library, page cache와 kernel memory를 구별한다.
 
-10GiB address를 `mmap`했지만 100MiB만 touch했다면 VSZ는 크게, RSS는 작게 보일 수 있다.
-reservation과 physical allocation 시점이 다르기 때문이다.
+## 3. anonymous·file·dirty page
 
-## anonymous와 file page
+**anonymous page**는 heap·stack처럼 다시 읽을 원본 file이 없는 memory다. 회수하려면 swap backing이 있거나 내용을 버려도 되는 특별 상태여야 한다. **file page**는 executable, mapped file과 buffered I/O page cache처럼 file에 연결된다. clean file page는 필요하면 원본에서 다시 읽을 수 있어 drop하기 쉽다. dirty file page는 RAM 내용이 storage보다 새로워 먼저 writeback해야 한다.
 
-anonymous page는 heap/stack처럼 원본 file이 없는 memory다.
-file page는 executable, mapped file, page cache와 연결될 수 있다.
+| page 종류 | clean/dirty 의미 | reclaim 시 필요한 일 | 다시 접근할 때 |
+| --- | --- | --- | --- |
+| clean file | storage와 같음 | mapping에서 회수 가능 | storage read로 fault |
+| dirty file | RAM이 더 최신 | filesystem·device writeback | 완료 뒤 clean 가능 |
+| anonymous | file 원본 없음 | swap-out 또는 유지 | swap-in 필요 가능 |
+| pinned/unevictable | 이동·회수 제한 | 즉시 회수 곤란 | 사용 목적 종료 필요 |
 
-| page | clean일 때 | dirty일 때 |
-|---|---|---|
-| file | 원본에서 재읽을 수 있어 drop 가능 | writeback 뒤 회수 |
-| anonymous | 일반적으로 그냥 drop 불가 | swap backing이 있으면 swap-out 가능 |
+## 4. 1GiB cgroup의 allocation을 끝까지 추적하기
 
-## reclaim
+현재 anonymous 600MiB, clean file 250MiB, dirty file 100MiB, 기타 50MiB로 총 1000MiB라고 하자. worker가 새 주소 120MiB를 처음 touch한다. CPU가 page fault를 내고 kernel allocator가 frame과 memory cgroup charge를 시도한다.
 
-free frame이 부족하면 kernel이 reclaim 후보를 scan한다.
-kswapd가 background에서 움직일 수 있다.
-allocation task가 direct reclaim을 수행해 지연을 맞을 수도 있다.
+limit을 넘으므로 reclaim이 clean file cache 120MiB를 drop할 수 있다면 allocation은 성공하고 application은 계속된다. 곧 같은 file을 읽으면 storage I/O가 다시 발생한다. clean cache가 20MiB뿐이고 swap이 없으며 dirty writeback이 느리면 allocation task가 direct reclaim과 I/O를 기다려 latency가 크게 늘고 hard limit에서는 OOM 가능성이 생긴다.
 
-```mermaid
-sequenceDiagram
-    participant A as allocating task
-    participant K as reclaim
-    participant D as storage
-    A->>K: page 요청
-    K->>K: clean page drop 시도
-    alt dirty/file or swap needed
-        K->>D: writeback/swap I/O
-        D-->>K: completion
-    end
-    K-->>A: free frame 또는 실패
-```
+| 단계 | `memory.current` 성격 | task 상태 | 외부 관측 |
+| ---: | --- | --- | --- |
+| touch 전 | 약 1000MiB | running | RSS 증가 전 |
+| fault·charge 시도 | 1120MiB 필요 | kernel 실행 | minor/major fault 증가 가능 |
+| reclaim scan | limit 초과 | reclaim 또는 대기 | PSI some, `memory.events` |
+| clean 120MiB drop | 공간 확보 | runnable 복귀 | file cache 감소 |
+| 재접근 | file page 없음 | storage blocked 가능 | read latency·I/O 증가 |
 
-## 1GiB memcg 예
+`malloc()` 성공과 physical page charge 시점도 다를 수 있다. allocator가 virtual 범위만 제공하고 실제 touch 때 fault·charge가 일어나기 때문이다.
 
-현재 상태:
+## 5. background와 direct reclaim
+
+**reclaim**은 kernel이 재사용할 frame을 확보하는 작업이다. `kswapd` 같은 kernel thread가 background에서 미리 움직일 수 있고, allocation한 task가 직접 scan·writeback을 수행하는 direct reclaim도 있다. 후자는 업무 thread 지연으로 바로 보인다.
+
+회수 성공 여부는 page 종류, 최근 사용, dirty 상태, swap, filesystem과 device 속도에 달린다. free memory가 적어도 회수 가능한 cache가 많으면 즉시 OOM은 아니다. 반대로 host free가 있어도 cgroup hard limit에 갇힌 workload는 자기 범위에서 reclaim·OOM을 겪을 수 있다.
+
+## 6. memory PSI와 일관된 단위
+
+`memory.pressure`의 `some`은 범위 안 적어도 일부 non-idle task가 memory pressure로 stall한 wall time이고 `full`은 모든 non-idle task가 동시에 stall한 wall time이다. byte 사용률이나 swap 비율이 아니다.
 
 ```text
-anonymous 600MiB
-file cache clean 250MiB
-file dirty 100MiB
-기타 50MiB
-합계 1000MiB
+some avg10=20.00 avg60=8.00 avg300=3.00 total=5400000
+full avg10=5.00 avg60=2.00 avg300=1.00 total=900000
 ```
 
-새 120MiB allocation이 오면 limit을 넘는다.
-clean file 120MiB를 drop할 수 있다면 allocation이 진행될 수 있다.
-곧 같은 file을 읽으면 storage I/O가 다시 발생한다.
+10초 동안 some `total`이 1,500,000µs 증가하면 구간 some stall은 1.5초, 15%다. `avg10=20`을 정확히 2초라고 역산하지 않는다. total은 microsecond 누적이고 `memory.current`는 byte이므로 단위를 섞지 않는다.
 
-clean cache가 20MiB뿐이고 swap도 없으며 dirty writeback이 느리면 reclaim이 막혀 OOM 위험이 커진다.
+두 번째 흐름에서 dirty writeback이 800ms 걸린 동안 allocation task 둘이 기다리고 다른 계산 task 하나는 진행했다고 하자. 그 800ms는 some에 들어갈 수 있지만 모든 non-idle task가 막힌 것은 아니므로 full 전체로 잡히지는 않는다. 계산 task도 같은 reclaim 경로에 막히면 full이 증가할 수 있다.
 
-## memory PSI
-
-memory PSI `some`은 적어도 일부 task가 memory pressure로 stall한 시간이다.
-`full`은 모든 non-idle task가 동시에 stall한 시간 관점이다.
-
-실행하지 않은 read-only 예:
-
-```bash
-cat /proc/pressure/memory
-cat /sys/fs/cgroup/memory.pressure
-```
-
-system PSI와 cgroup PSI는 범위가 다르다.
-`memory.current`가 limit 근처라는 사실과 PSI가 높은 사실도 같은 말이 아니다.
-reclaim이 쉽게 끝나면 limit 근처여도 stall이 작을 수 있다.
-
-## memcg
-
-memory cgroup은 범위 안 memory를 charge하고 control한다.
-host 전체 free RAM이 있어도 `memory.max`에 닿으면 그 cgroup에서 reclaim/OOM이 날 수 있다.
-shared page charge 규칙과 kernel memory accounting은 세부 문서를 확인한다.
-
-## read-only 관측
+## 7. 관측 출력 읽기
 
 ```bash
 cat /proc/meminfo
 cat /proc/self/status
 cat /sys/fs/cgroup/memory.current
+cat /sys/fs/cgroup/memory.stat
 cat /sys/fs/cgroup/memory.events
-cat /proc/pressure/memory
+cat /sys/fs/cgroup/memory.pressure
 ```
 
-실행하지 않은 예이며 file 존재와 permission은 환경에 따라 다르다.
+위 경로는 읽기 전용 예이며 실행하지 않았다. `/proc/meminfo`는 system 범위, `/proc/self/status`는 현재 process 관점, cgroup 파일은 해당 계층 범위다. 한 snapshot 대신 같은 timestamp의 delta를 본다. `memory.current`가 limit 근처여도 reclaim이 쉽다면 PSI가 낮을 수 있고, 사용량 변화가 작아도 반복 reclaim 때문에 PSI가 높을 수 있다.
 
-## 반례
+최신 memory tiering 연구의 한 예인 [Memstrata(OSDI 2024)](https://www.usenix.org/conference/osdi24/presentation/zhong-yuhong)는 CXL memory를 포함한 VM memory tiering과 contention을 다룬다. 이것은 일반 Ubuntu의 모든 page fault가 자동으로 CXL tiering된다는 뜻이 아니다. 이 장의 “page 위치·reclaim 비용·공유 contention을 함께 측정한다”는 원리를 특정 연구 환경에서 확장한 사례로 읽고, 실험에서는 hardware topology와 hypervisor·정책을 명시한다.
 
-free가 적어도 reclaimable cache가 많으면 즉시 OOM이 아닐 수 있다.
-RSS가 같아도 anonymous와 file 비율에 따라 reclaim 비용이 다르다.
-swap 사용량이 있어도 지금 swap I/O 중이라는 뜻은 아니다.
-PSI 평균이 낮아도 짧은 reclaim spike가 tail latency를 만들 수 있다.
+## 8. 문제와 해설
 
-## PSI 수치를 시간으로 바꾸어 읽기
+### 문제 1
+VSZ 10GiB, RSS 100MiB가 가능한 이유는?
 
-memory `some avg10=20.00`이라고 가정하자.
-이는 최근 memory stall의 10초 시간 척도 평균이 약 20%라는 뜻이다. Kernel의 평균은 시간에 따라 이전 값의 영향이 줄어드는 추세 값이므로 정확히 직전 10초의 stall이 2초였다고 역산하지 않는다.
-어떤 task가 몇 초 멈췄는지도 직접 알려 주지 않는다.
+**해설:** virtual mapping 범위만 10GiB이고 실제 touch되어 RAM에 resident한 page가 약 100MiB일 수 있다.
 
-정확한 구간 비율을 직접 계산하려면 두 시점의 `total` 차이와 실제 관측 시간을 사용한다. 예를 들어 10초 동안 `some total`이 1,500,000 µs 증가했다면 그 구간의 some stall 비율은 `1.5/10=15%`다. 이는 task별 대기 시간을 모두 더한 값이 아니라, 그 범위에서 some 조건이 성립한 시간이다.
+### 문제 2
+clean file page와 dirty file page 회수 비용은 왜 다른가?
 
-`full avg10=5.00`이면 모든 non-idle task가 동시에 stall한 영향도 있었다.
-이는 RAM 사용률 5%나 swap 사용률 5%가 아니다.
-같은 시각의 `memory.current`, `memory.events`, I/O와 task latency를 함께 본다.
-반례로 짧은 500ms 심한 stall은 avg60/avg300에서 작게 보일 수 있다.
+**해설:** clean page는 원본에서 다시 읽을 수 있어 drop 가능하다. dirty page는 최신 내용을 storage에 writeback해야 한다.
 
-## 문제
+### 문제 3
+page fault는 항상 프로그램 오류인가?
 
-## VMA에서 frame과 memcg charge까지
+**해설:** 아니다. 합법적 demand paging과 copy-on-write도 fault handler를 거친다. 해결할 mapping이나 권한이 없을 때 오류가 된다.
 
-VMA는 process address 범위와 read/write/execute, file backing 같은 정책을 기록한다.
-task가 VMA 안의 아직 없는 page를 touch하면 page fault handler가 접근이 합법인지 확인한다.
-allocator가 physical frame을 얻고 memcg에 charge한 뒤 page 내용을 zero-fill하거나 file에서 가져온다.
-page table entry가 virtual page를 frame에 연결하면 instruction을 재시도한다.
-RSS는 resident page 관점이고 PSS는 shared page 비용을 process들에 나누어 본다.
-anonymous page는 file 원본이 없으므로 reclaim 시 swap 같은 backing이 필요할 수 있다.
-PSI는 이 과정의 stall 영향을 말하며 page 개수 자체를 말하지 않는다.
+### 문제 4
+host에 free RAM이 있어도 cgroup OOM이 가능한가?
 
-1. VSZ 10GiB, RSS 100MiB가 가능한 이유는?
-2. clean file page와 dirty file page 회수 차이는?
-3. host free RAM이 남아도 memcg OOM이 가능한 이유는?
+**해설:** 가능하다. `memory.max`는 cgroup charge 범위의 hard limit이므로 그 범위 reclaim이 실패하면 OOM이 발생할 수 있다.
 
-## 해설
+### 문제 5
+memory.current가 일정한데 PSI가 상승했다. 가능한 설명은?
 
-1. virtual mapping 범위와 resident physical page가 다르기 때문이다.
-2. clean은 drop 가능하지만 dirty는 최신 data를 writeback해야 한다.
-3. `memory.max`는 cgroup 범위의 독립 charge limit이기 때문이다.
+**해설:** allocation과 reclaim이 반복되어 사용량은 비슷하지만 task가 reclaim·writeback을 기다렸을 수 있다. events와 I/O를 함께 본다.
 
 ## 공식 자료
 
 - [Linux memory concepts](https://docs.kernel.org/admin-guide/mm/concepts.html)
 - [cgroup v2 memory controller](https://docs.kernel.org/admin-guide/cgroup-v2.html)
 - [Linux PSI](https://docs.kernel.org/accounting/psi.html)
+- [Memstrata: CXL memory tiering](https://www.usenix.org/conference/osdi24/presentation/zhong-yuhong)
 
 [← 이전: CPU scheduling](03-cpu-scheduling-and-pressure.md) · [다음: cgroup v2 hierarchy →](05-cgroup-v2-hierarchy-and-delegation.md)

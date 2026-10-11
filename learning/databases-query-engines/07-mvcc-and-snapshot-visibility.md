@@ -6,6 +6,30 @@ MVCC(Multi-Version Concurrency Control)는 row의 여러 version과 snapshot을 
 
 이 장의 숫자와 출력은 교육용이며 실제 PostgreSQL 실행 결과가 아니다.
 
+## 스냅샷이 튜플 버전을 고르는 재료
+
+튜플 헤더의 생성 트랜잭션 식별자와 종료 식별자는 각각 누가 이 버전을 만들었고 누가 삭제·대체하려 했는지 나타낸다. 번호 대소만으로 가시성을 결정하지 않는다. snapshot은 경계와 당시 진행 중인 트랜잭션 집합을 메모리에 들고, commit-status 저장소는 각 XID가 commit·abort·진행 중인지 알려 준다. 실행기와 저장 접근 코드가 이 정보를 합쳐 후보 버전을 반환하거나 건너뛴다.
+
+자기 트랜잭션이 방금 쓴 변경은 일반적인 “snapshot 당시 committed였는가”만 적용하면 보이지 않을 수 있다. 그래서 command 순서와 자기 XID 규칙이 개입한다. 같은 트랜잭션 안에서도 뒤 command는 앞 command의 INSERT를 볼 수 있어야 하고, abort된 savepoint의 버전은 제외해야 한다. 이 책의 `committed_set`과 `self_xid` 교육 모델은 이 핵심만 표현하며 실제 PostgreSQL의 subtransaction, hint bit, wraparound, command ID를 재현하지 않는다.
+
+초기 v1 `(balance=100, creator=10, ended=없음)`이고 T30이 갱신하면 v1.ended=30, v2 `(80,creator=30)`이 된다. T20의 snapshot이 `xmax=25, in_progress={}`이면 T30 commit 뒤에도 transaction snapshot을 유지하는 RR은 v1을 고른다. RC의 다음 SELECT가 새 snapshot `xmax=31`을 얻으면 commit-status 30=committed를 확인하고 v2를 고른다.
+
+| 시점 | T20 RC | T21 RR | T30 | 반환 |
+|---|---|---|---|---|
+| t1 | 첫 SELECT S1 | 첫 SELECT S1 | 없음 | 둘 다 100 |
+| t2 | 대기 | 기존 S1 보유 | 80으로 UPDATE·COMMIT | 아직 각 snapshot 규칙 유지 |
+| t3 | 둘째 SELECT S2 | 둘째 SELECT S1 | committed | RC 80, RR 100 |
+
+가시성 검사는 인덱스 탐색 뒤에도 남는다. 인덱스 엔트리가 v1 위치를 가리키고 v1이 현재 snapshot에 죽은 버전이면 새 버전 연결이나 다른 엔트리를 확인한다. 오래된 snapshot이 종료된 뒤에야 vacuum이 v1을 어떤 독자에게도 필요 없는 dead tuple로 판단할 수 있다.
+
+### 문제 5개
+
+1. XID가 snapshot 경계보다 작으면 항상 보이는가? **해설:** abort했거나 snapshot 당시 진행 중이면 보이지 않는다.
+2. RC의 두 SELECT가 다른 값을 보는 이유는? **해설:** 각 문장 시작에 새 snapshot을 얻어 사이 commit을 둘째가 볼 수 있다.
+3. RR은 왜 옛 버전을 남겨야 하는가? **해설:** transaction snapshot이 계속 그 버전을 요구하기 때문이다.
+4. 자기 INSERT가 보이는 이유는? **해설:** self XID와 command 순서를 고려하는 별도 규칙이 있다.
+5. 교육 스크립트가 PostgreSQL을 검증하는가? **해설:** 아니다. committed set/self_xid로 핵심을 모형화할 뿐 실제 tuple bit와 vacuum을 생략한다.
+
 ![07. MVCC와 snapshot visibility 흐름](assets/mvcc-visibility.svg)
 
 ## 1. 단어와 실제 위치

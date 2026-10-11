@@ -1,5 +1,64 @@
 # 06. 합의 장애와 스냅샷
 
+## 로그 최신성은 길이만 비교하지 않는다
+
+투표자는 후보의 마지막 로그 term을 먼저 비교하고, term이 같을 때 마지막 index를 비교한다. 마지막 term이 높은 로그가 더 최신이다. term도 같다면 index가 큰 쪽이 최신이다.
+
+투표자의 끝이 `(index 8, term 4)`라고 하자.
+
+| 후보 | lastLogTerm | lastLogIndex | 투표 가능? | 이유 |
+|---|---:|---:|---|---|
+| A | 3 | 9 | 아니오 | 길어도 마지막 term이 낮음 |
+| B | 4 | 7 | 아니오 | term 같고 index가 짧음 |
+| C | 4 | 8 | 예 | 동일하게 최신 |
+| D | 5 | 6 | 예 | index가 짧아도 term이 높음 |
+
+이 규칙은 커밋 가능성이 있는 최신 term 항목을 가진 후보만 과반수 표를 얻도록 돕는다. 단순히 로그 항목 수가 많은 후보를 뽑으면 낮은 term의 긴 미커밋 suffix가 더 중요한 최신 항목을 밀어낼 수 있다.
+
+## 선거를 영속 상태와 함께 추적하기
+
+t=0 세 follower가 term 5다. t=180 ms A의 election timeout이 먼저 끝난다. A는 currentTerm=6과 votedFor=A를 디스크에 쓴 뒤 RequestVote를 보낸다. t=188 B는 후보 로그 최신성을 검사하고 votedFor=A를 영속화한 뒤 표를 보낸다. A는 자기 표와 B 표로 3노드 과반수를 얻어 leader가 된다. t=190 heartbeat를 보내 C의 선거 시간을 다시 시작시킨다.
+
+A가 currentTerm을 디스크에 쓰기 전에 요청을 보내고 재시작하면 term이 되돌아갈 수 있다. B가 votedFor를 영속화하기 전에 표를 보내고 재시작하면 같은 term의 다른 후보에게 두 번째 표를 줄 수 있다. 응답 전 영속화가 필요한 이유다.
+
+## snapshot은 상태와 로그 경계를 함께 담는다
+
+**snapshot**은 특정 lastApplied까지 명령을 실행한 상태 기계 이미지다. `lastIncludedIndex`는 포함한 마지막 로그 위치, `lastIncludedTerm`은 그 위치의 term이다. 두 메타데이터가 있어야 뒤 로그와 연결되는 역사를 확인할 수 있다.
+
+예를 들어 snapshot이 `(index 9000, term 12)`이고 남은 로그가 9001~9020이면 재시작은 snapshot 상태를 먼저 복원하고 9001부터 순서대로 적용한다. 9000 이전 로그 9,000개를 매번 재생하지 않는다.
+
+| 복구 단계 | 입력 | 중간 상태 | 결과 |
+|---|---|---|---|
+| snapshot 읽기 | 파일·index·term | 무결성 검사 | 상태 at 9000 |
+| 상태 교체 | 완성 이미지 | 이전/새 상태 중 하나 | lastApplied=9000 |
+| 로그 재생 | 9001~9020 | 순차 적용 | lastApplied=9020 |
+| 서비스 재개 | 복구 상태 | 읽기·쓰기 허용 | 정상 처리 |
+
+snapshot을 임시 파일에 쓰다 crash하면 불완전 파일을 현재 snapshot으로 사용하면 안 된다. checksum과 메타데이터를 검증하고 포인터를 원자적으로 교체한다. 생성 중 새 커밋이 진행되더라도 snapshot은 선택한 lastApplied 경계의 일관된 상태를 담아야 한다.
+
+## InstallSnapshot과 뒤처진 팔로워
+
+리더가 보유한 가장 오래된 로그보다 팔로워 nextIndex가 앞이라면 AppendEntries만으로 따라잡을 수 없다. 리더는 snapshot과 포함 index·term을 전달한다. 팔로워는 완성된 snapshot을 설치하고, 자기 로그에 같은 index·term이 이어지면 그 뒤 suffix를 보존할 수 있다. 이어지지 않으면 snapshot 이전과 충돌하는 로그를 버린다.
+
+snapshot은 백업이 아니다. 잘못된 삭제 명령이 커밋되면 삭제된 상태를 정확히 snapshot할 수 있다. 로그 압축과 독립적인 시점 복구 백업은 목적이 다르다.
+
+## 추가 연습 문제와 해설
+
+### 1. `(term 6,index 10)` 투표자가 `(7,8)` 후보와 `(6,12)` 후보 중 누구를 최신으로 보는가?
+마지막 term을 먼저 보므로 `(7,8)`이 더 최신이다. index 비교는 term이 같을 때만 한다.
+
+### 2. snapshot index 5000 뒤 로그 120개가 있으면 재시작 시 몇 명령을 재생하는가?
+snapshot 복원 뒤 5001~5120의 120개다. snapshot 생성 비용과 상태 복원 시간은 별도다.
+
+### 3. lastIncludedIndex만 있고 term이 없으면 무엇이 어려운가?
+같은 index에 다른 term의 역사가 있을 때 snapshot 뒤 로그가 같은 prefix인지 검증하기 어렵다.
+
+### 4. snapshot 쓰기 중 crash를 안전하게 다루는 방법은?
+임시 파일에 완성하고 무결성을 검증한 뒤 원자적 이름·포인터 교체로 현재 snapshot을 바꾼다.
+
+### 5. snapshot이 있으면 백업이 불필요한가?
+아니다. snapshot은 현재 합의 상태의 압축본이라 논리적 삭제와 공통 버그도 포함한다. 과거 복구와 독립 장애를 위한 백업이 별도로 필요하다.
+
 [← 이전](05-raft-logs-and-commit.md) · [목차](README.md) · [다음 →](07-transactions-and-two-phase-commit.md)
 
 ## 안전성과 진행성

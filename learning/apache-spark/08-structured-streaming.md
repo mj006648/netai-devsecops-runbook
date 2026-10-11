@@ -1,5 +1,22 @@
 # 08. Structured Streaming
 
+## 시간·상태·복구를 한 시간표로 읽기
+
+사건 발생 시각은 event time, 엔진 계산 시각은 processing time이다. micro-batch는 계속 늘어나는 입력의 유한 처리 범위다. source offset은 어디까지 읽었는지 나타낸다. window는 사건 시각 구간, state store는 다음 batch에도 필요한 합계·개수를 보관하는 저장 계층이다. watermark는 관측 최대 event time과 허용 지연으로 만든 정리 경계다. processing-time TTL과 기준·보장이 다르다.
+
+10분 window와 10분 watermark를 가정한다. B0 offset0~1에 10:03=20,10:07=22가 오면 10:00 window state는 sum42,count2, 최대10:07, watermark09:57이다. B1 offset2에 10:22=30이 오면 watermark10:12로 전진해 10:00 window state를 제거할 수 있다. B2 offset3의 늦은 10:05=24는 이미 제거된 state에 반영되지 않을 수 있다. 벽시계가 아니라 event-time 진행을 본다.
+
+checkpoint는 query ID, offset, state와 복구 정보를 지속 저장한다. sink commit 성공 뒤 응답만 잃으면 같은 batch가 재실행될 수 있다. sink가 batch ID를 고유하게 commit해야 중복 효과를 막는다. foreachBatch의 REST 호출은 자동 exactly-once가 아니다. 같은 event ID가 다른 offset으로 두 번 오면 source 처리가 정확해도 업무 중복은 남는다.
+
+TransformWithState는 Spark 4.0에 도입된 API이며 최신 문서의 type·timer·TTL 조건을 확인한다. TTL은 watermark 대체도, 외부 sink exactly-once 보장도 아니다.
+
+### 완전 풀이 문제 5개
+1. B0 평균은? **해설:** 42/2=21이다.
+2. B1 watermark는? **해설:** 설명 모형에서 10:12다.
+3. B2가 늦은 기준은? **해설:** event time이 watermark 뒤다.
+4. checkpoint 삭제 영향은? **해설:** offset·state 연속성을 잃는다.
+5. foreachBatch API는 exactly-once인가? **해설:** sink 멱등성을 별도 설계한다.
+
 [이 책 목차](README.md) · [이전](07-reading-and-writing.md) · [다음](09-iceberg-integration.md)
 
 끝없이 들어오는 데이터에 대한 계산을 DataFrame과 SQL로 표현한다. 실행 엔진의 처리 보장과 원천·sink·업무 중복의 조건을 나누어 이해한다.

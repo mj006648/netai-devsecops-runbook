@@ -1,5 +1,25 @@
 # 00. 데이터에서 Spark까지
 
+## 주문 집계로 보는 Spark의 전체 실행
+
+Spark는 저장 형식이 아니라 여러 입력 조각의 계산을 조정하는 분산 실행 엔진이다. application은 driver와 executor process들의 수명 경계다. driver는 DAG와 physical plan, job·stage·task 상태를 관리하고 executor task가 source file을 읽는다. source file은 지속 객체, Spark partition은 task 입력, Iceberg partition은 테이블의 지속 metadata transform이므로 서로 다르다.
+
+P0=(KR10,US20,KR30), P1=(JP40,KR50,US60), P2=(KR70,JP80,US90)을 region별 합계로 묶자. scan과 partial aggregate 뒤 P0은 KR40·US20, P1은 JP40·KR50·US60, P2는 KR70·JP80·US90이다. 같은 key를 모으는 wide dependency가 shuffle과 stage 경계를 만든다. reduce는 KR 40+50+70=160, US 20+60+90=170, JP 40+80=120을 만든다. 파일 세 개가 항상 task 세 개라는 뜻은 아니다.
+
+DataFrame 변환은 lineage와 logical plan을 만들고 action이 job 실행을 요구하는 lazy evaluation을 사용한다. optimizer는 실행 전 filter와 projection을 source 쪽으로 옮길 수 있다. groupBy 하나가 언제나 두 stage인 것은 아니며 physical plan과 exchange 재사용, AQE에 따라 달라진다.
+
+P1 task가 executor 종료로 실패하면 scheduler는 lineage로 P1을 다른 executor에서 재시도할 수 있다. 이미 외부 API를 호출했다면 그 효과는 중복될 수 있다. 최종 세 행 collect는 작지만 1억 행을 collect하면 driver process로 결과가 몰려 driver OOM이 날 수 있다.
+
+### 완전 풀이 문제 5개
+
+1. P0의 KR 부분합은? **해설:** 10+30=40이다.
+2. shuffle 뒤 KR은? **해설:** 40+50+70=160이다.
+3. 좁은 변환과 넓은 변환 차이는? **해설:** 전자는 같은 입력 partition 안에서 이어지고 후자는 여러 partition의 data 재분배가 필요하다.
+4. executor 실패가 파일 손실인가? **해설:** source file은 저장소에 남고 task를 재실행할 수 있다.
+5. collect 위험은? **해설:** 모든 결과가 driver memory에 모인다.
+
+[Spark 최신 문서](https://spark.apache.org/docs/latest/)와 [CIDR 2025 QOaaS](https://www.vldb.org/cidrdb/2025/towards-query-optimizer-as-a-service-qoaas-in-a-unified-lakehouse-ecosystem-can-one-qo-rule.html)를 참고하되 prototype이 모든 Spark query에서 우위라는 뜻은 아니다.
+
 [이 책의 목차](README.md)
 
 이 장에서는 분산 시스템 경험을 가정하지 않는다. 작은 표 하나를 읽고 평균을 구한 뒤, 그 작업을 여러 서버에 나누면 무엇이 추가되는지 생각한다.

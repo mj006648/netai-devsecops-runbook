@@ -1,5 +1,22 @@
 # 07. 읽기와 쓰기
 
+## 바이트에서 공개된 결과까지
+
+데이터 원천은 Spark가 저장 바이트를 행·열로 해석하는 연결 계층이며 data source라고 한다. source file은 지속 객체, Spark input partition은 task 입력, Parquet row group은 파일 내부 묶음, Iceberg partition은 table metadata transform이다.
+
+파일 A=(KR10,US20,KR30), B=(JP40,KR50,US60), C=(KR70,JP80,US90)을 P0~P2가 읽고 amount>=20을 집계한다. P0은 KR30·US20, P1은 JP40·KR50·US60, P2는 KR70·JP80·US90이다. shuffle 뒤 KR150,US170,JP120이다. 파일 세 개와 task 세 개는 이 예의 우연이며 split·작은 파일 묶기로 달라진다.
+
+writer task T0,T1,T2가 F0,F1,F2를 쓴다. F0,F1 뒤 T2가 실패하면 파일 존재는 완성 dataset을 뜻하지 않는다. T2 retry가 F2b를 쓰고 coordinator가 전체 commit을 성공해야 새 결과가 공개된다. commit 성공 뒤 응답만 잃으면 상태 확인 없이 append 전체를 다시 실행하지 않는다.
+
+repartition은 실행 분포, partitionBy는 저장 배치다. coalesce(1)은 한 task 병목을 만들 수 있다. Parquet glob은 Iceberg snapshot과 delete를 적용하지 않는다.
+
+### 완전 풀이 문제 5개
+1. 필터 뒤 행 수는? **해설:** 10 한 행을 뺀 8행이다.
+2. KR 합은? **해설:** 30+50+70=150이다.
+3. F0,F1만으로 공개 가능한가? **해설:** commit 전에는 아니다.
+4. repartition(2)은 파일 두 개 보장인가? **해설:** 아니다.
+5. glob과 Iceberg read 차이는? **해설:** 후자는 snapshot과 delete를 적용한다.
+
 [이 책의 목차](README.md) · [이전 장](06-memory-and-performance.md)
 
 Spark partition, 출력 파일, 테이블 partition은 서로 다른 단위다. 이 장에서는 하나의 파일을 읽고 결과를 쓰는 것부터 테이블의 커밋까지 연결한다.

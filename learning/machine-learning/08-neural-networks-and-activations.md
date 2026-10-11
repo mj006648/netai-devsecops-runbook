@@ -1,5 +1,40 @@
 # 08. 신경망과 활성 함수
 
+## 선형층만 여러 개 쌓아도 비선형 문제가 풀리지 않는 이유
+
+**선형층(linear layer)**은 입력 벡터 x에 weight 행렬 W를 곱하고 bias b를 더해 `z=xW+b`를 만든다. Batch 2, 입력 특징 3, 출력 폭 4라면 x shape `(2,3)`, W `(3,4)`, b `(4,)`, z `(2,4)`다. Bias는 두 행에 같은 값으로 더해진다.
+
+두 선형층을 activation 없이 연결하면 `(xW1+b1)W2+b2 = x(W1W2)+(b1W2+b2)`로 다시 하나의 선형층이다. 깊이를 늘려도 직선·평면 경계만 만든다.
+
+**활성 함수(activation)**는 z를 비선형으로 바꾼다. ReLU는 `max(0,z)`다. z가 `[-2,0.5,3]`이면 `[0,0.5,3]`이다. 음수 영역 local derivative는 0, 양수는 1이며 0에서 매끄럽지 않다. 구현은 0의 derivative convention을 정한다.
+
+**MLP(Multi-Layer Perceptron)**는 선형층과 activation을 연결한 network다. **층 폭(width)**은 hidden unit 수, **깊이(depth)**는 연속 변환 단계 수다. Width가 4인 hidden은 sample마다 숫자 4개의 중간 표현을 만든다.
+
+XOR은 `(0,0),(1,1)`은 0, `(0,1),(1,0)`은 1인 문제다. 한 직선으로 두 종류를 나눌 수 없다. Hidden ReLU unit들이 여러 경계를 조합하면 표현할 수 있다. 이것은 neural network가 항상 XOR을 학습한다는 보장이 아니라 비선형 표현 능력이 생긴다는 뜻이다.
+
+작은 trace:
+
+```text
+x=[2,-1]
+W=[[1,2],[3,-1]], b=[0,1]
+z=[2×1+(-1)×3, 2×2+(-1)×(-1)+1]=[-1,6]
+h=ReLU(z)=[0,6]
+output weight=[0.5,0.25]
+ŷ=0×0.5+6×0.25=1.5
+```
+
+Backward에서 첫 hidden z=-1은 ReLU derivative 0이라 그 경로 gradient가 막힌다. 계속 음수만 받는 unit은 죽은 ReLU가 될 수 있다. Learning rate, bias 초기화, Leaky ReLU 같은 선택이 관련되지만 각각 trade-off가 있다.
+
+Sigmoid는 0~1 출력이 필요할 때 유용하지만 큰 절댓값에서 derivative가 작아 깊은 graph의 gradient가 약해질 수 있다. Activation 선택은 “최신 함수” 이름이 아니라 출력 범위, gradient, 계산 비용을 함께 본다.
+
+## 유도 문제 5개
+
+1. 입력 3, 출력 4 linear layer parameter 수는? **해설:** W 12개와 bias 4개로 16개다.
+2. ReLU[-3,2]는? **해설:** `[0,2]`다.
+3. 선형층 두 개만으로 비선형 경계가 생기는가? **해설:** 합성해도 하나의 선형 변환이라 생기지 않는다.
+4. XOR이 한 직선으로 안 나뉘는 이유는? **해설:** 대각선의 같은 class를 한 half-plane에 함께 둘 수 없다.
+5. ReLU 음수 경로 gradient는? **해설:** local derivative 0이므로 upstream gradient가 0이 된다.
+
 [← 이전](07-computation-graphs-and-autograd.md) · [목차](README.md) · [다음 →](09-convolutions-and-sequence-models.md)
 
 신경망은 선형 변환과 비선형 활성 함수를 여러 층 연결한 모델이다.

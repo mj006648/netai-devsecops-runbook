@@ -1,6 +1,62 @@
 # 06. Volume과 persistent storage
 
 [이 책 목차](README.md) · [이전: Service와 network](05-networking-services.md) · [다음: Config와 Secret](07-config-secrets.md)
+## 먼저 저장 객체와 실제 byte 위치를 나눈다
+
+이 장의 manifest와 출력은 교육용이며 현재 클러스터에 적용한 기록이 아니다. Pod의 `/data` 경로, PVC, PV, StorageClass, CSI driver, 실제 disk는 같은 물건의 다른 이름이 아니다.
+
+**PVC(PersistentVolumeClaim)**는 namespace 안에서 workload가 “10Gi, 이 access mode, 이 StorageClass가 필요하다”고 요청하는 API 객체다. **StorageClass**는 provisioner 이름, parameter, binding 방식 같은 storage 공급 정책이다. **PV(PersistentVolume)**는 cluster 범위에서 실제 volume handle과 capacity를 표현한다. **CSI(Container Storage Interface)** driver는 controller 쪽 provision/attach와 node 쪽 stage/publish를 구현한다. 실제 byte는 cloud disk, SAN, local device, distributed filesystem 같은 backend에 있다.
+
+```mermaid
+flowchart LR
+    P["Pod volume<br/>claimName=data"] --> C["PVC data<br/>10Gi RWO"]
+    C --> S["StorageClass fast<br/>provisioner·zone policy"]
+    S --> D["CSI controller<br/>volume 생성"]
+    D --> V["PV<br/>volumeHandle=vol-123"]
+    V --> B["PVC Bound"]
+    B --> Q["scheduler가 volume topology와 node 선택"]
+    Q --> A["CSI attach to node-b"]
+    A --> M["kubelet/CSI node mount"]
+    M --> F["container /data"]
+```
+
+Pod→PVC는 이름 reference다. PVC→StorageClass는 공급 정책 선택이다. Provisioner→PV는 실제 backend volume을 만들고 API 표현을 저장하는 단계다. Bound는 claim과 PV가 연결됐다는 뜻이지 node에 mount됐다는 뜻이 아니다. Attach와 mount가 끝나야 process가 `/data`를 사용한다.
+
+## PVC Pending에서 Running까지 시간표
+
+| 시각 | API 상태 | 실행 주체 | 중간 자원 | 실패 예 |
+|---:|---|---|---|---|
+| t0 | PVC Pending | API server | 요청만 저장 | StorageClass 이름 오타 |
+| t1 | PVC 관찰 | external provisioner | backend create 요청 | quota·credential 실패 |
+| t2 | PV 생성 | CSI controller | volumeHandle, capacity | zone 후보 기록 |
+| t3 | PVC Bound | binder/controller | PVC↔PV claimRef | 아직 node attach 전 |
+| t4 | Pod Pending | scheduler | request·affinity·PV topology | volume zone과 node 불일치 |
+| t5 | Pod node-b binding | scheduler | nodeName=node-b | attach 시작 전 |
+| t6 | VolumeAttachment/attach | CSI controller | disk가 node-b에 연결 | multi-attach 충돌 |
+| t7 | stage/publish mount | kubelet·CSI node | filesystem mount | fsck·mount permission |
+| t8 | Container Running | runtime | `/data` view | app file format 오류 |
+
+PVC Pending 원인과 Pod Pending 원인을 나눈다. Claim이 아직 provision되지 않았으면 StorageClass·provisioner event를 본다. PVC가 Bound인데 Pod가 Pending이면 scheduler topology와 attach 조건을 본다. Pod가 node에 배정됐지만 ContainerCreating이면 CSI attach/mount event를 본다.
+
+## Access mode는 filesystem 동시성 계약이 아니다
+
+RWO(ReadWriteOnce)는 한 node에서 read-write로 mount 가능한 access 형태다. 같은 node의 여러 Pod 사용 가능성은 driver와 workload 구성을 함께 본다. RWOP(ReadWriteOncePod)는 하나의 Pod만 read-write 사용하도록 더 좁은 의미를 제공하며 CSI와 version 조건을 확인한다. RWX(ReadWriteMany)는 여러 node read-write 가능성을 표현하지만 application record lock과 transaction을 자동 제공하지 않는다.
+
+Database 두 replica가 RWX 하나를 mount한다고 안전한 active-active database가 되는 것이 아니다. File locking, cache coherence, write ordering, database protocol이 맞아야 한다. 반대로 RWO라고 backup과 corruption 보호가 생기는 것도 아니다.
+
+## Zone과 WaitForFirstConsumer
+
+Immediate binding은 Pod 위치를 알기 전에 volume을 provision할 수 있다. Zone-a volume이 만들어졌는데 Pod의 GPU 조건은 zone-b만 만족하면 scheduling deadlock이 생길 수 있다. `WaitForFirstConsumer`는 Pod scheduling 조건을 고려한 뒤 topology에 맞는 volume 공급을 지연한다.
+
+이는 모든 topology 문제를 자동 최적화한다는 뜻이 아니다. Node affinity, taint, GPU device, capacity가 함께 만족해야 한다. Event에서 `node(s) had volume node affinity conflict`와 `Insufficient gpu`를 분리한다.
+
+## 문제와 유도 해설 보강
+
+1. PVC가 Bound인데 Pod가 ContainerCreating이다. **Bound는 claim-PV 연결만 증명한다.** VolumeAttachment, CSI controller/node log, mount event를 확인한다.
+2. RWO와 RWOP 차이는? **RWO는 한 node read-write, RWOP는 한 Pod read-write로 더 좁다.** Driver·version 지원을 확인한다.
+3. StatefulSet Pod를 삭제하면 PVC도 반드시 삭제되는가? **아니다.** Retention/reclaim 정책과 owner 관계를 확인한다.
+4. PV snapshot이면 application transaction이 자동 일관적인가? **아니다.** Crash-consistent와 application-consistent snapshot을 구분하고 quiesce·DB backup protocol을 쓴다.
+5. Zone-a volume과 zone-b 전용 Pod가 왜 Pending인가? **Disk attach topology와 node 필수 조건의 교집합이 비었다.** Binding mode와 affinity를 함께 수정한다.
 
 Container writable layer는 container 교체와 함께 사라질 수 있다. Kubernetes storage API는 Pod가 필요한 저장 공간을 선언하고 실제 storage를 연결하지만, application consistency와 backup을 자동으로 해결하지 않는다.
 

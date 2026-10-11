@@ -1,5 +1,22 @@
 # 07. 최신 버전과 호환성: 1.12.0, 포맷 v3, 개발 중인 v4를 구분하기
 
+## 업그레이드는 모든 실행 주체의 교집합이다
+
+project release는 library 배포 버전, table format은 metadata 규칙, engine version은 reader·writer 구현, catalog version은 lookup·commit API다. library 1.12.0 설치가 v1 table을 자동 v3로 바꾸지 않는다.
+
+Spark reader, Flink writer, Trino reader, maintenance가 한 table을 쓴다면 v3 전환 전에 네 주체의 DV·row lineage·type 지원을 표로 만든다. metadata를 열 수 있어도 DV를 적용하지 못하면 삭제 행이 보이고, writer만 DV를 만들 수 있어도 maintenance가 merge하지 못하면 운영이 막힌다.
+
+snapshot50 checksum을 고정하고 격리 branch의 v3 snapshot51에서 legacy position·equality·DV 혼재를 모든 reader로 비교한다. 통과 뒤 writer를 켠다. rollback은 property만 내리는 일이 아니라 새 metadata·type·delete를 이전 reader가 이해하는지 확인하는 일이다.
+
+v4는 active development, code foundation, metadata read, data read, write, formal adoption을 구분한다. release note의 v4 foundation은 production v4 read/write 지원이 아니다.
+
+### 추가 문제 5개
+1. 최신 library면 format도 최신? **해설:** 아니다.
+2. reader 하나만 지원하면 전환? **해설:** 모든 주체 교집합이 필요하다.
+3. DV 미지원 위험? **해설:** 삭제 행 부활.
+4. v4 foundation은 write support? **해설:** 아니다.
+5. rollback 전 확인? **해설:** 이전 reader의 새 객체 이해 여부.
+
 [← 이 책 목차](README.md)
 
 작성·문헌 확인일: **2026-10-08**

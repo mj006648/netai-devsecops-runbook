@@ -1,5 +1,29 @@
 # 15. 종합 문제, 용어 풀이, 공식 출처
 
+## 종합 풀이를 쓰는 방법
+
+답은 정의 한 줄이 아니라 입력, 객체 위치, 실행 주체, 중간 상태, 결과, 실패 조건을 잇는다. 예를 들어 “hash join이 빠르다” 대신 build 100행과 probe 1,000행이 memory 안에 있을 때 약 1,100행 key 작업이며 spill하면 임시 I/O가 추가된다고 쓴다.
+
+### 추가 문제 13: column batch
+
+값 [20,NULL,80,100,40]에서 x>=80의 selection과 합을 구하라.
+
+**해설:** 비교는 [FALSE,UNKNOWN,TRUE,TRUE,FALSE]다. WHERE는 TRUE 위치 2와3만 남기고 합은 180이다. NULL을 0으로 바꾼 것이 아니라 UNKNOWN을 선택하지 않았다.
+
+### 추가 문제 14: Spark와 Iceberg
+
+snapshot의 1,000파일 중 manifest pruning 800개, file 통계 150개를 제외하고 남은 파일을 100 task로 나눴다. 후보 파일, 제거율, 파일과 task 관계를 설명하라.
+
+**해설:** 후보는 50개, 제거율은 95%다. 파일 하나가 여러 split이 되거나 여러 작은 파일이 한 task 입력이 될 수 있어 50파일과 100 task는 모순이 아니다. snapshot 파일 집합은 Iceberg metadata이고 task partition은 Spark 실행 객체다.
+
+### 추가 문제 15: 연구 주장
+
+새 optimizer의 planning 5ms, 기존 20ms이고 실행은 각각 500ms와 300ms다. 무엇이 빠른가?
+
+**해설:** planning만 보면 새 optimizer가 15ms 짧지만 단순 합계는 새 505ms, 기존 320ms다. 결과 동일성, 반복 분포와 cache 조건을 확인한 뒤 end-to-end에서는 기존이 빠르다고 관측할 수 있다. prototype의 계획 시간 우위를 모든 실행 우위로 바꾸지 않는다.
+
+용어 연결: relation은 논리 행 집합이고 record는 page 바이트다. snapshot은 보이는 version 또는 Iceberg 파일 집합을 고정하는 문맥별 객체다. Spark partition은 task 입력이고 Iceberg partition은 지속 metadata transform이다. 같은 단어도 대상과 수명을 함께 적어야 한다.
+
 [이전: 실험과 연구](14-experiments-and-research.md) · [목차](README.md) · 다음 장 없음
 
 이 장은 앞의 개념을 한 요청의 흐름으로 다시 묶는다. 먼저 문제의 조건을 읽고, 어떤 객체가 어디에 있으며 누가 바꾸는지 적은 다음 계산한다. 해설은 조건, 중간 계산, 결론 순서로 썼다.

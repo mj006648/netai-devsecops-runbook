@@ -1,5 +1,55 @@
 # 19. 로컬 모형 실습과 연구 설계
 
+## toy model은 실제 RF를 재현하는 장비가 아니다
+
+작은 숫자를 넣어 원리의 계산 결과를 확인하는 프로그램을 **toy model**이라 한다. 입력, 상태 전이, 출력, assert가 명확해 손 계산과 비교하기 좋다. 실제 oscillator, PA 비선형, ADC, antenna pattern, multipath 측정이 없으므로 현장 성능을 증명하지 않는다.
+
+link-budget toy의 입력이 TX 20 dBm, cable -2, antenna +5, path -80, RX antenna +2, cable -1이면 출력은 -56 dBm이다. 프로그램은 각 항을 순서대로 더하고 예상값을 assert해야 한다. 결과 -56을 상수로 출력하고 다시 -56과 비교하면 계산을 검증하지 않는다.
+
+| 단계 | 입력 | 누적 |
+|---|---:|---:|
+| TX | 20 dBm | 20 |
+| cable | -2 dB | 18 |
+| antenna | +5 dBi | 23 |
+| path | -80 dB | -57 |
+| RX antenna+cable | +1 dB | -56 |
+
+## N=8 OFDM toy의 경계
+
+주파수 bin 배열 X[0..7]에 알려진 복소 symbol을 놓고 IFFT로 시간 sample x를 만든 뒤 FFT로 되돌린다. 이상적인 부동소수점·무잡음 조건이면 복원 오차가 작은지 assert한다. CP, channel convolution, frequency offset을 하나씩 추가해 어떤 조건에서 orthogonality가 깨지는지 본다.
+
+실제 RF에서는 DAC image, PA, oscillator phase noise, ADC quantization이 있다. Python complex 배열 복원이 antenna 사이 무선 송수신 성공을 뜻하지 않는다.
+
+## RAN-AI budget toy
+
+1 ms 창에서 RAN 0.55 ms, 안전 여유 0.15 ms이면 AI budget은 0.30 ms다. AI job 0.25 ms는 단순 합에서 admission 가능하고 0.40 ms는 거부한다. 실제 GPU에서는 queue와 memory interference 때문에 측정 p99가 필요하다.
+
+| case | RAN | guard | AI | 합 | toy 판정 |
+|---|---:|---:|---:|---:|---|
+| A | 0.55 | 0.15 | 0.25 | 0.95 | 허용 |
+| B | 0.55 | 0.15 | 0.40 | 1.10 | 거부 |
+
+## 연구 질문으로 바꾸기
+
+“AI가 좋다” 대신 “속도 15 m/s, 지정 channel model에서 20 ms horizon CSI 예측의 NMSE와 baseline 차이는?”처럼 입력·metric·조건을 쓴다. train/test를 다른 cell·시간으로 나누고 negative transfer와 실패 case를 보고한다.
+
+## 추가 문제와 완전 해설
+
+### 1. 상수 출력과 assert가 왜 부족한가?
+입력에서 상태를 계산하지 않아 잘못된 전이를 찾지 못한다.
+
+### 2. OFDM 무잡음 복원이 실제 RF 증거인가?
+아니다. 많은 analog·channel 조건을 생략했다.
+
+### 3. 1 ms-RAN0.6-guard0.2의 AI budget은?
+0.2 ms다.
+
+### 4. seed를 기록하는 이유는?
+난수 channel·오류 trace를 재현하기 위해서다.
+
+### 5. simulation 결과를 현장 주장으로 바꾸려면?
+장비·환경·metric·반복·오차와 외삽 한계를 추가 검증해야 한다.
+
 [이 책 목차](README.md)
 
 [← 이전: 5G-Advanced·6G 상태](18-5g-advanced-6g-and-release-status.md) · [다음: 문제·용어·자료](20-exercises-glossary-and-sources.md)

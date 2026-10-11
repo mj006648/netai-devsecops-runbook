@@ -1,5 +1,75 @@
 # 09. 이동통신 세대와 전체 구조
 
+## 스마트폰과 인터넷 사이에 실제로 놓인 주체
+
+**UE(User Equipment)** 는 스마트폰·모뎀처럼 가입자와 함께 움직이며 무선 접속을 수행하는 장비다. UE 안의 애플리케이션이 IP packet을 만들면 운영체제 network stack과 cellular modem이 이를 무선 전송 단위로 바꾼다.
+
+**eNB(evolved Node B)** 는 LTE 무선 접속 기지국이고 **gNB(next generation Node B)** 는 5G NR 무선 접속 기지국이다. 둘은 안테나 철탑만 뜻하지 않는다. 무선 scheduling, protocol 처리, core 연결을 담당하는 논리 기능을 포함한다.
+
+**RAN(Radio Access Network)** 은 UE와 core 사이의 무선 접속망이다. **core network**는 가입자 인증, 이동성 상태, session, 외부 data network 연결을 맡는다. 5G core에서 **AMF(Access and Mobility Management Function)** 는 registration과 접근·이동성 제어, **SMF(Session Management Function)** 는 PDU session과 UPF 선택·전달 규칙, **UPF(User Plane Function)** 는 실제 사용자 IP packet 전달을 맡는다.
+
+```mermaid
+flowchart LR
+    APP["UE 앱·IP packet"] --> MODEM["UE modem"]
+    MODEM -->|NR radio| GNB["gNB·RAN"]
+    GNB -->|제어| AMF["AMF"]
+    AMF --> SMF["SMF"]
+    SMF -->|전달 규칙| UPF["UPF"]
+    GNB -->|사용자 data| UPF
+    UPF --> DN["Internet·data network"]
+```
+
+## control plane과 user plane을 한 생애로 연결한다
+
+**control plane**은 누가 접속할 수 있는지, 어떤 보안·session·경로를 쓸지 상태를 만든다. **user plane**은 그 상태를 사용해 앱 packet을 운반한다. 제어 메시지가 “중요하고 사용자 data가 덜 중요하다”는 구분이 아니라 역할 구분이다.
+
+UE가 켜지면 cell을 탐색하고 gNB와 RRC 연결을 만든다. NAS registration 메시지는 gNB가 종단 처리하지 않고 AMF로 전달한다. 인증과 security context가 준비된 뒤 SMF가 PDU session을 만들고 UPF 전달 상태를 설치한다. 그 후 앱 packet이 gNB→UPF→data network로 흐른다.
+
+**PDU session**은 UE와 data network 사이의 사용자 plane 연결 문맥이다. UE 주소, QoS flow, UPF 경로 같은 상태를 묶는다. **bearer**는 특정 전달 특성을 가진 논리 운반 경로를 가리키는 용어이며 물리 cable 한 가닥이 아니다.
+
+| 시각 | 주체 | 제어 상태 | 사용자 packet 가능? |
+|---:|---|---|---|
+| 0 ms | UE | cell 미선택 | 아니오 |
+| 40 ms | UE·gNB | RRC 연결 | 아직 core session 없음 |
+| 90 ms | UE·AMF | registration·security | session 준비 전 |
+| 130 ms | SMF·UPF | PDU session·rule 설치 | 가능 |
+| 150 ms | UE app | 첫 IP packet | gNB→UPF 전달 |
+
+시간은 교육용 모형이며 표준 성능 보장이 아니다.
+
+## 4G, 5G NSA, 5G SA의 구조 차이
+
+LTE의 EPC에서는 MME가 이동성·session 제어의 큰 역할을 맡고 S-GW/P-GW가 사용자 data 경로에 참여한다. 5G SA는 5G core의 service-based 기능과 NR 접속을 사용한다.
+
+**NSA(Non-Standalone)** 는 5G NR radio를 쓰면서 기존 LTE·EPC 또는 LTE anchor에 제어 의존이 남는 배치 범주다. **SA(Standalone)** 는 NR과 5G core를 중심으로 동작한다. 화면에 5G 아이콘이 보인다는 사실만으로 SA인지, 어떤 core와 session을 쓰는지 확정할 수 없다.
+
+## packet과 제어가 실패하는 위치
+
+registration이 성공해도 PDU session 생성이 실패하면 UE는 망에 등록됐지만 일반 IP data를 못 보낼 수 있다. RF 신호가 강해도 가입자 인증이나 정책이 거부될 수 있다. 반대로 core 상태가 정상이어도 scheduler 자원이 없거나 radio channel이 나쁘면 packet이 지연된다.
+
+## AI-RAN closed loop를 현재 조건으로 읽기
+
+AI 모델은 RAN 측정값을 입력으로 받아 cell parameter, scheduling 후보, traffic 예측을 만들 수 있다. 그러나 모델 출력이 곧바로 RF를 바꾸는 것은 아니다. 권한 있는 controller가 표준·제품 인터페이스가 허용한 control knob로 변환하고, RAN 노드가 검증·적용하며, 후속 측정으로 결과를 확인한다.
+
+표준은 데이터·인터페이스 계약을 정의하고 연구는 특정 dataset·simulation·metric에서 방법을 평가한다. 현재 proposal의 정확도를 모든 상용 gNB 구현 성능으로 일반화하지 않는다.
+
+## 추가 문제와 완전 해설
+
+### 1. registration 성공이면 인터넷 packet도 즉시 가능한가?
+아니다. PDU session과 UPF 전달 상태, radio resource가 추가로 필요하다.
+
+### 2. AMF와 UPF의 차이는?
+AMF는 접근·이동성 제어 상태, UPF는 실제 사용자 packet 전달을 맡는다.
+
+### 3. bearer가 물리 전용선인가?
+아니다. QoS·전달 처리를 묶은 논리 경로다.
+
+### 4. NSA와 SA를 아이콘만으로 구분할 수 있는가?
+없다. LTE anchor와 core 구조·signaling을 확인해야 한다.
+
+### 5. AI 모델 출력이 곧 표준 제어인가?
+아니다. 지원 인터페이스, 권한, 검증, rollback 조건이 있어야 실제 적용된다.
+
 [이전: Wi-Fi와 무선 LAN](08-wifi-and-medium-access.md) · [목차](README.md) · [다음: NR 무선과 프로토콜 스택](10-nr-radio-and-protocol-stack.md)
 
 자료 확인일: **2026-10-11**

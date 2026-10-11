@@ -1,5 +1,22 @@
 # 08. 카탈로그와 여러 엔진
 
+## 이름·파일·commit의 세 경로
+
+catalog는 table 이름을 metadata 위치와 UUID에 연결하고 commit 충돌을 중재한다. FileIO는 metadata·manifest·Parquet·Puffin 바이트를 저장소에서 읽고 쓴다. catalog 인증 성공과 S3 권한 성공은 다르다.
+
+Spark가 prod.lab.orders를 요청하면 catalog가 metadata v10을 준다. engine은 v10→snapshot50→manifest list→manifest→A.parquet와 DV를 읽는다. Trino가 다른 local 이름을 써도 같은 service·UUID·snapshot50을 고정해야 결과를 비교할 수 있다.
+
+W1과 W2가 v10을 읽고 W1이 v11을 게시하면 W2 expected-v10 commit은 실패한다. W2 data file upload는 이미 끝났을 수 있어 refresh·conflict check 뒤 재사용하거나 orphan으로 관리한다.
+
+RESTCatalog는 HTTP client/server 계약이고 설정 한 줄이 server를 시작하지 않는다. credential vending은 제한된 storage credential을 발급하는 선택 기능이다. catalog migration은 폴더 복사가 아니며 UUID·snapshot·branch·경로와 단일 권위 writer를 보존한다. 두 catalog가 독립 GC하면 상대가 참조한 파일을 지울 수 있다.
+
+### 추가 문제 5개
+1. list 성공 뒤 S3 403 가능? **해설:** 권한 경로가 다르다.
+2. W2 실패 이유? **해설:** pointer가 v11로 변했다.
+3. REST 설정이 server 설치? **해설:** 아니다.
+4. warehouse 같으면 같은 table? **해설:** UUID를 본다.
+5. 독립 GC 위험? **해설:** 공유 파일 오판 삭제.
+
 [이 책의 목차](README.md) · [이전 장](07-latest-and-compatibility.md)
 
 카탈로그를 설치한다고 데이터 처리 엔진이나 객체 저장소가 함께 생기는 것은 아니다. 이 장에서는 이름 조회, 커밋, 파일 읽기, 권한을 실제 연결 관계로 나눈다.

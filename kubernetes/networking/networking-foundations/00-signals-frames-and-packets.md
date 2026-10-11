@@ -1,5 +1,15 @@
 # 00. 신호에서 프레임과 패킷까지
 
+## 추가 전체 계산: payload가 선로의 신호가 되기까지
+
+애플리케이션 payload 1,400 byte에 TCP header 20 byte와 IPv4 header 20 byte가 붙으면 IP packet은 1,440 byte다. Ethernet header 14 byte와 FCS 4 byte를 더하면 frame은 1,458 byte다. MTU 1,500은 보통 Ethernet payload인 IP packet 상한을 가리키므로 이 예는 MTU 안에 든다.
+
+선로 점유를 더 정확히 비교하려면 preamble·SFD 8 byte와 inter-packet gap에 해당하는 12 byte 시간도 고려한다. 교육용 합계는 `1458+8+12=1478 byte`, bit로 `1478×8=11,824 bit`다. 1 Gbit/s에서 순수 직렬화 시간은 `11,824/1,000,000,000≈11.824 μs`다. queue 대기, 전파, switch 처리는 포함하지 않는다.
+
+### 추가 문제 5
+
+payload가 1,480 byte이고 TCP 20, IPv4 20 byte라면 IP packet은 1,520 byte다. MTU 1,500을 20 byte 넘는다. IPv4 fragmentation 허용 여부나 TCP MSS 조정, IPv6 송신자의 packet 분할 전략을 확인해야 하며 “선로가 알아서 보낸다”고 할 수 없다.
+
 범위: 이 장은 네트워크를 처음 보는 사람이 “정보가 어떻게 전기·빛·무선 신호가 되고, 다시 bit(0 또는 1인 정보 단위), frame(한 링크의 전달 묶음), packet(여러 network를 건너는 IP 전달 묶음)으로 해석되는가”를 잡기 위한 바닥 장이다.
 뒤 장의 container network, 이름 조회, 통신 보호를 보기 전에 필요한 가장 낮은 단위를 다룬다.
 실제 PHY 칩, 광모듈, 무선 변조, Ethernet 표준의 모든 세부 구현은 훨씬 복잡하다.

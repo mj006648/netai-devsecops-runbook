@@ -1,5 +1,62 @@
 # 07. 트랜잭션과 2단계 커밋
 
+## ACID 트랜잭션과 분산 원자 커밋은 같은 말이 아니다
+
+**트랜잭션**은 여러 읽기·쓰기를 하나의 논리 작업으로 묶는 경계다. ACID의 원자성은 모두 적용하거나 모두 취소한다는 뜻이고, 일관성은 애플리케이션 불변식을 지키는 유효 상태 전이를 뜻한다. 격리성은 동시에 실행되는 거래가 서로 어떤 중간 상태를 보는지 정한다. 지속성은 성공 응답한 결과가 정한 장애 뒤에도 남는 성질이다.
+
+**격리 수준**은 읽기와 동시 실행의 관계다. **분산 원자 커밋**은 여러 저장소 참여자가 같은 commit 또는 abort 결정을 따르게 하는 문제다. 2PC를 사용해도 격리 수준이 자동으로 serializable이 되지 않는다. 각 참여자의 잠금·MVCC 규칙이 별도로 필요하다.
+
+계좌 A shard에서 100을 빼고 B shard에 100을 더하는 송금을 보자. 한쪽만 커밋하면 총액이 깨진다. coordinator는 전역 거래 T9를 만들고 두 participant가 모두 commit 가능한지 묻는다.
+
+## prepare는 “아마 가능”이 아니라 약속을 영속화하는 단계다
+
+participant가 PREPARE T9를 받으면 입력을 검증하고 필요한 잠금을 잡고, commit을 나중에 재현할 변경 정보와 PREPARED 상태를 디스크에 쓴다. 그 뒤 YES를 보낸다. YES는 “지금 메모리에서는 가능하다”가 아니라 “재시작 뒤에도 commit 또는 abort 결정을 따를 준비가 됐다”는 약속이다.
+
+| participant 상태 | 영속 정보 | 허용 행동 |
+|---|---|---|
+| INIT | 거래 ID | prepare 검사 |
+| PREPARED | 변경·잠금·YES 사실 | 전역 결정 대기 |
+| COMMITTED | commit 결정·적용 결과 | 잠금 해제 |
+| ABORTED | abort 결정·복구 결과 | 잠금 해제 |
+
+t=0 coordinator가 PREPARE를 보낸다. t=10 A가 PREPARED를 기록하고 YES, t=15 B도 YES를 보낸다. t=20 coordinator가 COMMIT을 영속화한다. t=21 결정 전송 전에 crash한다. A와 B의 timeout은 abort 증거가 아니다. 복구 coordinator가 COMMIT 기록을 읽어 재전송해야 한다.
+
+## crash 위치별 결정
+
+| crash 위치 | coordinator 디스크 | participant | 복구 결과 |
+|---|---|---|---|
+| PREPARE 전 | 없음 | INIT | abort 가능 |
+| 일부 YES 뒤 | 결정 없음 | 일부 PREPARED | 복구 규칙에 따라 abort 통지 |
+| COMMIT 기록 뒤 | COMMIT | PREPARED | commit 재전송 |
+| 적용 뒤 ack 전 | COMMIT | COMMITTED | 중복 commit을 멱등 처리 |
+
+coordinator가 COMMIT을 메모리에만 정하고 한 participant에 전송한 뒤 죽으면 다른 participant와 결정이 갈릴 수 있다. 그래서 결정은 통지 전에 영속화한다. participant도 PREPARED 기록 전에 YES를 보내면 재시작 뒤 약속을 잊는다.
+
+## blocking의 실제 비용
+
+PREPARED participant는 혼자 결정을 추측할 수 없다. coordinator와 결정 기록에 접근할 수 없으면 잠금을 유지한 채 기다릴 수 있다. 이 상태가 2PC의 blocking이다. timeout은 운영 경보를 만들 수 있지만 전역 결정을 바꾸지 않는다.
+
+coordinator 로그를 합의 그룹에 복제하면 단일 장비 장애를 줄일 수 있다. 그러나 어느 기록이 권위 있는지, 새 coordinator가 참여자 목록과 결정을 어떻게 복원하는지 명세해야 한다.
+
+Saga는 각 단계 뒤 실패 시 보상 작업을 실행하는 다른 접근이다. 보상은 시간 역행 rollback이 아니라 새 업무다. 이미 발송한 이메일이나 외부에 공개된 가격은 완전히 되돌릴 수 없다.
+
+## 추가 연습 문제와 해설
+
+### 1. YES 전에 무엇을 저장해야 하는가?
+거래 ID, commit 재현 정보, 잡은 잠금과 PREPARED 사실이다. 재시작 뒤 약속을 지킬 수 있어야 한다.
+
+### 2. COMMIT 기록 뒤 coordinator crash 시 복구 결정은?
+COMMIT이다. 기록을 읽어 모든 participant에 반복 전송하며 commit 처리는 멱등해야 한다.
+
+### 3. timeout 5초면 prepared 거래를 abort해도 되는가?
+아니다. COMMIT이 이미 영속화됐지만 메시지만 유실됐을 수 있다.
+
+### 4. 2PC가 serializable isolation을 보장하는가?
+아니다. 원자 결정과 동시 거래의 읽기 규칙은 별도 문제다.
+
+### 5. A만 YES, B는 NO면?
+coordinator는 ABORT를 영속화하고 A에 abort를 통지해 준비 상태와 잠금을 해제한다.
+
 [← 이전](06-consensus-failures-and-snapshots.md) · [목차](README.md) · [다음 →](08-sharding-and-reconfiguration.md)
 
 ## 원자성과 2PC

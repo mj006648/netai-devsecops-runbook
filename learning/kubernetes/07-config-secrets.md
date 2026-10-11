@@ -1,6 +1,104 @@
 # 07. ConfigMap과 Secret
 
 [이 책 목차](README.md) · [이전: Storage](06-storage.md) · [다음: 자원과 스케줄링](08-resources-scheduling.md)
+## 처음 읽는 용어와 실제 위치
+
+이 장의 manifest와 출력은 교육용이며 현재 클러스터에 적용한 기록이 아니다.
+
+**API 객체**: API server가 namespace 안에서 이름과 UID로 관리하고 지속하는 상태다. YAML 파일은 요청 입력일 뿐 저장 승인이 되어야 객체가 된다.
+
+**ConfigMap**: 민감하지 않은 작은 문자열 설정을 key/value로 보관한다. 같은 image에 환경별 값을 연결하지만 application reload를 구현하지 않는다.
+
+**Secret**: 노출을 줄여야 하는 byte를 담는다. Base64는 암호화가 아니며 RBAC·저장 암호화·rotation이 필요하다.
+
+**환경 변수**: Process 생성 시 전달되는 문자열 배열이다. API 값이 바뀌어도 이미 실행 중인 process 환경은 자동 수정되지 않는다.
+
+**Projected volume**: Kubelet이 ConfigMap·Secret·token을 Pod filesystem의 파일 view로 합성한다. API update와 file refresh 사이에는 지연이 있다.
+
+**subPath**: Volume의 한 경로를 별도 위치에 mount한다. Projected source가 갱신돼도 기존 subPath mount가 새 대상으로 전환된다고 기대하지 않는다.
+
+**Reload**: Application이 새 파일을 다시 읽어 내부 logger·parser·client 상태를 바꾸는 동작이다. Kubernetes가 업무 설정 reload를 대신하지 않는다.
+
+**resourceVersion**: API 저장 version의 opaque 식별자다. 새 값 저장 증거이지 process 적용 증거는 아니다.
+
+**Reference**: PodSpec이 객체 이름과 key를 가리키는 관계다. 이름·namespace·key가 맞지 않으면 container 생성 전에 실패한다.
+
+**optional**: 참조 누락을 허용한다. 안전한 default가 없으면 명시적 오류 대신 조용한 오설정을 만든다.
+
+**stringData**: Secret 쓰기 요청의 문자열 입력 편의 필드다. 저장 표현이 data로 바뀌어도 Git 평문 보관이 안전해지지 않는다.
+
+**Base64**: Binary를 text로 옮기는 encoding이다. Decode 가능하므로 기밀성 보호가 아니다.
+
+**At-rest encryption**: Etcd 저장 media 노출을 줄인다. 정상 API 권한 조회와 application log 유출은 막지 않는다.
+
+**RBAC**: Secret get·list·watch 권한을 제한한다. List/watch는 여러 Secret을 대량 노출할 수 있다.
+
+**Rotation**: New credential을 허용하고 workload 전환을 확인한 뒤 old를 폐기하는 protocol이다. API update 한 번과 다르다.
+
+**Connection pool**: 이미 인증된 연결 묶음이다. File이 new여도 old credential 연결이 계속 살아 있을 수 있다.
+
+**ServiceAccount token**: Workload API identity token이다. 짧은 수명 projected token은 file rotation과 client reload를 함께 요구한다.
+
+**Audience**: Token을 받아들일 서비스를 제한한다. 대상 server가 기대하는 audience와 맞아야 한다.
+
+**Downward API**: Pod name·namespace·label·resource 일부를 env/file로 준다. 모든 status의 실시간 watch가 아니다.
+
+**Immutable object**: Data를 제자리 변경하지 않고 새 이름/version 객체로 참조를 바꾸는 패턴에 맞는다.
+
+**Content hash name**: 설정 hash를 이름에 넣어 Pod template 변경과 rollout을 명시한다. 옛 객체는 rollback 기간 동안 보존한다.
+
+**File mode**: Projected file permission bits다. Process UID와 맞지 않으면 객체가 있어도 permission denied가 난다.
+
+**Owner UID/GID**: 파일 owner와 process identity 관계다. Secret mount만으로 application read 권한이 보장되지 않는다.
+
+**CreateContainerConfigError**: Kubelet이 환경을 만들기 전 reference를 해결하지 못한 상태다. Application log 이전 단계다.
+
+**Authentication error**: 값은 process까지 갔지만 외부 server가 거부한 상태일 수 있다. Kubelet 오류와 조사 위치가 다르다.
+
+**Live update**: Source update, kubelet refresh, application reload를 합친 말이다. 세 단계를 각각 관찰해야 한다.
+
+**Rollout**: 새 Pod process가 env와 mount 초기값을 다시 읽게 한다. Readiness와 여유 자원이 필요하다.
+
+**Audit**: 누가 Secret API를 읽고 바꿨는지 기록한다. 값 원문을 audit log에 남기지 않는다.
+
+**External provider**: 외부 비밀 저장소를 연결하며 provider 권한·sync 객체·node plugin이라는 신뢰 경계를 더한다.
+
+**연구 재현성**: Image digest와 함께 ConfigMap hash, feature flag, provider version, 적용 generation을 기록해야 한다.
+
+**API 시각**: ConfigMap/Secret update가 저장된 시각이다. Node와 process 적용 완료 시각과 다르다.
+
+**Node 시각**: Kubelet이 새 resourceVersion을 관찰하고 volume view를 바꾼 시각이다. 모든 node가 동시에 바뀌지 않는다.
+
+**Process 시각**: Application이 새 file을 parse하고 내부 객체를 교체한 시각이다. Reload 실패를 metric으로 남겨야 한다.
+
+**외부 시각**: Database가 old/new credential을 허용·폐기한 시각이다. Kubernetes transaction에 포함되지 않는다.
+
+**완료 조건**: API 값 일치가 아니라 새 credential 요청 성공, old 사용 중단, 모든 replica 전환을 함께 확인한다.
+
+```mermaid
+flowchart LR
+ A["API ConfigMap/Secret"] -->|"kubelet reference"| F["env 또는 volume file"]
+ F -->|"application 시작·reload"| M["process 내부 설정"]
+ M -->|"새 연결"| X["외부 database/API"]
+```
+
+API→file은 node 동기화, file→memory는 application 책임, memory→외부는 실제 credential 사용 단계다.
+
+
+## 보안 경계를 한 사건으로 확인한다
+
+ServiceAccount `reporter`가 자기 Pod에서 database password 하나만 읽어야 한다고 하자. Role에 Secret 전체 `list`와 `watch`를 주면 같은 namespace의 TLS key와 다른 팀 token까지 열람할 수 있다. 필요한 이름 하나에 `get`만 허용하는 resourceNames 제한을 검토하고, PodSpec에도 해당 Secret key만 mount한다.
+
+Etcd at-rest encryption을 켜면 disk snapshot에서 Secret 평문이 바로 보이는 위험은 줄어든다. 그러나 reporter가 API 권한으로 정상 GET하거나, node의 privileged process가 mount file을 읽거나, application이 exception에 password를 출력하는 경로는 남는다. 전송 TLS도 client와 API server 사이 packet을 보호할 뿐 destination process의 오용을 막지 않는다. 따라서 RBAC, 저장 암호화, node 권한, file mode, log redaction, rotation을 서로 대체 관계로 보지 않는다.
+
+| 공격·실수 | at-rest encryption | RBAC | workload 설계 |
+|---|---|---|---|
+| etcd snapshot 유출 | 위험 감소 | 직접 효과 없음 | 직접 효과 없음 |
+| 과도한 API list 권한 | 막지 못함 | 최소 권한으로 차단 | 별도 ServiceAccount |
+| Pod가 불필요한 key mount | 막지 못함 | API fetch 경로 일부 제한 | 필요한 key만 projection |
+| App log에 password 출력 | 막지 못함 | 막지 못함 | redaction·오류 처리 |
+
+
 
 Image를 환경마다 다시 build하지 않으려면 실행 설정을 image 밖에서 전달해야 한다. Kubernetes는 일반 설정에는 ConfigMap, 민감 값에는 Secret API를 제공한다. 둘 다 application이 변경을 읽고 적용하는 방식까지 자동 결정하지 않는다.
 

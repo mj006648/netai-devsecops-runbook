@@ -1,5 +1,31 @@
 # 09. Convolution과 sequence model
 
+## 위치를 공유하는 filter와 시간을 전달하는 hidden state
+
+**Convolution kernel/filter**는 작은 weight 창이다. 입력 `[1,2,3,4]`, kernel `[2,-1]`, stride 1, padding 0이면 창별 내적은 `[0,1,2]`다. 같은 kernel을 모든 위치에 써 **weight sharing**을 한다.
+
+**Stride**는 창 이동 간격이다. Stride 2면 시작 위치 0,2처럼 건너뛰어 출력이 짧아진다. **Padding**은 경계에 값을 추가한다. Zero padding 1은 실제 관측을 새로 만드는 것이 아니라 shape와 경계 처리를 위한 가정이다.
+
+1차원 출력 길이는 `floor((입력+2padding-kernel)/stride)+1`이다. 길이 7, kernel 3, padding 1, stride 2면 `floor((7+2-3)/2)+1=4`다.
+
+**Receptive field**는 출력 하나가 영향을 받는 입력 범위다. Kernel 3인 층 하나는 세 위치를 본다. Stride 1의 kernel 3 층을 두 개 쌓으면 두 번째 출력 하나는 원래 입력 다섯 위치에 영향을 받을 수 있다. 층이 깊어질수록 범위가 넓어지지만 실제 유효 영향은 weight와 activation에 달린다.
+
+영상에서는 입력 shape를 `(batch,channel,height,width)`처럼 쓴다. Kernel은 input channel을 모두 합쳐 output channel을 만든다. Channel과 height를 바꿔도 숫자 개수는 같을 수 있으므로 shape 의미를 명시한다.
+
+**Sequence model**은 순서가 있는 입력을 처리한다. RNN은 현재 입력 x_t와 이전 hidden state h_(t-1)로 새 h_t를 만든다. 단순식 `h_t=0.5h_(t-1)+x_t`, x=[2,0,1], h0=0이면 h1=2, h2=1, h3=1.5다.
+
+**BPTT(Backpropagation Through Time)**는 펼친 time step graph를 뒤에서 미분한다. h3는 h2, h2는 h1에 의존하므로 먼 step gradient에는 0.5가 반복 곱해진다. 세 step이면 0.5²처럼 작아질 수 있어 vanishing gradient가 생긴다. 계수가 2처럼 크면 exploding gradient가 가능하다.
+
+Causal sequence 예측에서 t의 label을 예측할 때 t+1 입력을 feature에 넣으면 미래 누수다. Random window split도 겹치는 token이 train/test 양쪽에 들어갈 수 있다.
+
+## 유도 문제 5개
+
+1. 길이5,kernel3,stride1,padding0 출력 길이는? **해설:** `(5-3)+1=3`이다.
+2. Stride를 2로 늘리면 무엇이 바뀌나? **해설:** 창 수가 줄고 위치 해상도가 낮아진다.
+3. Padding 1은 실제 data인가? **해설:** 아니다. 경계 계산을 위해 추가한 값이다.
+4. 위 RNN의 h2는? **해설:** `0.5×2+0=1`이다.
+5. BPTT가 긴 sequence에서 어려운 이유는? **해설:** Jacobian이 반복 곱해져 gradient가 사라지거나 폭발할 수 있다.
+
 [← 이전](08-neural-networks-and-activations.md) · [목차](README.md) · [다음 →](10-attention-and-transformers.md)
 
 Convolution은 작은 filter를 위치마다 공유해 local pattern을 찾는다.

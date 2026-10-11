@@ -1,6 +1,104 @@
 # 10. 보안 경계와 RBAC
 
 [이 책 목차](README.md) · [이전: Health check와 rollout](09-health-and-rollouts.md) · [다음: Helm, Kustomize와 GitOps](11-delivery-helm-gitops.md)
+## 요청 한 건의 보안 판단을 먼저 따라간다
+
+이 장의 manifest와 출력은 교육용이며 현재 클러스터에 적용한 기록이 아니다. 사용자가 `GET /api/v1/namespaces/research/secrets/db`를 요청한다고 하자.
+
+1. TLS는 client와 API server 사이 전송을 보호하고 server certificate를 검증하게 한다.
+2. Authentication은 token·client certificate 등으로 요청 주체 identity를 정한다.
+3. Authorization은 그 identity가 verb `get`, resource `secrets`, namespace `research`, name `db`를 수행할 수 있는지 판단한다.
+4. Admission은 쓰기 요청의 객체 내용을 정책으로 검사·변경한다. GET 권한 판단을 대신하는 단계가 아니다.
+5. API server가 승인된 object를 읽어 응답한다. Audit policy는 누가 무엇을 요청했는지 기록할 수 있다.
+
+```mermaid
+flowchart LR
+    R["HTTPS API request"] --> T["TLS channel"]
+    T --> N["Authentication<br/>누구인가"]
+    N --> Z["Authorization/RBAC<br/>이 요청을 해도 되는가"]
+    Z --> A["Admission<br/>쓰기 객체 정책"]
+    A --> S["API storage"]
+    Z -->|"거부"| F["403 Forbidden"]
+    N -->|"identity 실패"| U["401 Unauthorized"]
+```
+
+TLS→authentication은 암호화된 channel 위 credential을 검증한다는 뜻이다. Authentication 성공이 권한 허용을 뜻하지 않는다. Authorization 뒤 admission은 주로 create/update 객체 내용의 정책 경계다.
+
+## Subject, role, binding의 실제 위치
+
+**Subject**는 User, Group, ServiceAccount 같은 요청 주체다. Kubernetes API에는 일반 User 객체가 내장 저장되지 않을 수 있고 외부 identity provider가 username/group을 제공한다. ServiceAccount는 namespace 객체이며 Pod workload identity에 사용된다.
+
+Role은 namespace 범위 permission rule 묶음이다. ClusterRole은 cluster 범위 객체이며 cluster-scoped resource 권한 또는 여러 namespace에서 재사용할 rule을 담을 수 있다. RoleBinding은 한 namespace에서 subject에 Role 또는 ClusterRole rule을 부여한다. ClusterRoleBinding은 cluster 전체 범위로 부여하므로 영향이 크다.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: config-reader, namespace: research}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["api-config"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: api-reads-config, namespace: research}
+subjects:
+  - {kind: ServiceAccount, name: api, namespace: research}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: config-reader
+```
+
+빈 apiGroup은 core API를 뜻한다. Resource는 plural 이름을 사용한다. `get`과 `list`는 다르다. `resourceNames`는 특정 이름 get을 좁힐 수 있지만 list/watch와 field selector 동작에는 제약이 있으므로 공식 RBAC 문서를 확인한다.
+
+## ServiceAccount token이 process에 도달하는 경로
+
+PodSpec의 `serviceAccountName: api`는 같은 namespace ServiceAccount를 참조한다. Kubelet은 TokenRequest 기반의 시간 제한 token을 projected volume으로 제공할 수 있다. Process의 client library가 token file을 읽어 API Authorization header에 사용한다.
+
+Token file을 copy해 image나 log에 넣지 않는다. Token이 rotation돼도 client가 시작 때 한 번만 읽으면 만료 뒤 실패할 수 있다. `automountServiceAccountToken: false`로 API가 필요 없는 workload의 자동 mount를 줄인다.
+
+## Pod 실행 권한은 API RBAC와 다르다
+
+RBAC는 Kubernetes API 요청을 통제한다. Container process의 Linux UID, capability, seccomp, privilege escalation, host namespace·hostPath 접근은 Pod securityContext와 admission policy, node runtime이 통제한다.
+
+API에서 ConfigMap get 권한이 없어도 이미 Pod에 mount된 파일은 process가 읽을 수 있다. 반대로 Secret get 권한이 있어도 Linux file permission 문제는 별도다. API permission과 runtime permission을 섞지 않는다.
+
+`runAsNonRoot`, `allowPrivilegeEscalation: false`, capability drop, readOnlyRootFilesystem은 공격 표면을 줄이는 입력이다. Image가 non-root 경로와 writable directory를 지원해야 한다. Privileged, hostPID, hostNetwork, broad hostPath는 host 경계를 크게 넓힌다.
+
+## Pod Security Admission과 정책
+
+Pod Security Standards는 Privileged, Baseline, Restricted 수준으로 위험 설정의 기준을 제시한다. Pod Security Admission은 namespace label 정책을 기준으로 Pod create를 enforce·audit·warn할 수 있다. 기존 실행 Pod를 즉시 재작성하는 runtime scanner가 아니다.
+
+Admission 거부와 kubelet 실행 실패를 구분한다. 거부되면 Pod 객체가 저장되지 않을 수 있다. 저장됐지만 `runAsNonRoot`와 image USER가 충돌하면 node에서 CreateContainerConfigError가 날 수 있다.
+
+## TLS와 certificate의 경계
+
+TLS는 전송 중 기밀성·무결성과 peer identity 검증을 제공한다. Client가 CA와 hostname을 제대로 검증해야 한다. Certificate가 있다는 사실만으로 application authorization이 생기지 않는다.
+
+Kubernetes 내부에서도 API server, kubelet, etcd, webhook의 trust path가 다르다. 하나의 CA key를 모든 workload에 배포하지 않는다. Certificate expiration, rotation, revocation 절차와 clock 조건을 관리한다.
+
+## 완전 사례: 과도한 Secret 권한
+
+Report Pod는 Secret `db-report` 하나만 필요하다. ClusterRoleBinding으로 `secrets list,watch`를 cluster 전체에 주면 다른 namespace credential까지 열람할 수 있다. Namespace Role과 이름 제한 get으로 줄이고, Pod에는 필요한 key만 mount한다.
+
+Etcd encryption을 켜도 과도한 정상 API 권한은 막지 못한다. NetworkPolicy를 적용해도 API authorization은 대신하지 않는다. 서로 다른 공격 경로의 통제를 겹친다.
+
+| 위험 | RBAC | Etcd encryption | securityContext |
+|---|---|---|---|
+| API로 다른 Secret 조회 | 직접 제한 | 막지 못함 | 막지 못함 |
+| Etcd snapshot에서 평문 노출 | 직접 효과 없음 | 위험 감소 | 효과 없음 |
+| Container가 host file 접근 | API 밖 | 효과 없음 | hostPath·privilege 제한 |
+| Token이 app log에 출력 | 완전 방지 못함 | 효과 없음 | app redaction 필요 |
+
+## 문제와 유도 해설 보강
+
+1. Authentication 성공 뒤 403이 나는 이유는? **Identity는 확인됐지만 authorization rule이 verb/resource/namespace를 허용하지 않은 것이다.**
+2. RoleBinding이 ClusterRole을 참조하면 cluster 전체 권한인가? **아니다.** Binding namespace 안에서 그 rule을 부여한다. ClusterRoleBinding은 cluster 범위다.
+3. NetworkPolicy가 Secret API 읽기를 막는 권한 체계인가? **아니다.** Packet 통신과 API authorization은 다른 경계다.
+4. `runAsNonRoot`만 쓰면 안전한가? **아니다.** Capability, mount, seccomp, image, kernel과 application 취약점을 함께 본다.
+5. Etcd encryption이면 Secret list 권한이 과도해도 괜찮은가? **아니다.** 정상 API response는 복호화되어 권한 주체에 전달된다.
 
 Kubernetes 보안은 “로그인했는가?” 하나로 끝나지 않는다. 요청한 주체를 확인하고, 그 동작을 허가하며, object가 정책에 맞는지 검사하고, 실행 중 process 권한과 secret 경계를 제한해야 한다. 이 장의 모든 identity와 secret 값은 가짜 예시이며 실제 credential을 포함하지 않는다.
 

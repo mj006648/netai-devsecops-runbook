@@ -334,7 +334,138 @@ PY
 | swap을 끄면 항상 빨라진다 | workload에 따라 OOM 위험과 cache 압박이 커질 수 있다. |
 | NUMA는 CPU 개수만 많으면 자동으로 해결된다 | placement와 locality가 중요하다. |
 
-## 15. 해설 문제
+## 15. VA에서 PFN까지: 주소 하나를 비트와 구조체로 끝까지 따라가기
+
+메모리 설명에서 가장 자주 섞이는 세 숫자를 먼저 분리하자.
+
+- **VA(Virtual Address, 가상 주소)**: 현재 프로세스가 load/store 명령에 넣은 주소다.
+- **VPN(Virtual Page Number, 가상 페이지 번호)**: VA에서 page 안 offset을 뺀 윗부분이다.
+- **PFN(Page Frame Number, 페이지 프레임 번호)**: 실제 RAM의 page-sized frame에 붙인 번호다.
+
+4KiB page에서는 page 크기가 `2^12` byte이므로 아래 12bit가 offset이다. 교육용 VA `0x0000_7f12_3456_789a`를 쓰면 offset은 마지막 세 hex digit인 `0x89a`다. VPN은 주소를 12bit 오른쪽으로 민 값이다. leaf PTE가 PFN `0x12345`를 가리킨다면 물리 주소는 다음처럼 계산한다.
+
+```text
+page size      = 0x1000
+offset         = VA & 0xfff = 0x89a
+frame base     = PFN << 12  = 0x12345000
+physical addr  = frame base + offset
+               = 0x1234589a
+```
+
+**PTE(Page Table Entry, 페이지 테이블 항목)**는 PFN만 담는 숫자가 아니다. present 여부, user 접근 가능 여부, writable/executable 여부, accessed/dirty 같은 architecture별 상태를 포함한다. 정확한 bit 이름과 의미는 CPU architecture와 kernel 구현에 따라 달라진다. `pte_present()` 같은 kernel helper를 거치지 않고 특정 bit 위치를 모든 machine에 일반화하면 안 된다.
+
+주소 변환의 완전한 경로를 두 경우로 나눠 보자.
+
+### 이미 resident한 anonymous page 읽기
+
+1. user task가 VA에서 load한다.
+2. CPU가 VA의 VPN과 현재 주소 공간 식별 정보를 사용해 TLB를 찾는다.
+3. TLB hit이면 저장된 PFN과 접근 권한을 얻는다.
+4. offset을 PFN의 frame base에 붙여 physical address를 만든다.
+5. CPU cache hierarchy에서 data를 찾고, miss가 이어지면 memory controller가 RAM을 읽는다.
+
+### 처음 쓰는 anonymous mapping
+
+1. `mmap()`은 virtual range를 예약하고 **VMA(Virtual Memory Area, 같은 속성을 공유하는 주소 구간)** 정보를 만든다. 모든 page frame을 즉시 주지 않을 수 있다.
+2. 첫 store의 page-table walk에서 writable present mapping을 찾지 못해 page-fault exception이 난다.
+3. kernel fault handler는 VA가 VMA 안에 있고 write가 허용되는지 검사한다.
+4. 합법적 demand-zero fault라면 물리 page를 확보하고 0으로 초기화한다.
+5. 새 PFN과 권한을 leaf PTE에 기록하고 필요한 TLB 일관성 처리를 한다.
+6. exception에서 돌아와 완료되지 않았던 store instruction을 다시 시도한다.
+
+여기서 `mmap()` 성공, VMA 존재, PTE present, page resident는 서로 다른 상태다. VSS가 늘었어도 RSS가 바로 같은 만큼 늘지 않는 이유다.
+
+### `fork()` 뒤 COW write fault
+
+parent의 VA P와 child의 VA P가 PFN 77을 함께 가리키되 둘 다 read-only COW 상태라고 하자. child가 쓰면 “권한이 없으므로 무조건 SIGSEGV”가 아니다. kernel은 COW mapping임을 확인하고 새 frame 91을 할당해 기존 내용을 복사한 뒤 child PTE를 PFN 91 writable로 바꾼다. parent는 계속 PFN 77을 본다. page가 4KiB라면 한 byte를 고치기 위해 최대 4KiB page 복사가 생길 수 있다. THP가 관련되면 단위와 split/copy 경로가 더 복잡해진다.
+
+## 16. reclaim 후보는 어떻게 고르는가: anon, file, folio, refault
+
+**folio(폴리오)**는 Linux memory management에서 하나 이상의 연속 page를 묶어 다루는 자료형이다. 모든 folio가 huge page라는 뜻은 아니며, page cache와 reclaim 코드에서 복합 page 취급의 모호함을 줄이는 데 쓰인다. **LRU(Least Recently Used)**라는 이름은 “가장 오래 전에 접근한 정확한 한 page를 완전한 시간순으로 찾는다”는 약속이 아니다. Linux는 접근 흔적과 여러 목록·세대·통계를 사용한 근사 정책으로 비용과 정확도를 맞춘다.
+
+전통적인 설명은 anonymous/file과 active/inactive 목록을 나눈다. 최근 사용됐다고 판단한 page는 보호하고, 덜 사용된 후보는 scan하여 회수한다. 회수했는데 곧 같은 page가 다시 필요해 fault로 돌아오는 일을 **refault**라고 한다. refault가 많으면 kernel이 working set을 지나치게 작게 잡았거나 잘못된 종류의 page를 버리고 있다는 신호가 될 수 있다.
+
+**MGLRU(Multi-Gen LRU, 다중 세대 LRU)**는 page 접근 시기를 여러 generation으로 나눠 aging과 eviction을 수행하는 대안 구현이다. kernel 문서는 page-table walk와 accessed bit, refault feedback 등을 사용해 hot/cold page를 구분한다고 설명한다. 다음은 개념 모델이다.
+
+```text
+generation 12: 최근 접근이 확인된 hot folio
+generation 11: 그보다 오래된 folio
+generation 10: 가장 오래된 회수 후보
+
+aging: 접근 흔적을 보고 새 generation을 만들고 hot folio를 보호
+eviction: 오래된 generation에서 후보를 골라 file/anon 비용을 비교해 회수
+refault feedback: 방금 버린 종류가 곧 돌아오면 선택을 조정
+```
+
+MGLRU가 켜져 있다고 모든 reclaim stall이 사라지는 것은 아니다. dirty writeback, swap I/O, unreclaimable memory, cgroup protection, NUMA locality, high-order allocation 실패는 별도 조건이다. kernel build option과 runtime 상태도 확인해야 한다.
+
+## 17. cgroup memory 제어 파일을 하나의 limit으로 읽지 않기
+
+cgroup v2의 memory controller는 container나 service group별로 memory 사용과 압박을 관리한다. 이름이 비슷해도 의미가 다르다.
+
+| 파일 | 핵심 의미 | limit에 닿았을 때 |
+|---|---|---|
+| `memory.current` | 현재 cgroup과 descendant의 사용량 | 관측값이며 그 자체가 제한은 아님 |
+| `memory.low` | best-effort reclaim 보호 | 보호를 넘거나 모든 대상이 보호되면 reclaim 가능 |
+| `memory.min` | 더 강한 reclaim 보호 | 유효 보호 범위 안은 정상 reclaim에서 보호, 과도한 설정은 OOM 위험 |
+| `memory.high` | throttle/reclaim을 유도하는 경계 | 넘은 task가 reclaim 비용을 지며 느려질 수 있음; 곧바로 hard OOM limit은 아님 |
+| `memory.max` | hard usage limit | 줄일 수 없으면 해당 cgroup에서 OOM killer가 동작할 수 있음 |
+| `memory.swap.max` | cgroup이 사용할 swap 한도 | anon page의 대피 선택을 제한 |
+| `memory.events` | low/high/max/oom/oom_kill 사건 counter | 어느 경계가 실제로 작동했는지 확인 |
+
+수치 예를 보자. `memory.high=6GiB`, `memory.max=8GiB`인 cgroup이 6.5GiB를 쓴다. 이는 즉시 OOM kill해야 한다는 뜻이 아니다. allocation task가 reclaim과 throttling을 겪어 `memory.events`의 high가 늘 수 있다. 사용량을 6GiB 아래로 줄이지 못하고 계속 8GiB 부근까지 증가하면 max와 OOM 경로가 문제가 된다. host에 100GiB free가 있어도 cgroup 범위에서 limit을 넘으면 local reclaim과 memcg OOM이 가능하다.
+
+`memory.high` 때문에 요청 thread가 direct reclaim을 하면 서비스 latency가 증가할 수 있다. 이때 host 전체 `MemAvailable`만 보면 원인을 놓친다. `memory.current`, `memory.events`, cgroup별 PSI, swap과 I/O를 같은 시간축에 둔다.
+
+## 18. PSI를 퍼센트 한 개로 읽지 않기
+
+**PSI(Pressure Stall Information)**는 task가 CPU, memory, I/O 자원을 기다리며 진전하지 못한 시간을 집계한다. memory pressure에는 보통 `some`과 `full`이 있다.
+
+- `some`: 적어도 일부 non-idle task가 memory 때문에 stall한 시간이다. 다른 task는 계속 일할 수 있다.
+- `full`: 모든 non-idle task가 동시에 memory stall에 빠진 시간이다. system 또는 cgroup 범위에 따라 해석한다.
+- `avg10`, `avg60`, `avg300`: 최근 10·60·300초 창의 이동 평균이다.
+- `total`: 누적 stall time이며 보통 microsecond 단위로 제공된다. 두 시점의 차이를 구해 구간 값을 본다.
+
+예를 들어 10초 관측 구간에서 `memory some total`이 1,500,000µs 늘었다면 그 구간에 aggregate stall time이 1.5초 누적됐다는 뜻이다. wall-clock 10초 동안 “프로세스 전체가 정확히 15% 느려졌다”는 뜻은 아니다. 여러 task의 stall이 집계되는 방식과 `some/full` 범위를 문서대로 읽어야 한다. PSI가 높을 때 `pgscan`, `pgsteal`, major fault, swap in/out, writeback latency를 함께 보면 reclaim이 실제 원인인지 좁힐 수 있다.
+
+## 19. swap, thrashing, OOM을 하나의 직선 단계로 보지 않기
+
+**thrashing(스래싱)**은 working set을 RAM에 유지하지 못해 page를 내보내고 곧 다시 가져오는 일을 반복하며 실제 업무보다 paging에 대부분의 시간을 쓰는 상태다. swap 사용량이 1 byte라도 있으면 thrashing인 것은 아니다. cold anonymous page가 swap에 오래 머물고 I/O가 없다면 오히려 RAM을 hot file cache에 쓰는 정상 선택일 수 있다.
+
+OOM 결정도 “free가 0이면 가장 큰 process를 죽인다”보다 복잡하다. allocation의 order와 flag, reclaim 가능성, NUMA/cpuset 범위, memcg limit, oom_score 조정, 이미 진행 중인 OOM 처리 등이 영향을 준다. 일부 allocation은 실패를 호출자에게 돌려줄 수 있고, 모든 실패가 kill로 이어지지 않는다. memcg OOM victim과 system-wide OOM victim의 선택 범위도 다르다.
+
+운영 시간표를 보자.
+
+```text
+t0  memory.current가 memory.high를 넘음
+t1  요청 thread가 charge 과정에서 direct reclaim 수행
+t2  clean file cache를 버리지만 곧 refault
+t3  anonymous page 일부를 swap out, storage queue 증가
+t4  request p99 증가, memory PSI some/full 증가
+t5  memory.max 근처에서 reclaim으로도 사용량을 줄이지 못함
+t6  memcg OOM 사건과 victim kill 발생 가능
+```
+
+이것은 가능한 경로이지 모든 OOM의 고정 순서가 아니다. swap이 꺼져 있으면 t3가 없고 file cache가 충분하면 t2에서 회복할 수 있다. `memory.high` 없이 `memory.max`만 갑자기 낮추면 다른 모양이 된다.
+
+## 20. NUMA와 memory tiering: 용량과 거리, 격리를 함께 본다
+
+NUMA node 0의 CPU가 node 1 DRAM에 접근하면 local DRAM보다 느릴 수 있다. 하지만 “remote page를 전부 local로 옮기면 된다”도 불완전하다. local capacity가 부족하고 여러 tenant가 같은 memory channel/cache를 경쟁하며 page migration 자체가 bandwidth를 쓴다.
+
+CXL memory를 포함한 tiered memory에서는 빠른 local DRAM과 더 큰 capacity tier를 함께 쓸 수 있다. OSDI 2024의 Memstrata 연구는 CXL 기반 hardware-managed tiering의 multi-VM 환경에서 tenant 간 contention과 workload별 slowdown 차이를 문제로 삼았다. 제안은 hardware tiering만 믿는 대신 page coloring과 online slowdown estimator를 사용해 VM 간 성능 격리를 돕는 방식이다.
+
+이 연구를 일반 Linux 보장처럼 읽으면 안 된다.
+
+| 구분 | 내용 |
+|---|---|
+| 연구 문제 | CXL tier를 공유하는 VM들이 cache/resource를 경쟁하며 일부 workload가 크게 느려질 수 있음 |
+| 제안 기법 | prototype의 hardware-managed tiering에 software allocation/isolation을 결합 |
+| 평가 범위 | 논문이 사용한 full-system prototype, VM과 workload 조건 |
+| 일반화 한계 | 모든 CXL 장치·kernel·cloud에서 같은 수치가 자동 재현된다는 뜻이 아님 |
+
+교재에서 가져갈 원리는 세 가지다. capacity가 늘어도 latency와 bandwidth가 같아지는 것은 아니고, page placement는 tenant isolation 문제이기도 하며, 평균 성능만 보면 outlier VM의 tail slowdown을 놓칠 수 있다. 실제 시스템에서는 node별 free/reclaim, memory bandwidth, CPU affinity, device locality와 application SLA를 같이 측정한다.
+
+## 21. 완전 해설 문제
 
 1. `fork()` 직후 RSS가 두 배로 늘지 않을 수 있는 이유는?
    - COW로 parent와 child가 physical page를 공유하기 때문이다. write가 발생해야 복사된다.
@@ -348,8 +479,28 @@ PY
 4. TLB miss가 많으면 왜 huge page가 도움이 될 수 있는가?
    - 한 TLB entry가 더 큰 memory range를 덮어 변환 cache 효율을 높일 수 있기 때문이다.
 
-## 16. 1차 참고 자료
+5. 4KiB page에서 PFN이 `0xabc`, offset이 `0x123`이다. physical address는 얼마인가?
+   - frame base는 `0xabc << 12 = 0xabc000`이다. offset을 더하면 `0xabc123`이다. 이 계산은 PFN과 권한을 이미 page-table/TLB에서 얻었다는 전제다.
+
+6. `mmap()`으로 8GiB anonymous range를 예약했는데 RSS는 20MiB만 늘었다. 반드시 누수가 있는가?
+   - 아니다. VMA와 virtual range를 만들었지만 아직 대부분을 touch하지 않아 demand allocation이 일어나지 않았을 수 있다. VSZ, RSS, fault, mapping 종류를 함께 확인한다.
+
+7. host에 free memory가 충분한데 pod가 OOMKilled될 수 있는가?
+   - 가능하다. 해당 pod cgroup의 `memory.max` 범위에서 사용량을 줄이지 못하면 memcg OOM이 발생할 수 있다. host 전체 OOM과 범위가 다르다.
+
+8. `memory.high` event가 늘었지만 `oom_kill`은 0이다. 아무 문제도 없는가?
+   - 그렇지 않다. high 경계에서 allocation task가 reclaim/throttle되어 latency가 증가할 수 있다. PSI와 요청 latency, reclaim·refault·I/O 지표를 확인한다.
+
+9. swap 사용량이 2GiB라는 한 시점의 값만으로 지금 thrashing이라고 결론 내릴 수 있는가?
+   - 없다. cold page가 과거에 swap out된 뒤 그대로일 수 있다. 구간별 swap-in/out, major fault, PSI, storage I/O와 refault를 함께 본다.
+
+10. NUMA node 0 CPU에서 도는 task의 page를 node 0으로 모두 옮기면 항상 빨라지는가?
+   - 아니다. node 0 capacity와 bandwidth contention, migration 비용, task migration 가능성, 공유 page의 다른 접근자를 고려해야 한다. locality 이득과 압박 증가를 측정해야 한다.
+
+## 22. 1차 참고 자료
 
 - Linux Kernel Documentation: [Memory Management concepts](https://docs.kernel.org/admin-guide/mm/concepts.html), [Memory Allocation Guide](https://docs.kernel.org/core-api/memory-allocation.html), [proc filesystem](https://docs.kernel.org/filesystems/proc.html)
 - Linux Kernel Documentation: [Transparent Hugepage Support](https://docs.kernel.org/admin-guide/mm/transhuge.html), [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+- Linux Kernel Documentation: [Multi-Gen LRU](https://docs.kernel.org/admin-guide/mm/multigen_lru.html), [PSI](https://docs.kernel.org/accounting/psi.html), [NUMA memory policy](https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html)
 - Linux man-pages: [mmap(2)](https://www.man7.org/linux/man-pages/man2/mmap.2.html), [proc_pid_smaps(5)](https://man7.org/linux/man-pages/man5/proc_pid_smaps.5.html), [proc(5)](https://www.man7.org/linux/man-pages/man5/proc.5.html)
+- USENIX OSDI 2024: [Managing Memory Tiers with CXL in Virtualized Environments](https://www.usenix.org/conference/osdi24/presentation/zhong-yuhong)

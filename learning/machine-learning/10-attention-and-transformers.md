@@ -1,5 +1,41 @@
 # 10. Attention과 Transformer
 
+## Embedding에서 Transformer block 출력까지
+
+**Embedding**은 token ID를 실수 벡터로 바꾸는 lookup table이다. ID 7 자체의 크기 7은 의미 거리가 아니며, 학습된 row vector가 token 표현이다.
+
+Hidden H shape가 `(sequence=2,embedding=2)`이고 단순화를 위해 projection 뒤 Q,K,V가 다음이라고 하자.
+
+```text
+Q=[[1,0],[1,1]]
+K=[[1,0],[0,1]]
+V=[[10,0],[0,20]]
+```
+
+**Query**는 현재 위치가 찾는 특징, **Key**는 각 위치의 비교 표지, **Value**는 선택 비율로 섞을 내용이다. 같은 H에 서로 다른 W_Q,W_K,W_V를 곱해 만들 수 있다.
+
+`QK^T`는 `[[1,0],[1,1]]`이다. Head dimension d=2이므로 `sqrt(2)`로 나눠 `[[0.707,0],[0.707,0.707]]`을 얻는다. 첫 행 softmax는 `[0.670,0.330]`, 둘째는 `[0.5,0.5]`다. 이를 V와 곱하면 output은 약 `[[6.70,6.60],[5,10]]`이다.
+
+**Mask**는 보지 못할 위치 score에 매우 작은 값을 더해 softmax weight를 0에 가깝게 만든다. Causal mask에서 첫 token은 미래 둘째 token을 못 보므로 첫 행 output은 V1 `[10,0]`이 된다. Padding mask와 causal mask는 제외 이유가 다르다.
+
+**Attention head**는 자기 projection과 score 계산을 가진 한 묶음이다. Multi-head는 여러 subspace 결과를 이어 붙이고 output projection한다. Head 수를 늘렸다고 독립 의미가 자동으로 생기지 않는다.
+
+Transformer block은 attention 하나가 아니다. Normalization은 hidden scale을 조정하고, residual은 `input+transformation` 경로를 만들며, MLP는 각 token 위치에서 비선형 변환을 한다. Shape가 같아야 residual add가 가능하다.
+
+FlashAttention-3 2024 preprint는 Hopper의 비동기 TMA, Tensor Core, warp specialization을 활용해 attention 실행을 연구한다. 위 수학적 QK·softmax·V 의미를 바꾸기보다 data movement와 overlap을 다룬다. 평가 hardware가 Hopper라는 조건을 다른 GPU에 그대로 일반화하면 안 된다.
+
+PagedAttention(SOSP 2023)은 LLM serving의 KV cache를 block 단위로 관리해 fragmentation과 sharing을 다룬다. OS paging 비유는 logical-to-physical mapping 이해에 유용하지만 CPU virtual memory와 동일한 mechanism은 아니다. 당시 baseline과 workload 조건을 확인한다.
+
+FlashInfer(MLSys 2025)는 KV layout, JIT, dynamic request와 CUDA Graph 조건을 다루는 inference library 연구다. Dynamic batch에서는 request shape 변화와 graph 재사용 조건이 중요하다. Kernel benchmark와 end-to-end scheduler latency를 분리 비교한다.
+
+## 유도 문제 5개
+
+1. Q `(3,4)`, K `(5,4)`면 score shape는? **해설:** `QK^T`이므로 `(3,5)`다.
+2. 같은 score 두 개의 softmax는? **해설:** 각각 0.5다.
+3. Causal mask 목적은? **해설:** 현재 token이 미래 token 정보를 보지 못하게 한다.
+4. Transformer가 attention 하나인가? **해설:** 아니다. Residual, normalization, MLP와 projection이 포함된다.
+5. FlashAttention speedup을 모든 GPU에 적용 가능한가? **해설:** 아니다. Hardware, dtype, shape와 비교 baseline을 맞춰야 한다.
+
 [← 이전](09-convolutions-and-sequence-models.md) · [목차](README.md) · [다음 →](11-training-systems-and-numerical-precision.md)
 
 Attention은 한 위치가 다른 위치의 정보를 얼마나 섞을지 계산한다.

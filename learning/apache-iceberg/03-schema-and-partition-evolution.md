@@ -1,5 +1,13 @@
 # 03. 스키마와 파티션의 진화
 
+## 이름과 저장 배치를 함께 바꾸는 예
+
+field ID 3의 customer_id를 buyer_id로 바꿔도 ID 3은 유지한다. 새 reader는 old 파일의 ID 3 값을 buyer_id로 해석하고 새 파일도 ID 3으로 쓴다. 이름만 연결하면 rename을 drop과 add로 오해해 과거 값을 NULL로 만들 수 있다.
+
+partition spec 0이 days(ts), spec 1이 months(ts)라고 하자. 2026-10-11 행의 old file은 day 값, new file은 month 값을 가진다. 이틀 범위 query는 spec 0에서는 두 day를, spec 1에서는 10월을 후보로 잡고 행 filter로 정확한 이틀을 남긴다. manifest entry의 spec ID가 해석 규칙을 고른다.
+
+bucket 16의 값 3과 bucket 32의 값 3은 같은 집합이 아니다. spec ID 없이 값만 비교하면 잘못 pruning한다. partition evolution은 metadata 변화이고 compaction은 물리 재작성이다.
+
 [이 책의 목차](README.md) · [이전 장](02-reads-writes-and-commits.md)
 
 **Evolution, 진화**는 테이블을 계속 사용하면서 구조나 저장 규칙을 변경하는 것이다. 모든 변화를 무조건 메타데이터만으로 해결하는 것이 아니라, 안전하게 바꿀 수 있는 범위와 실제 파일 재작성이 필요한 범위를 나눈다.

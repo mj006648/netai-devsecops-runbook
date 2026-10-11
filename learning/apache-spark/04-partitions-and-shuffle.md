@@ -1,5 +1,25 @@
 # 04. Partition과 shuffle
 
+## partition ID와 shuffle file을 끝까지 연결한다
+
+앞 장의 여덟 partial state에 hash partition 수 2를 적용해 KR·JP→Q0, US→Q1이라고 가정한다. 각 Stage 0 task는 목적 partition별 block을 쓴다. P0 task는 Q0에 KR40, Q1에 US20을 쓴다. P1은 Q0에 JP40·KR50, Q1에 US60, P2는 Q0에 KR70·JP80, Q1에 US90을 쓴다.
+
+Q0 reduce task는 세 map task의 Q0 block을 fetch하고 key별로 정렬 또는 hash 결합해 KR160,JP120을 만든다. Q1은 세 Q1 block에서 US170을 만든다. shuffle write는 map task가 쓴 byte, shuffle read는 reduce task가 fetch한 byte다. 네트워크 전송량과 디스크 byte는 compression·locality·재시도로 다를 수 있다.
+
+sort 기반 shuffle에서 map output memory가 부족하면 정렬 run을 디스크에 spill하고 merge한다. spill은 결과 오류가 아니지만 추가 write/read와 GC를 만든다. 한 task만 spill하면 평균 partition이 아니라 skew 또는 큰 record를 본다.
+
+repartition(4,region)은 full shuffle로 새 key 분포를 만든다. coalesce(1)는 보통 기존 partition을 좁게 합쳐 output 병렬성을 1로 만들 수 있다. 큰 데이터에서 coalesce(1)은 한 task 병목과 큰 단일 파일을 만들 수 있다. repartition 수를 400으로 늘려도 전체의 90%인 단일 KR key는 같은 bucket에 남을 수 있다.
+
+executor 유실로 P2의 Q0/Q1 block이 사라지면 reduce fetch retry만으로 복구되지 않을 수 있어 P2 map task를 다시 실행한다. task의 외부 side effect는 중복될 수 있다.
+
+### 완전 풀이 문제 5개
+
+1. Q0으로 가는 상태 수는? **해설:** KR 3개와 JP 2개로 5개다.
+2. Q1은? **해설:** US 3개다.
+3. repartition 400이 hot key를 400개로 나누는가? **해설:** 같은 key hash면 한 bucket에 머문다.
+4. coalesce(1)의 위험은? **해설:** 병렬성이 한 task로 줄고 메모리·시간·파일 크기가 몰린다.
+5. spill byte가 큰 뜻은? **해설:** 정렬·집계 상태가 memory를 넘어 임시 저장 I/O를 사용했다는 관측이다.
+
 [이 책 목차](README.md) · [이전](03-lazy-dag-jobs-stages.md) · [다음](05-joins-and-aqe.md)
 
 분산 처리의 핵심은 데이터를 나누는 것뿐 아니라 필요한 순간에 다시 모으는 것이다. 이 장은 같은 장치의 측정값이 서로 다른 입력에 있을 때 평균을 구하는 경로를 따라간다.

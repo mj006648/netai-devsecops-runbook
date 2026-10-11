@@ -1,5 +1,61 @@
 # 12. Spark, Iceberg와 최적화
 
+## snapshot 계획에서 분산 결과까지
+
+Spark logical plan은 무엇을 계산할지 나타내는 driver 메모리 객체다. analyzed plan은 열 이름을 catalog schema와 연결하고 type을 확정한다. optimized logical plan은 의미를 보존하며 filter·projection·join을 변환한다. physical plan은 file scan, broadcast hash join, sort-merge join과 exchange를 고른다. stage와 task는 scheduler가 이를 cluster 작업으로 나눈 runtime 객체다.
+
+Spark partition은 한 task가 처리하는 실행 입력 조각이다. Iceberg partition은 days(ts), bucket(16,id) 같은 transform 결과로 파일을 조직하는 지속 개념이다. Parquet row group은 파일 내부 행 범위다. owner, lifetime, 변경 주체가 모두 다르다.
+
+Iceberg catalog는 이름을 current metadata JSON에 연결하고 snapshot은 manifest list를 가리킨다. manifest는 data/delete file별 경로와 통계를 담는다. Spark driver의 connector가 snapshot과 후보 파일을 고르고 executor가 Parquet를 읽는다. catalog가 SUM을 계산하지 않고 Iceberg가 shuffle을 실행하지 않는다.
+
+## 전체 추적 1: SELECT
+
+현재 snapshot 81에 manifest 20개, manifest마다 data file 50개가 있어 총 1,000파일이라고 하자. 파일 평균 128MiB라 전체 약 125GiB다. SQL은 특정 day의 region별 amount 합계다.
+
+1. analyzer가 region, amount, day를 field ID와 type에 연결한다.
+2. optimizer가 세 열만 projection하고 day filter를 scan에 전달한다.
+3. connector가 snapshot 81을 고정한다.
+4. manifest list summary로 20개 중 16개를 제외하고 200파일을 검사한다.
+5. manifest file 통계로 160개를 더 제외해 40파일, 약 5GiB를 후보로 남긴다.
+6. driver가 이를 80개 Spark input partition으로 만든다. 파일 수와 task 수는 같지 않다.
+7. executor가 Parquet row group을 더 줄여 실제 800MiB를 decode한다.
+8. 80 task가 KR,US,JP partial sum을 내면 최대 240개 중간 record다.
+9. exchange가 같은 region을 모으고 final aggregate가 세 결과 행을 만든다.
+
+snapshot 81을 고정한 뒤 82가 게시되어도 진행 query는 81의 파일 집합으로 끝난다. 파일 pruning 40개, decode 800MiB, 결과 3행은 서로 다른 단계의 수치다.
+
+DataFrame transformation은 대개 action 전까지 lazy하지만 parsing, schema resolution, catalog·metadata 조회가 언제 일어나는지는 API와 connector에 따라 action 전에도 일어날 수 있다. collect, count, write 같은 action은 task 실행을 촉발한다. “모두 lazy”라는 문장으로 외부 I/O 시점을 단정하지 않는다.
+
+## 전체 추적 2: write와 commit
+
+80 writer task가 약 32MiB 파일을 하나씩 만들면 data file 80개, 총 2.5GiB가 저장소에 생긴다. task 성공은 upload 성공이지 table commit 성공이 아니다. driver가 manifest, snapshot 82, metadata v12 후보를 만들고 catalog pointer가 예상 v11일 때만 v12로 바꾼다.
+
+다른 writer가 먼저 v12-other를 게시하면 compare-and-swap이 실패한다. append이고 논리 충돌이 없다면 최신 상태를 읽어 이미 쓴 80파일을 v13 후보에 재사용한다. overwrite가 겹치면 안전한 rebase가 아닐 수 있다. commit 전에 실패한 파일은 orphan 후보이며 실행 중 write와 보존 기간을 고려한 cleanup만 삭제해야 한다.
+
+같은 100GiB를 10MiB 파일로 쓰면 약 10,240개, 256MiB 목표면 400개다. data byte는 같아도 manifest entry, object open, footer read, scheduling 비용이 다르다. compaction은 작은 파일을 읽어 큰 파일로 쓰고 새 snapshot에 게시하는 write다.
+
+fact 100GiB와 dimension 40MiB를 broadcast join하면 executor 50개에 cluster 전체 약 2GiB가 전달될 수 있고 각 executor에 hash overhead가 생긴다. sort-merge join에서 hot key 하나가 20GiB면 한 reducer가 오래 남는다. 나머지 80GiB를 399개가 나누면 일반 partition 평균은 약 205MiB인데 hot task는 20GiB다. 전체 평균은 skew를 숨긴다.
+
+## 연구 조건과 반례
+
+QOaaS는 Calcite/Cascades 계열 optimizer를 여러 engine에 연결하는 prototype 방향이다. 바뀌는 객체는 property 표현, rule, cost와 engine capability 교환이며 Spark scheduler나 Iceberg manifest가 사라지지 않는다. 모든 Spark query에서 우위라는 보장이 아니다. planning time, unsupported operator와 execution time을 분리한다.
+
+filtered-vector 접근에서는 Iceberg metadata pruning 뒤 Parquet filter와 ANN 탐색을 결합한다. SQL filter를 어긴 vector를 반환하면 빠르더라도 틀리다. exact filtered top-k, recall, file byte와 cold/warm latency를 함께 둔다.
+
+- executor 수와 task 수는 다르다.
+- object store의 file 존재는 snapshot 포함을 뜻하지 않는다.
+- partition pruning은 row predicate를 대체하지 않는다.
+- broadcast는 shuffle을 줄여도 memory·전송 비용이 있다.
+- 최신 Spark 문서가 현재 cluster와 connector 지원을 보장하지 않는다.
+
+## 완전 풀이 문제 5개
+
+1. 100GiB를 256MiB로 나누면? **해설:** 102400/256=400개다.
+2. 1,000파일에서 40개가 남으면 제거율은? **해설:** 후보 4%, 제거 96%다.
+3. 80 task가 region 세 개 partial을 모두 내면? **해설:** 최대 240개다.
+4. 80파일 upload 뒤 commit 실패면 행이 보이는가? **해설:** current snapshot에 없으므로 정상 reader에는 보이지 않는다.
+5. hot 20GiB와 일반 평균 205MiB의 의미는? **해설:** 평균 task 크기만 보면 심한 skew와 straggler를 숨긴다.
+
 [이 책 목차](README.md) · [이전: Columnar·vectorized query engine](11-columnar-vectorized-query-engines.md) · [다음: 로컬 교육 모델](13-local-models.md)
 
 Spark는 distributed execution engine이고 Iceberg는 table metadata·snapshot·file 집합을 관리하는 open table format이다. 둘을 함께 써도 partition skew, shuffle, small files와 catalog commit을 별도로 이해해야 한다.

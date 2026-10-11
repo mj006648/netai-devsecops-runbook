@@ -1,5 +1,69 @@
 # 10. NR 무선과 프로토콜 스택
 
+## 계층은 packet을 서로 다른 책임으로 감싼다
+
+**SDAP(Service Data Adaptation Protocol)** 은 5G QoS flow와 radio bearer 대응을 돕는다. **PDCP(Packet Data Convergence Protocol)** 는 sequence, ciphering, integrity 대상 기능, header compression·재정렬 같은 책임을 가진다. **RLC(Radio Link Control)** 는 mode에 따라 segmentation, 재조립, 순서·재전송을 맡는다. **MAC(Medium Access Control)** 은 여러 logical channel을 transport block에 multiplex하고 scheduler grant·HARQ를 다룬다. **PHY**는 coded bit를 modulation symbol과 시간·주파수 resource에 놓는다.
+
+**RRC(Radio Resource Control)** 는 UE와 gNB 사이 radio connection·measurement·bearer configuration을 제어한다. **NAS(Non-Access Stratum)** 는 UE와 core의 AMF 사이 registration·authentication·session 관련 제어다. gNB가 NAS bytes를 운반할 수 있지만 NAS 의미의 종단은 core다.
+
+```mermaid
+flowchart TB
+    IP["IP packet"] --> SDAP
+    SDAP --> PDCP
+    PDCP --> RLC
+    RLC --> MAC
+    MAC --> PHY
+    PHY --> RF["NR RF"]
+    RRC["RRC: UE↔gNB 제어"] -. 설정 .-> PDCP
+    NAS["NAS: UE↔AMF 제어"] -. RRC를 통해 운반 .-> RRC
+```
+
+## 900-byte packet의 실제 하향 흐름
+
+UPF에서 900-byte IP packet이 gNB에 온다. SDAP이 QoS flow를 bearer에 매핑한다. PDCP가 sequence와 security 처리를 한다. RLC가 현재 grant 크기에 맞춰 두 segment로 나눌 수 있다. MAC은 다른 logical channel 정보와 합쳐 transport block을 만든다. PHY가 CRC·FEC·rate matching·scrambling·modulation을 거쳐 resource grid에 배치한다.
+
+| 시각 | 계층 | 중간 상태 |
+|---:|---|---|
+| 0 ms | SDAP | QoS flow→bearer |
+| 0.1 ms | PDCP | sequence·ciphered PDU |
+| 0.2 ms | RLC | segment A/B |
+| 0.3 ms | MAC | grant에 맞춘 transport block |
+| 0.4 ms | PHY | coded bit·QAM symbol |
+| 1.0 ms | UE PHY | CRC 결과·HARQ feedback |
+
+한 IP packet이 정확히 한 radio transmission과 같지 않다. segment될 수 있고 여러 packet이 한 transport block에 묶일 수 있다.
+
+## numerology와 resource 계산
+
+NR subcarrier spacing은 `15×2^μ kHz` 꼴의 numerology를 사용한다. normal CP에서 한 slot은 14 OFDM symbol이라는 조건으로 μ=0의 slot은 1 ms, μ=1은 0.5 ms, μ=2는 0.25 ms다.
+
+RB는 주파수 방향 12 subcarrier다. 8 RB, 14 symbol이면 raw RE는 `8×12×14=1344`다. pilot·control 224 RE를 빼면 data RE 1120개다. 16-QAM 4 coded bit/RE, code rate 1/2이면 정보 후보는 `1120×4×0.5=2240 bit=280 byte`다. 실제 표준 transport block은 rate matching과 규격 표를 따른다.
+
+## RLC mode와 재전송 층
+
+RLC TM은 투명 전달, UM은 RLC 재전송 없이 sequence·재조립, AM은 status와 재전송을 제공한다. HARQ는 더 짧은 PHY/MAC 시간 규모에서 soft combining으로 재전송한다. RLC AM과 HARQ가 함께 있을 때 같은 일을 중복한다기보다 서로 다른 시간·실패 범위를 맡는다.
+
+## FDD와 TDD
+
+FDD는 uplink와 downlink에 다른 주파수 대역을 사용한다. TDD는 같은 주파수에서 시간을 나눈다. TDD pattern은 downlink/uplink 기회와 interference 조건을 바꾼다. “같은 carrier라 동시에 양방향”이라고 가정하면 안 된다.
+
+## 추가 문제와 완전 해설
+
+### 1. RRC와 NAS 종단은?
+RRC는 UE↔gNB, NAS는 UE↔AMF다.
+
+### 2. 12 RB×12 subcarrier×14 symbol의 raw RE는?
+2016 RE다.
+
+### 3. μ=2 normal-CP slot 길이는?
+`1 ms/2²=0.25 ms`다.
+
+### 4. IP packet 하나가 transport block 하나인가?
+아니다. segmentation과 multiplexing 때문에 1:1이 아니다.
+
+### 5. HARQ와 RLC AM 차이는?
+HARQ는 짧은 radio 전송 결합, RLC AM은 더 위 계층의 누락 PDU 복구를 맡는다.
+
 [이전: 이동통신 세대와 구조](09-cellular-generations-and-architecture.md) · [목차](README.md) · [다음: 접속·스케줄링·이동성](11-access-scheduling-and-mobility.md)
 
 자료 확인일: **2026-10-11**

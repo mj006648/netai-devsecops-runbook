@@ -1,6 +1,97 @@
 # 03. GPU Operator의 구성요소와 소유권
 
 GPU Operator는 GPU 한 개를 단순히 “설치”하는 프로그램이 아니다.
+## Operator는 무엇을 관찰하고 무엇을 만든다
+
+이 장의 상태와 출력은 교육용이며 실제 설치 기록이 아니다. GPU Operator는 GPU를 계산하는 application이 아니라 Kubernetes controller와 node DaemonSet들을 배포·조정하는 운영 계층이다.
+
+CustomResourceDefinition은 ClusterPolicy 같은 새 API kind의 schema를 API server에 등록한다. Custom resource는 사용자가 원하는 driver·toolkit·plugin 설정을 담는다. Operator controller는 그 object를 watch하고 DaemonSet, ConfigMap, ServiceAccount를 만든다. CRD만 설치하고 controller가 없으면 객체는 저장돼도 host driver는 준비되지 않는다.
+
+```mermaid
+flowchart LR
+    C["ClusterPolicy spec<br/>desired state"] -->|"watch"| O["GPU Operator controller"]
+    O -->|"create/update"| D["Driver DaemonSet"]
+    O -->|"create/update"| T["Container toolkit DaemonSet"]
+    O -->|"create/update"| P["Device plugin DaemonSet"]
+    O -->|"create/update"| F["GPU Feature Discovery"]
+    O -->|"create/update"| V["Validator"]
+    D -->|"module·device node"| N["GPU node host"]
+    T -->|"runtime/CDI config"| N
+    P -->|"register resources"| K["kubelet"]
+    F -->|"Node labels"| A["API Node"]
+    V -->|"검사 결과"| S["status·log"]
+```
+
+Custom resource→operator는 제어 입력이다. Operator→DaemonSet은 API 객체 생성이지 node shell을 직접 호출하는 동기 함수가 아니다. DaemonSet Pod→host는 privileged mount와 node 작업이다.
+
+## 구성 요소별 소유권
+
+**Driver component**는 지원 조건에서 host kernel module과 user library를 준비한다. Host에 preinstalled driver가 있다면 Operator가 driver를 관리하지 않도록 설정할 수 있다. 두 설치 주체가 같은 module을 소유하면 upgrade·rollback 충돌이 난다.
+
+**Container toolkit component**는 container runtime이 선택 GPU device와 driver library를 container에 넣도록 host 설정을 준비한다. Runtime config 변경이 필요한 경우 재시작 영향과 node drain을 확인한다.
+
+**Device plugin**은 kubelet registration socket을 통해 GPU extended resource와 health를 광고한다. Scheduler가 개수로 node를 고르고 kubelet이 Allocate를 호출한다. Plugin이 driver module을 대체하지 않는다.
+
+**GPU Feature Discovery**는 GPU model, memory, MIG capability 같은 정보를 Node label로 게시할 수 있다. Label은 scheduling input이며 hardware를 바꾸지 않는다. Stale label과 실제 device health 차이를 확인한다.
+
+**Node Feature Discovery**는 CPU·PCI·kernel feature 같은 node 정보를 label·resource로 발견하는 별도 프로젝트다. GPU 전용 GFD와 역할이 겹치거나 연결될 수 있지만 같은 process라고 단정하지 않는다.
+
+**Validator**는 driver, toolkit, plugin, CUDA workload 경로를 검사한다. 모든 application model과 성능을 검증하는 것은 아니다. Validator 성공은 지원 경로가 동작할 가능성의 증거이지 training correctness와 isolation 보장이 아니다.
+
+## Reconcile 수치 trace
+
+| 시각 | Desired object | Operator/DaemonSet | Node observed state |
+|---:|---|---|---|
+| t0 | ClusterPolicy generation 1 | controller 관찰 전 | driver 없음 |
+| t1 | gen1 | Driver DS desired 2 | Pod 0/2 Ready |
+| t2 | gen1 | Driver Pod node-a Running | module load 중 |
+| t3 | gen1 | Toolkit DS 생성 | `/dev/nvidia0`, runtime config |
+| t4 | gen1 | Device plugin 2/2 | Node capacity GPU=4+4 |
+| t5 | gen1 | GFD 2/2 | model/MIG labels |
+| t6 | gen1 | Validator node-b 실패 | node-a usable, node-b library 오류 |
+| t7 | gen1 | status degraded | scheduler에는 stale capacity 가능성 조사 |
+| t8 | spec 수정 generation 2 | observedGeneration 아직 1 | reconcile 진행 중 |
+| t9 | gen2 관찰 | component rollout | status 조건 갱신 |
+
+Operator Pod Running 하나만 보고 완료라 하지 않는다. 각 DaemonSet desired/ready, Node capacity/labels, validator, 실제 CUDA Pod를 본다. Generation과 observedGeneration이 다르면 status가 최신 spec을 반영하지 않았을 수 있다.
+
+## DaemonSet과 host mutation
+
+Driver Pod는 privileged permission, host `/run`, module, kernel header 경로를 사용할 수 있다. Container가 지워져도 load된 module과 host file이 남을 수 있다. Rollback과 uninstall이 무엇을 제거하는지 공식 절차를 따른다.
+
+Toolkit Pod가 runtime config를 바꾸면 이미 실행 중인 container와 새 container의 동작이 다를 수 있다. Node별 rollout, runtime restart, drain 필요성을 확인한다. 모든 node를 동시에 바꾸면 GPU workload 가용성을 잃을 수 있다.
+
+## MIG Manager와 configuration
+
+MIG Manager는 label/config에 따라 GPU를 MIG mode와 profile로 구성하는 component일 수 있다. Reconfiguration은 기존 GPU process를 중단하거나 reset을 요구할 수 있다. Desired label 변경을 단순 metadata 변경으로 보지 않는다.
+
+MIG instance가 광고돼도 database 같은 application state는 없다. Scheduler resource 이름과 profile, node label, actual `nvidia-smi` 관찰을 맞춘다. MIG memory partition은 time-slicing과 다른 isolation 메커니즘이다.
+
+## Version과 support matrix
+
+GPU Operator 26.7 support matrix에서 Kubernetes, OS, container runtime, GPU/driver 조건을 함께 확인한다. Kubernetes minor가 지원돼도 custom kernel이나 secure boot, preinstalled component 조합이 별도 제약일 수 있다.
+
+DRA core의 Kubernetes 1.34 GA와 1.35 stable/locked gate 표시는 역사와 현재 상태를 구분한다. GPU Operator classic device plugin 구성과 vendor DRA driver의 지원 범위도 같지 않다.
+
+## Terminal failure와 복구 주체
+
+Driver build가 kernel header 불일치로 실패하면 같은 Pod restart만으로 해결되지 않는다. Toolkit config 오류는 runtime integration owner가 수정한다. Device plugin registration 실패는 kubelet socket·permission·API capacity를 본다. Validator CUDA failure는 library ABI, device node, driver health를 단계별로 본다.
+
+Hardware Xid와 uncorrected ECC가 반복되면 workload reschedule만으로 device가 건강해지는 것은 아니다. Node cordon·drain·hardware remediation 같은 운영 판단이 필요하다. Operator reconcile은 물리 고장을 수리하지 않는다.
+
+## 연구 성능 경계
+
+Operator가 GPU를 Ready로 만들었다는 것은 sharing 성능 격리를 뜻하지 않는다. IWQoS scheduling 연구의 policy는 별도 scheduler와 workload 가정을 가진다. Time-slicing replica 등록은 capacity 이름을 늘릴 수 있지만 HBM quota와 latency SLO를 자동 분리하지 않는다.
+
+Power·fragmentation 연구도 Operator 설치 성공과 다른 질문이다. GPU profile, clock/power cap, co-location, allocator trace를 기록한다.
+
+## 문제와 완전 해설
+
+1. CRD만 설치하면 driver가 설치되는가? **아니다.** Controller가 custom resource를 reconcile해야 한다.
+2. Operator Ready면 모든 GPU node가 Ready인가? **아니다.** Component DaemonSet과 node별 validator·capacity를 본다.
+3. GFD label이 있으면 GPU health가 보장되는가? **아니다.** Discovery metadata와 현재 driver/device health는 다르다.
+4. MIG label 변경이 무중단 metadata 변경인가? **아니다.** GPU reset·process 중단 가능성을 검토한다.
+5. Validator 성공이면 training 성능 isolation도 검증됐는가? **아니다.** 기본 stack path와 application 성능 계약은 다르다.
 노드 드라이버, 컨테이너 런타임 연결, Kubernetes 장치 광고, 상태 라벨,
 관측과 검증을 여러 DaemonSet과 컨트롤러로 관리하는 운영 계층이다.
 

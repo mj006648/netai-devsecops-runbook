@@ -1,5 +1,55 @@
 # 15. AI-for-RAN: 데이터에서 안전한 제어까지
 
+## 측정 한 줄이 실제 행동이 되기까지
+
+기지국 counter와 UE report는 원시 **측정값**이다. 모델에 넣기 위해 시간 창의 평균·변화율·범주로 바꾼 입력을 **feature**라고 한다. 예측이 맞았는지 학습 때 비교하는 정답·목표를 **label**이라 한다. 모델을 만드는 반복 계산은 **training**, 운영 요청에서 출력을 계산하는 과정은 **inference**다.
+
+이 용어는 위치와 수명이 다르다. 측정은 DU·CU에서 ms~초 동안 생성되고, feature store에는 더 오래 보관될 수 있다. training dataset은 offline 저장소에 있고, 배포된 model artifact는 version과 승인 상태를 가진다. inference 결과는 짧은 control window 안에서만 유효할 수 있다.
+
+## UE A의 측정부터 행동까지
+
+목표를 “다음 500 ms에 cell 혼잡이 커질지 예측해 admission parameter를 조정”으로 정한다. DU가 PRB 사용률·buffer·HARQ를 100 ms 간격으로 보고한다. feature pipeline이 최근 5개 값을 평균·기울기로 만든다. model server가 20 ms 안에 inference하고 controller가 guard를 검사한다.
+
+| 시각 | 주체 | 객체 |
+|---:|---|---|
+| 0~500 ms | DU | 5개 measurement |
+| 520 ms | feature pipeline | mean·slope·missing flag |
+| 540 ms | model server | congestion probability 0.82 |
+| 545 ms | controller | policy·범위·age 검사 |
+| 560 ms | RAN node | parameter 적용 또는 거부 |
+| 1060 ms | evaluator | KPI 전후·부작용 |
+
+probability 0.82가 action 자체는 아니다. threshold, 현재 policy, 변경 폭, 최소 유지 시간, rollback 조건을 적용해 control 후보로 바꾼다.
+
+## train/test 누수와 negative transfer
+
+같은 UE의 연속 1초 window를 무작위로 train/test에 나누면 거의 같은 channel 장면이 양쪽에 들어가 성능이 부풀 수 있다. cell과 날짜를 분리한 test가 새 환경 일반화를 더 엄격히 본다.
+
+여러 cell·task를 함께 학습하면 공통 표현을 얻을 수 있지만 한 task gradient가 다른 task를 해칠 수 있다. 이를 **negative transfer**라고 한다. 2024 multi-task 연구는 네 simulation task와 partial federation 조건을 평가한다. 그 결과를 모든 현장 cell에 일반화하지 않고 task·dataset·metric을 함께 기록한다.
+
+## inference deadline과 fallback
+
+control 유효 시간이 100 ms인데 feature 생성 40, queue 30, inference 50 ms면 합 120 ms로 이미 늦다. 정확한 model이어도 stale action은 위험하다. deadline 초과, input 범위 이탈, model service 장애 때 no-op이나 검증된 rule baseline으로 fallback한다.
+
+canary는 일부 cell·traffic에 제한 배포해 영향과 rollback을 확인하는 단계다. SIL은 software simulation, HIL은 실제 hardware 일부와 연결한 시험이다. 둘의 통과가 상용 전면 배포를 자동 승인하지 않는다.
+
+## 추가 문제와 완전 해설
+
+### 1. measurement와 feature 차이는?
+measurement는 원시 관측, feature는 모델 입력용으로 변환한 값이다.
+
+### 2. 40+30+50 ms inference chain이 100 ms deadline을 만족하는가?
+총 120 ms라 만족하지 못한다.
+
+### 3. 같은 시간 window를 train/test에 섞으면?
+유사 장면 누수로 일반화 성능이 부풀 수 있다.
+
+### 4. model probability가 곧 control인가?
+아니다. policy·guard·범위·age 검사와 실행 interface가 필요하다.
+
+### 5. negative transfer를 발견하면?
+task 분리, weight 조정, partial sharing과 baseline 비교를 검토한다.
+
 [이 책 목차](README.md)
 
 [← 이전: AI-RAN 세 방향](14-ai-ran-three-directions.md) · [다음: 공유 계산](16-ai-and-ran-shared-compute.md)

@@ -1,6 +1,121 @@
 # 06. DRA YAML을 한 줄씩 읽기
 
 [← 이전 장](05-dra-allocation-lifecycle.md) · [다음 장 →](07-cdi-and-runtime.md)
+## 0. YAML은 물리 GPU가 아니라 API 객체를 만든다
+
+**YAML**은 사람이 읽기 쉬운 들여쓰기 기반 데이터 형식이다. Kubernetes API server는 YAML을 그대로 저장하지 않고 JSON 형태의 API 객체로 변환해 schema를 검증한다. `apiVersion`은 사용할 API 그룹과 버전, `kind`는 객체 종류, `metadata`는 이름과 namespace, `spec`은 사용자가 원하는 상태를 뜻한다. DRA YAML을 적용한다고 GPU driver나 `/dev/nvidia0`이 자동 설치되는 것은 아니다. 이미 driver가 ResourceSlice로 광고한 장치를 Claim이 요청하는 것이다.
+
+**ResourceClaimTemplate**은 Claim을 만드는 청사진이다. 실제 장치를 예약하는 객체가 아니므로 status에 allocation을 직접 갖지 않는다. **ResourceClaim**은 장치 요구와 할당 결과를 가진 namespace 객체다. **DeviceClass**는 관리자가 허용한 장치 선택 정책의 클러스터 객체다. **ResourceSlice**는 driver가 장치 inventory를 게시하는 클러스터 객체다. Pod YAML은 이 객체들의 이름을 참조하지만 실제 장치 ID를 사용자가 임의로 정하지 않는다.
+
+## 0.1 세 종류의 이름을 왼쪽에서 오른쪽으로 추적한다
+
+예제의 `one-gpu`, `accelerator`, `gpu`가 비슷해 보이지만 서로 다른 이름 공간에 있다.
+
+1. `one-gpu`는 API server에서 찾는 ResourceClaimTemplate 객체 이름이다.
+2. `accelerator`는 한 Pod spec 안에서 Claim을 가리키는 지역 이름이다.
+3. `gpu`는 한 Claim spec 안의 device request를 가리키는 지역 이름이다.
+4. `gpu.nvidia.com`은 DeviceClass 객체 이름이다.
+5. `gpu-a0` 같은 실제 device 이름은 ResourceSlice와 allocation status에서 시스템이 연결한다.
+
+```mermaid
+flowchart LR
+    Y["YAML: template one-gpu"] --> T["ResourceClaimTemplate 객체"]
+    P["Pod 지역명 accelerator"] --> C["Pod용 ResourceClaim"]
+    C --> Q["요청 지역명 gpu"]
+    Q --> D["DeviceClass gpu.nvidia.com"]
+    D --> S["ResourceSlice 후보"]
+    S --> A["allocation: node-a/gpu-a0"]
+```
+
+이 화살표를 거꾸로 읽으면 오류를 찾기 쉽다. container의 `resources.claims[].name`이 `accelerator`와 다르면 Pod 내부 연결이 끊긴다. `request`가 `gpu`와 다르면 Claim 내부 요청 연결이 끊긴다. DeviceClass 이름이 없으면 후보 정책을 찾지 못한다. ResourceSlice가 없거나 selector를 만족하지 않으면 실제 device 후보가 없다.
+
+## 0.2 두 Pod와 세 device로 YAML 결과를 계산한다
+
+`node-a`에 80 GiB `gpu-a0`, 24 GiB `gpu-a1`, `node-b`에 40 GiB MIG `gpu-b0`이 광고됐다고 가정한다. Pod A의 Claim은 full GPU이면서 40 GiB 이상을 요구하고, Pod B는 24 GiB 이상을 요구하며 MIG를 허용한다.
+
+Pod A selector가 `memory >= 40Gi`와 `type == full`이라면 후보는 `gpu-a0` 하나다. Pod B 후보는 세 장치지만 Pod A 할당 뒤에는 `gpu-a1`, `gpu-b0`이 남는다. scheduler가 Pod B에 `gpu-b0`을 고르면 각 Claim status에는 서로 다른 allocation이 기록되고 Pod A는 node-a, Pod B는 node-b에 묶인다.
+
+다음은 구조를 배우기 위한 축약 예다. selector 속성 이름은 driver가 실제 ResourceSlice에 게시한 schema와 맞아야 하며, 그대로 운영 환경에 적용하지 않는다.
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: large-full-gpu
+spec:
+  spec:
+    devices:
+      requests:
+        - name: compute
+          exactly:
+            deviceClassName: gpu.nvidia.com
+            allocationMode: ExactCount
+            count: 1
+            selectors:
+              - cel:
+                  expression: >-
+                    device.capacity['gpu.nvidia.com'].memory.isGreaterThan(quantity("40Gi"))
+```
+
+**CEL**, Common Expression Language은 API 객체의 값을 안전한 식으로 비교하는 언어다. expression은 프로그램을 임의 실행하는 shell이 아니라 후보 device 속성을 평가하는 조건이다. 위 예의 `isGreaterThan`은 40 GiB와 같은 값을 포함하지 않는다. 40 GiB 이상을 의도한다면 공식 API가 제공하는 비교식의 정확한 의미를 확인해 경계를 표현해야 한다.
+
+`count: 1`은 selector를 통과한 device 한 단위를 요구한다. 물리 GPU 한 장, MIG instance 하나, 공유 replica 하나 중 무엇을 단위로 광고하는지는 driver 구성에 달려 있다. YAML의 숫자만으로 격리 수준을 알 수 없다.
+
+## 0.3 API 승인 뒤 상태가 바뀌는 시간표
+
+| 시각 | 주체 | 읽는 필드 | 쓰는 필드·상태 | 관찰 |
+| --- | --- | --- | --- | --- |
+| t=0.0 | API server | YAML 전체 | Template와 Pod spec 저장 | 문법·schema 승인 |
+| t=0.1 | Pod용 controller | `resourceClaimTemplateName` | 실제 Claim 생성 | Claim 존재, 아직 미할당 |
+| t=0.3 | scheduler | Claim request, Class, Slice | 후보와 node 계산 | Pod Pending |
+| t=0.4 | scheduler | 선택 결과 | Claim `status.allocation` | device와 node 결정 |
+| t=0.5 | scheduler | Pod 제약 | Pod `spec.nodeName` | node-a로 bind |
+| t=0.7 | kubelet | Claim allocation | prepare 요청 | container 미생성 가능 |
+| t=0.9 | node driver | device ID | CDI/노드 준비 상태 | prepare 성공 또는 실패 |
+| t=1.1 | runtime | CDI와 container spec | device node·mount 병합 | container 시작 |
+| t=1.5 | 애플리케이션 | CUDA library | context와 계산 | 성공 또는 app 오류 |
+
+API server가 YAML을 받았다는 것은 t=0 단계만 통과한 것이다. Pod가 Pending이면 Claim 생성, 후보 선택, node 조건 중 어디에서 멈췄는지 본다. allocation이 있어도 prepare가 실패할 수 있고, prepare가 성공해도 runtime injection이나 CUDA 호환에서 실패할 수 있다.
+
+## 0.4 ClaimTemplate과 명시적 Claim을 고르는 기준
+
+replica마다 독립 장치를 원하면 Template이 자연스럽다. Deployment replica 2는 보통 서로 다른 Pod용 Claim 두 개를 만들므로 장치 수명도 각 Pod에 연결하기 쉽다. 반대로 관리자가 미리 예약한 Claim을 특정 작업이 이어서 사용해야 한다면 명시적 ResourceClaim을 참조할 수 있다. 이때 Pod 삭제 뒤 Claim이 남는지, 다음 사용 전에 device 상태를 어떻게 정리하는지 운영 책임을 정해야 한다.
+
+Template 객체를 삭제했다고 이미 만들어진 Pod와 Claim이 모두 즉시 사라진다고 단정하지 않는다. Kubernetes owner reference와 controller 동작을 확인한다. 명시적 Claim을 두 Pod가 동시에 참조할 수 있는지도 API의 sharing 조건과 driver capability에 달려 있다. 이름이 같다고 안전한 동시 사용이 보장되지 않는다.
+
+## 0.5 실패 문구를 필드 연결로 환원한다
+
+`DeviceClass not found`는 `deviceClassName`이 가리키는 클러스터 객체가 없다는 뜻이다. `no suitable devices`는 Class는 찾았지만 ResourceSlice 장치가 selector, capacity, node 조건 또는 기존 할당 때문에 후보가 되지 못했다는 뜻일 수 있다. `request not found`는 container의 `request` 지역 이름과 Claim의 `devices.requests[].name` 연결을 본다. prepare 실패는 YAML schema가 아니라 선택 노드의 driver 상태를 본다.
+
+재시도 가능한 API conflict나 일시적인 driver 통신 오류와, 같은 조건으로는 회복되지 않는 terminal failure를 구분한다. 존재하지 않는 capability를 요구하는 selector는 기다린다고 생기지 않는다. 관리자가 조건을 고치거나 해당 장치를 제공해야 한다. 반면 driver Pod가 재시작 중이면 정상화 뒤 prepare가 멱등 재시도로 성공할 수 있다.
+
+## 0.6 버전과 지원 조건을 YAML 위에서 확인한다
+
+`resource.k8s.io/v1`이라고 적었다는 사실은 이 manifest가 안정 API 형태를 요구한다는 뜻이다. 클러스터가 그 API를 제공하는지 먼저 확인해야 한다. DRA가 Kubernetes 1.34에서 GA가 된 역사, 1.35에서 stable 및 locked gate로 표시되는 상태, 현재 클러스터가 노출하는 API는 서로 구분한다.
+
+Kubernetes API 지원만으로 NVIDIA driver의 DeviceClass 이름, capacity key, selector 식이 자동 결정되지 않는다. NVIDIA DRA driver와 GPU Operator 26.7의 지원 문서에서 Kubernetes, OS, runtime, GPU 조합을 확인하고 실제 ResourceSlice schema를 읽어야 한다. 공식 예제의 필드를 자신의 driver 버전에 그대로 가정하지 않는다.
+
+## 0.7 추가 완전 풀이 문제
+
+**문제 1.** Template 이름은 `one-gpu`, Pod 지역 이름은 `accelerator`, request 이름은 `gpu`다. container가 `name: one-gpu`를 참조하면 무엇이 잘못되는가?
+
+**해설.** container의 `resources.claims[].name`은 Template 객체 이름이 아니라 Pod의 `spec.resourceClaims[].name`인 `accelerator`를 참조해야 한다. API 객체와 Pod 지역 이름 공간을 섞은 오류다.
+
+**문제 2.** `isGreaterThan(quantity("40Gi"))` 조건에서 정확히 40 GiB device가 선택되는가?
+
+**해설.** 아니다. 표현은 40 GiB 초과를 요구한다. 40 GiB를 포함하려면 driver schema와 CEL API에 맞는 이상 조건을 작성해야 한다. 경계값 하나 때문에 후보가 0개가 될 수 있다.
+
+**문제 3.** YAML 적용 성공과 Claim allocation 성공 중 어느 것이 `/dev/nvidia0` 존재를 보장하는가?
+
+**해설.** 둘 다 단독으로 보장하지 않는다. allocation 뒤 kubelet prepare와 runtime CDI injection이 완료되어야 container에서 device file을 볼 수 있다. 각 단계의 condition과 log를 확인한다.
+
+**문제 4.** Deployment replica를 2로 늘렸는데 GPU가 하나뿐이다. Template이 있으므로 두 Pod가 자동 time-share하는가?
+
+**해설.** 아니다. 각 Pod용 Claim이 독립 device를 요구하면 하나만 할당되고 다른 하나는 Pending일 수 있다. time-slicing은 driver가 공유 단위를 광고하도록 별도 구성해야 하며 고정 VRAM 격리를 뜻하지 않는다.
+
+**문제 5.** DRA API가 stable이면 vendor capacity key가 모든 driver에서 같은가?
+
+**해설.** 아니다. 안정 API는 객체 구조와 호환성 약속이다. vendor별 device 속성과 capacity domain은 driver가 게시한다. 실제 ResourceSlice와 해당 driver 공식 문서를 근거로 selector를 작성한다.
 
 > 이 장에서는 Kubernetes `resource.k8s.io/v1` API로 NVIDIA GPU 한 개를 요청하는 교육용 YAML을 읽는다. GPU 없는 노트북이나 운영 클러스터에 그대로 적용하지 않는다.
 

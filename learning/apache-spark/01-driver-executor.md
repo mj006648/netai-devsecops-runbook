@@ -1,5 +1,23 @@
 # 01. Driver와 executor
 
+## 프로세스와 실패 범위를 수치로 연결한다
+
+classic PySpark에서는 driver 쪽 Python program이 Py4J를 통해 driver JVM에 계획 요청을 보낸다. driver JVM은 analyzed·physical plan과 scheduler state를 소유한다. executor JVM은 task, cache, shuffle block을 관리하고 Python UDF가 있으면 별도 Python worker가 batch를 처리한다. JVM heap과 Python worker memory는 별도이므로 하나만 늘려 다른 OOM을 해결할 수 없다.
+
+앞 장의 P0·P1·P2를 stage 0에서 계산하고 stage 1이 shuffle block을 읽는다고 하자. E1이 P0과 P1, E2가 P2를 처리한다. E2가 사라져 P2 block이 없어지면 driver scheduler가 lineage로 P2 map task를 새 executor에서 다시 실행한다. driver 자체가 죽으면 executor가 scheduler state를 자동 인계하지 않으며 application 재시작은 배포 계층의 책임이다.
+
+결과 1억 행, 직렬화 payload 행당 100바이트면 약 10GB다. driver heap 4GB에서 collect하면 object overhead 전부터 담지 못한다. 반면 세 region 결과만 collect하면 작다. executor hash 상태가 500MB이고 실행 memory 여유가 400MB면 spill 또는 executor OOM을 조사한다.
+
+physical planner가 8MB로 추정한 dimension을 broadcast했는데 실제 800MB라면 모든 executor memory를 압박한다. EXPLAIN의 추정과 task의 actual shuffle·spill·time을 구분한다.
+
+### 완전 풀이 문제 5개
+
+1. executor 3개×4 core의 task slot은? **해설:** task CPU 1 가정에서 약 12개다.
+2. 120 task의 단순 wave 수는? **해설:** 10회다.
+3. E2 shuffle 유실 뒤 무엇을 재실행하는가? **해설:** 필요한 P2 이전-stage task다.
+4. driver 4GB에 10GB collect는? **해설:** OOM 또는 결과 크기 보호 오류가 예상된다.
+5. Python UDF memory는 JVM heap과 같은가? **해설:** 별도 process 사용량이라 아니다.
+
 [이 책의 목차](README.md) · [이전 장](00-data-to-spark.md)
 
 이 장의 목표는 코드가 작성된 위치, 계획이 만들어지는 위치, 행을 계산하는 위치, 파일을 저장하는 위치를 구분하는 것이다. 먼저 일반적인 classic Spark application을 배운다. Spark Connect의 분리 구조는 [10장](10-deployment-and-connect.md)에서 다룬다.

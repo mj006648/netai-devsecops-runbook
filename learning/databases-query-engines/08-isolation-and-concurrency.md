@@ -6,6 +6,32 @@ Isolation level은 concurrent transaction이 관찰할 수 있는 현상을 제�
 
 모든 출력과 수치는 교육용이며 실제 PostgreSQL·Spark·Iceberg 실행 결과가 아니다.
 
+## write skew가 직렬 순서로 설명되지 않는 이유
+
+초기 A와 B가 모두 당직이고 규칙은 “적어도 한 명은 당직”이다. TA는 B=true를 읽고 A=false를 쓰며, TB는 A=true를 읽고 B=false를 쓴다. 서로 다른 행을 써서 단순 행 쓰기 충돌이 없을 수 있다. 둘 다 commit하면 A=false,B=false다. TA→TB 직렬 순서라면 TB는 A=false를 읽어 B를 내려서는 안 되고, TB→TA라면 TA가 B=false를 보아야 한다. 가능한 두 직렬 순서 어느 것도 실제 결과를 설명하지 못한다.
+
+명시적 잠금으로 보호하려면 판단에 참여하는 행 또는 더 넓은 조건을 일관된 순서로 잠근다. TA가 A,B를 모두 잠그고 TB도 A,B 순으로 요청하면 TB가 기다린 뒤 새 상태를 읽는다. 반대로 TA가 A→B, TB가 B→A 순으로 잡으면 서로 상대 잠금을 기다리는 deadlock cycle이 생긴다. deadlock detector가 한쪽을 abort해 cycle을 끊어도 애플리케이션은 전체 작업을 재시도해야 한다.
+
+SSI(Serializable Snapshot Isolation)는 모든 읽기를 배타 잠금으로 직렬화하지 않고 snapshot 실행의 read-write dependency를 추적한다. TA가 읽은 B를 TB가 쓰고, TB가 읽은 A를 TA가 쓰면 위험한 순환이 생긴다. 엔진은 commit을 모두 허용하는 대신 하나를 serialization failure로 중단할 수 있다. 따라서 Serializable은 “절대 실패하지 않는 모드”가 아니라 성공한 트랜잭션들을 직렬 순서로 설명할 수 있게 일부를 abort하는 계약이다.
+
+```mermaid
+flowchart LR
+ RA[TA reads B=true] --> WA[TA writes A=false]
+ RB[TB reads A=true] --> WB[TB writes B=false]
+ WA -. 무효화 .-> RB
+ WB -. 무효화 .-> RA
+```
+
+재시도 단위는 `BEGIN→읽기→업무 판단→쓰기→COMMIT` 전체다. 이전 snapshot에서 계산한 “당직 해제 가능”을 보관해 UPDATE만 다시 보내면 검사를 우회한다. 재시도 전에 외부 메시지를 보냈다면 중복될 수 있으므로 commit 뒤 outbox 전달과 idempotency를 사용한다.
+
+### 문제 5개
+
+1. 서로 다른 행을 쓰는데도 anomaly가 생기는가? **해설:** 여러 행을 함께 본 predicate가 서로의 쓰기로 무효화되어 write skew가 생긴다.
+2. lock 순서가 왜 중요한가? **해설:** 서로 반대 순서로 보유·대기하면 wait-for graph cycle이 생긴다.
+3. deadlock과 serialization failure는 같은가? **해설:** 전자는 잠금 대기 순환, 후자는 직렬화 불가능한 의존 위험이다.
+4. 실패한 UPDATE만 재시도해도 되는가? **해설:** 읽기와 판단을 새 snapshot에서 다시 해야 하므로 전체 트랜잭션을 재시도한다.
+5. RR이 같은 행을 반복해 보이면 업무 규칙도 안전한가? **해설:** 아니다. 여러 행 조건은 write skew로 깨질 수 있다.
+
 ## 1. 단어와 위치
 
 | 용어 | 뜻 |

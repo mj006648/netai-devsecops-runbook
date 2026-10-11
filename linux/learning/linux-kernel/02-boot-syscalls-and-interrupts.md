@@ -247,7 +247,120 @@ PY
 
 해석: Python 함수처럼 보이지만 `os.pipe`, `os.write`, `os.read`, `os.close`는 내부에서 운영체제 서비스를 요청한다. 출력 문자열 자체보다 중요한 것은 “파일 디스크립터라는 정수 핸들을 통해 커널 객체를 다룬다”는 점이다.
 
-## 13. 오개념 정리
+## 13. UEFI에서 PID 1까지: 소유권이 바뀌는 지점을 시간표로 읽기
+
+부팅은 “파일을 차례로 실행한다”보다 “다음 단계가 실행에 필요한 메모리와 장치를 준비하고 제어권을 넘긴다”로 이해해야 한다.
+
+| 단계 | 주 실행 주체 | 준비하는 객체·상태 | 실패하면 보이는 범위 |
+|---|---|---|---|
+| reset | CPU와 platform firmware | 초기 실행 주소, 기본 CPU·memory·chipset 상태 | 화면·serial log조차 없을 수 있음 |
+| UEFI boot manager | firmware | boot entry, device path, UEFI image | firmware 화면 또는 boot entry 오류 |
+| OS loader/EFI stub | loader | kernel image, initramfs, command line, memory map | loader 메시지 또는 즉시 reboot |
+| `ExitBootServices()` 이후 | kernel이 platform 운영 책임 인수 | page table, interrupt, allocator, driver 초기화 | early console/kernel log |
+| initramfs early userspace | `/init` 등 PID 1 | storage/network/crypto module, real root 발견·mount | emergency shell, root 찾기 실패 |
+| real root의 init system | systemd 등 | mount, device, service dependency graph | rescue target, failed unit |
+
+UEFI의 **Boot Services**는 loader가 device를 찾고 image와 memory를 준비할 때 쓰는 firmware 기능이다. loader는 `GetMemoryMap()`으로 현재 memory map과 key를 얻고 `ExitBootServices()`를 성공시키면 boot service를 더 사용할 수 없다. 그 시점부터 OS loader/kernel이 사용 가능한 platform resource의 관리 책임을 맡는다. UEFI **Runtime Services** 일부는 이후에도 남을 수 있으므로 “firmware가 완전히 사라진다”는 표현도 정확하지 않다.
+
+kernel image가 실행되면 압축 해제, architecture별 초기화, memory allocator, interrupt, scheduler, driver/subsystem init이 이어진다. 이 목록의 실제 순서는 architecture와 build configuration에 따라 달라진다. kernel command line의 `root=`가 있다고 바로 storage를 읽을 수 있는 것도 아니다. root device에 접근할 controller driver, filesystem driver, 암호화/LVM/network 준비가 먼저 필요할 수 있다.
+
+**initramfs**는 kernel이 초기 rootfs에 풀어 놓는 cpio archive 기반 early userspace다. `/init`가 있으면 PID 1로 실행되어 필요한 module을 올리고 real root를 mount한 뒤 `switch_root` 같은 절차로 새 root의 init을 실행할 수 있다. 예전 initrd와 initramfs는 구현 모델이 다르므로 이름을 아무 조건 없이 바꿔 쓰지 않는다.
+
+real root 전환은 directory 문자열 하나를 바꾸는 일이 아니다. process의 current working directory, root directory, 열린 fd, 실행 파일과 mount reference가 old root를 계속 붙들 수 있다. old root를 해제하려면 남은 reference를 정리해야 한다. 부팅 장애에서 “root mount 성공”과 “real root의 init exec 성공”을 별도 단계로 보는 이유다.
+
+## 14. 시스템 호출 한 번: CPU register에서 kernel object까지
+
+user program이 `read(fd, buf, 4096)`를 호출하면 대개 libc wrapper가 architecture의 syscall 규약에 맞춰 syscall number와 argument를 register에 놓고 전용 instruction을 실행한다. x86-64라면 `syscall`, AArch64라면 `svc`처럼 instruction 이름과 register 배치는 다르다. 이 장에서는 공통 구조를 따른다.
+
+```text
+user mode
+  1. syscall number = read, args = fd/buffer/count를 약속된 register에 배치
+  2. syscall-entry instruction 실행
+CPU/entry code
+  3. 더 높은 privilege에서 지정된 kernel entry로 제어 이동
+  4. user instruction pointer, stack, flags와 register state를 보존
+kernel
+  5. syscall number 범위 검사와 handler dispatch
+  6. fd table에서 fd가 가리키는 file object lookup
+  7. user buffer range와 access를 검증하며 filesystem/device 경로 수행
+  8. 즉시 data가 없으면 current task를 wait queue에 두고 schedule 가능
+  9. 완료 후 return value 또는 -errno 준비
+return path
+ 10. pending signal, reschedule, tracing 같은 work 확인
+ 11. user register/privilege 상태 복원 후 다음 user instruction으로 복귀
+```
+
+**trap frame**은 kernel entry에서 중단된 실행을 복원하기 위해 보존한 register 상태를 가리키는 교육적 이름이다. Linux 내부의 실제 구조체 이름과 저장 위치는 architecture와 entry path에 따라 다르다. syscall instruction 하나가 모든 register를 자동으로 완전 저장한다고 일반화해서는 안 된다. 일부 상태는 hardware가, 나머지는 assembly entry code가 저장한다.
+
+`read()`의 `buf`는 user virtual address다. kernel이 pointer 숫자를 믿고 직접 쓰는 것이 아니라 해당 process의 address space에서 접근 가능한지 확인하고 user-copy helper를 사용한다. 검증 뒤 mapping이 바뀌거나 page fault가 날 수 있으므로 안전한 copy primitive와 fault 처리 규칙이 필요하다. 잘못된 pointer는 보통 `EFAULT`로 끝날 수 있으며 kernel 자체가 임의 user pointer 때문에 무너지지 않도록 경계를 만든다.
+
+`read()`가 disk I/O를 제출하고 기다리면 같은 syscall의 task가 blocked되고 scheduler가 다른 task를 선택한다. 나중에 device completion이 waiter를 runnable로 만들고, 다시 선택된 task가 kernel read 경로를 마친 뒤 user mode로 돌아온다. syscall entry, context switch, interrupt는 한 요청에서 모두 나타날 수 있지만 서로 같은 사건은 아니다.
+
+## 15. exception, fault, trap과 signal 전달을 한 줄로 섞지 않기
+
+CPU architecture 문서에서 **exception**은 현재 instruction 실행과 동기적으로 생긴 control transfer의 큰 범주다. **fault**는 원인을 처리한 뒤 같은 instruction을 재시도할 수 있는 유형을 가리키는 경우가 많고, page fault가 대표 예다. **trap**이라는 단어는 architecture와 교재에 따라 exception 전체 또는 특정 종류를 가리켜 사용 범위가 다르다. Linux의 signal은 user process에 사건을 전달하는 OS 수준 메커니즘이다.
+
+가상 주소에 처음 쓰는 demand-zero 사례를 추적한다.
+
+```text
+1. user store instruction이 non-present PTE를 만남
+2. CPU가 page-fault exception으로 kernel entry에 이동하고 fault address/reason을 제공
+3. kernel이 VMA와 write permission을 검사
+4. 합법적 anonymous mapping이면 zeroed page를 할당하고 PTE를 설정
+5. exception return 뒤 같은 user store를 재시도
+6. 두 번째 시도는 성공
+```
+
+반대로 주소가 VMA 밖이면 kernel은 정상 mapping을 만들 수 없다. 해당 task에 `SIGSEGV`를 pending시켜 user return 경로에서 default action 또는 handler로 전달할 수 있다. “CPU가 SIGSEGV를 발생시킨다”라고만 말하면 page-fault exception 처리와 Linux signal 정책을 한 단계로 합쳐 버린다.
+
+## 16. hard IRQ, threaded IRQ, softirq, workqueue의 실행 문맥
+
+장치 완료 interrupt가 오면 CPU는 현재 실행을 잠시 중단하고 kernel interrupt entry로 들어간다. **hard IRQ handler**는 빠르게 장치 상태를 확인하고 interrupt 원인을 acknowledge하며, 긴 일을 뒤로 미뤄야 한다. hard IRQ context에서는 일반적인 blocking sleep을 할 수 없다. 어떤 task의 syscall을 대신 수행하는 문맥이 아니기 때문이다.
+
+미룬 일을 어디서 실행할지는 요구에 따라 달라진다.
+
+| 문맥 | 무엇인가 | sleep 가능한가 | 대표 용도와 제약 |
+|---|---|---|---|
+| hard IRQ | hardware interrupt의 즉시 처리 | 아니오 | 장치 상태 확인, 최소한의 acknowledge와 후속 work 예약 |
+| threaded IRQ | IRQ 처리를 kernel thread 문맥으로 옮긴 부분 | 가능 조건 존재 | 시간이 더 걸리거나 RT latency를 조절할 handler |
+| softirq/BH | interrupt 뒤 수행하는 per-CPU deferred context | 일반 blocking sleep 불가 | network receive, timer 등 높은 빈도의 후속 처리 |
+| workqueue | work item을 kworker thread가 실행 | 가능 | sleep이 필요하거나 process context에서 할 비동기 작업 |
+
+**softirq**는 단순히 “software가 발생시킨 interrupt”라는 일상 문장보다 좁은 Linux deferred-work 메커니즘이다. 같은 종류가 여러 CPU에서 동시에 실행될 수 있어 공유 자료구조 동기화가 필요하다. 과부하에서는 `ksoftirqd` kernel thread가 처리할 수 있지만, 이 사실만으로 softirq code 안에서 마음대로 sleep해도 된다는 뜻은 아니다.
+
+**workqueue**는 function을 나타내는 work item을 queue에 넣고 worker thread가 나중에 실행하는 framework다. threaded workqueue는 task context를 제공해 sleep 가능한 작업에 적합할 수 있다. 그러나 queue 지연, worker concurrency, flush/cancel과 object lifetime을 설계해야 한다. 이미 해제한 device object를 가리키는 work item이 뒤늦게 실행되면 use-after-free가 된다.
+
+NVMe read의 단순화한 시간표는 다음과 같다.
+
+| 시각 | CPU/task | 장치·kernel 상태 |
+|---:|---|---|
+| t0 | application이 `read()` syscall | buffer와 I/O request 준비 |
+| t1 | request task가 blocked | NVMe queue에 command, DMA mapping 설정 |
+| t2 | CPU는 다른 task 실행 | controller가 storage 작업과 DMA 수행 |
+| t3 | hard IRQ 진입 | completion 존재 확인, 후속 처리 예약 |
+| t4 | IRQ/softirq 또는 driver completion path | request 완료, waiter wake-up |
+| t5 | scheduler가 원 task 선택 | read가 return value를 준비해 user mode 복귀 |
+
+data 4KiB가 interrupt 안에 실려 오는 것은 아니다. DMA로 지정 memory에 전송되고 completion은 그 작업의 상태를 알린다. IOMMU mapping과 cache coherency 규칙은 architecture/device 조건에 따라 추가된다.
+
+## 17. 최신 kernel의 실시간성 연구·개발을 읽는 경계
+
+PREEMPT_RT는 Linux kernel의 많은 code path를 더 선점 가능하게 만들고 interrupt 처리와 lock 동작을 바꿔 worst-case latency를 줄이려는 실시간 kernel 작업이다. 최신 mainline에 관련 기능이 통합됐다는 소식은 “모든 일반 Linux workload가 자동으로 hard real-time deadline을 보장한다”는 뜻이 아니다. kernel configuration, driver의 non-preemptible 구간, firmware, SMI, hardware, workload admission과 측정 방법이 여전히 중요하다.
+
+이 주제를 syscall/interrupt 장과 연결하는 이유는 latency의 합이 여러 문맥에서 나오기 때문이다.
+
+```text
+응답 지연 = syscall 경로
+          + lock 대기
+          + IRQ가 막힌 구간
+          + hard/threaded IRQ 처리
+          + softirq/workqueue queue 대기
+          + scheduler가 원 task를 다시 고르는 시간
+```
+
+평균 latency만 줄었다고 최대 지연이 보장되는 것도 아니다. 연구나 benchmark를 읽을 때 kernel version/config, CPU isolation, interrupt affinity, device와 측정한 percentile 또는 maximum을 반드시 같이 기록한다.
+
+## 18. 오개념 정리
 
 | 오개념 | 바로잡기 |
 | --- | --- |
@@ -257,7 +370,7 @@ PY
 | interrupt handler에서 오래 일해도 된다 | 긴 작업은 보통 미뤄야 latency와 interrupt masking을 줄인다. |
 | DMA는 CPU보다 안전하다 | 잘못된 DMA는 더 위험할 수 있어 IOMMU와 mapping 규칙이 필요하다. |
 
-## 14. 해설 문제
+## 19. 해설 문제
 
 1. `open()` syscall 중 disk I/O가 항상 발생하는가?
    - 아니다. pathname lookup이 dcache/inode cache에서 해결될 수 있다. 권한 검사와 file object 생성은 필요하지만 data block read가 항상 필요한 것은 아니다.
@@ -268,9 +381,28 @@ PY
 3. NVMe read에서 completion interrupt가 오면 data는 interrupt payload 안에 들어오는가?
    - 보통 아니다. data는 DMA로 memory buffer에 들어가고, interrupt/completion은 작업 완료와 상태를 알린다.
 
-## 15. 1차 참고 자료
+4. UEFI loader가 `ExitBootServices()`에 성공한 뒤 boot service로 disk를 계속 읽어도 되는가?
+   - 안 된다. 성공 뒤 boot services는 종료되고 loader/kernel이 platform resource 운영 책임을 맡는다. 일부 runtime service가 남는 것과 boot service 사용은 구분한다.
+
+5. initramfs에서 real root를 mount했는데 old root를 unmount하지 못한다. 어떤 reference를 의심하는가?
+   - old root 안을 current directory나 root directory로 가진 process, 열린 fd, 실행 파일·library와 mount reference를 확인한다. mount 성공과 old root reference 정리는 별도 단계다.
+
+6. `read()`가 호출될 때마다 다른 process로 context switch되는가?
+   - 아니다. data가 즉시 준비되고 선점 이유가 없으면 같은 task가 user→kernel→user mode로 다녀올 수 있다. I/O 대기나 scheduling 결정이 생길 때 다른 task로 바뀔 수 있다.
+
+7. 합법적인 anonymous 주소의 첫 write가 page fault를 냈다. 왜 crash하지 않는가?
+   - kernel이 VMA와 권한을 확인한 뒤 zeroed physical page를 매핑하고 instruction을 재시도할 수 있기 때문이다. VMA 밖이거나 권한이 없으면 signal 경로가 될 수 있다.
+
+8. hard IRQ handler에서 mutex로 기다려도 되는가?
+   - 일반 mutex처럼 sleep이 필요한 primitive는 hard IRQ context에 맞지 않는다. handler는 짧게 처리하고 요구에 따라 threaded IRQ, softirq, workqueue로 미룬다. 정확한 primitive는 접근 문맥과 kernel API 규칙으로 결정한다.
+
+9. workqueue로 옮기면 object lifetime 문제도 자동 해결되는가?
+   - 아니다. work item이 실행될 때까지 대상 object가 살아 있어야 하고 cancel/flush와 teardown 순서를 설계해야 한다. 비동기 실행 문맥만 제공할 뿐 수명을 자동 소유하지 않는다.
+
+## 20. 1차 참고 자료
 
 - UEFI Forum: [UEFI Specification 2.10 Boot Services](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html), [UEFI Overview](https://uefi.org/specs/UEFI/2.10/02_Overview.html)
 - Linux Kernel Documentation: [Ramfs, rootfs and initramfs](https://docs.kernel.org/filesystems/ramfs-rootfs-initramfs.html), [Generic IRQ handling](https://docs.kernel.org/core-api/genericirq.html), [Real-time differences](https://docs.kernel.org/core-api/real-time/differences.html)
+- Linux Kernel Documentation: [Workqueue](https://docs.kernel.org/core-api/workqueue.html), [PREEMPT_RT theory](https://docs.kernel.org/core-api/real-time/theory.html), [No working init found](https://docs.kernel.org/admin-guide/init.html)
 - Linux man-pages: [syscalls(2)](https://man7.org/linux/man-pages/man2/syscalls.2.html), [syscall(2)](https://man7.org/linux/man-pages/man2/syscall.2.html)
 - MIT PDOS xv6 book: [Traps and system calls](https://mit-pdos.github.io/xv6-riscv-book/trap.html)

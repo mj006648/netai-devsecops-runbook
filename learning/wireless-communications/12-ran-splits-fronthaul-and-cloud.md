@@ -1,5 +1,75 @@
 # 12. RAN 분할, Fronthaul, Cloud RAN
 
+## RU, DU, CU는 장소 이름이 아니라 기능 묶음이다
+
+**RU(Radio Unit)** 는 antenna 가까이에서 RF 증폭·변환과 lower-PHY 일부를 수행한다. **DU(Distributed Unit)** 는 시간 제약이 큰 upper-PHY, MAC, RLC 기능을 주로 맡는다. **CU(Central Unit)** 는 PDCP와 RRC·SDAP 같은 상위 기능을 맡고 CU-CP와 CU-UP로 나눌 수 있다.
+
+CU-CP는 RRC 같은 control plane, CU-UP는 PDCP user-plane 처리를 맡는다. 제품 split은 규격·구현에 따라 달라질 수 있으므로 “서버 세 대”로 단순화하지 않는다.
+
+**fronthaul**은 RU↔DU, **midhaul**은 DU↔CU, **backhaul**은 RAN↔core 방향 연결을 가리키는 문맥 용어다. 각 구간은 운반 객체와 시간 budget이 다르다.
+
+```mermaid
+flowchart LR
+    UE -->|RF| RU
+    RU -->|fronthaul: section·IQ| DU
+    DU -->|midhaul| CUCP["CU-CP"]
+    DU -->|midhaul| CUUP["CU-UP"]
+    CUUP -->|backhaul| UPF
+```
+
+## 7-2x에서 PHY block을 나누는 이유
+
+송신 PHY는 coding, rate matching, scrambling, modulation, layer mapping, precoding, resource mapping, IFFT, CP, DAC/RF로 이어진다. 7-2x 계열에서는 frequency-domain IQ와 lower-PHY 기능을 RU·DU 사이에서 나눈다. 어떤 block이 어느 쪽인지는 profile과 방향에 따라 확인한다.
+
+DU는 scheduler가 정한 resource와 symbol을 section 정보·IQ payload로 packet화한다. RU는 정해진 radio deadline 전에 받아 beamforming·IFFT/CP·RF 처리를 수행한다. 늦은 packet은 TCP처럼 나중에 도착해도 쓸 수 있는 데이터가 아닐 수 있다.
+
+## IQ rate와 packet화 전체 계산
+
+한 방향, antenna path 4개, sample component I/Q 각각 12 bit, 초당 30.72M complex sample이라는 단순 모형이면 `30.72M×2×12×4=2.94912 Gbit/s`다. compression, line coding, Ethernet·eCPRI·section header, control은 별도다.
+
+9,000-byte IQ payload를 Ethernet payload 1,500 byte 이하로 나누면 header를 무시해도 최소 6 frame이다. 실제 header와 section 경계 때문에 더 늘 수 있다. frame 하나 유실·지연 시 특정 antenna·symbol resource가 비어 radio 품질에 영향을 준다.
+
+| 시각 | 주체 | 상태 |
+|---:|---|---|
+| 0 μs | DU | symbol IQ 생성 |
+| 20 μs | packetizer | sequence·section header |
+| 40 μs | switch | queue 대기 |
+| 90 μs | RU | 일부 frame 수신 |
+| deadline | RU | 완전 IQ 여부 판정 |
+
+평균 지연이 50 μs여도 가끔 200 μs queue가 생기면 deadline miss가 된다. jitter는 지연의 변화이며 평균만으로 판단하지 않는다.
+
+## PTP와 SyncE
+
+PTP는 timestamp 교환으로 clock time·phase offset을 맞춘다. path asymmetry가 있으면 offset 추정이 틀릴 수 있다. SyncE는 Ethernet 물리 clock으로 frequency를 맞추지만 time-of-day와 phase를 혼자 제공하지 않는다. 두 기술은 대체어가 아니다.
+
+boundary clock·transparent clock은 switch가 더한 residence time과 clock 구간을 관리한다. 동기 packet 우선순위만 높여도 비대칭·oscillator 문제 전체가 해결되지는 않는다.
+
+## cloud와 virtualization
+
+virtualization은 기능을 범용 compute의 VM·container·process에 배치하는 방식이다. Kubernetes가 있으면 자동으로 radio deadline이 보장되는 것이 아니다. CPU pinning, NUMA, hugepage, accelerator, interrupt, NIC queue, real-time scheduling을 함께 설계한다.
+
+## AI-RAN shared compute 조건
+
+AI inference와 DU workload가 GPU·CPU·NIC를 공유하면 queue interference가 radio deadline을 흔들 수 있다. AI 모델 평균 latency뿐 아니라 최악 구간, fallback, admission control을 본다. O-RAN 표준 interface와 제품 구현 지원은 연구 모델 정확도와 별도 조건이다.
+
+## 추가 문제와 완전 해설
+
+### 1. 2 antenna, I/Q 16 bit, 10 Msps raw rate는?
+`10M×2×16×2=640 Mbit/s`다.
+
+### 2. PTP와 SyncE 차이는?
+PTP는 time·phase 추정, SyncE는 frequency 전달이 중심이다.
+
+### 3. 평균 지연이 budget 아래면 충분한가?
+아니다. jitter tail이 deadline을 넘을 수 있다.
+
+### 4. container 사용이 real-time 보장인가?
+아니다. CPU·memory·NIC·scheduler 격리와 측정이 필요하다.
+
+### 5. fronthaul packet이 늦게 도착하면?
+해당 radio symbol deadline이 지나 재사용 못 할 수 있다.
+
 [이전: 접속·스케줄링·이동성](11-access-scheduling-and-mobility.md) · [목차](README.md) · [다음: O-RAN RIC와 제어 루프](13-oran-ric-and-control-loops.md)
 
 자료 확인일: **2026-10-11**

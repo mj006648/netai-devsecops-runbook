@@ -1,5 +1,30 @@
 # 15. 종합 문제, 용어, 출처
 
+## 용어를 한 요청의 문맥으로 연결하기
+
+클라이언트가 request ID R9로 쓰기를 보낸다. RPC stub이 직렬화하고 리더가 현재 term의 log entry를 만든다. 쿼럼 복제 뒤 commitIndex가 전진하고 상태 기계가 lastApplied를 올린다. 응답이 유실되면 클라이언트는 timeout을 보지만 결과는 미상이다. 같은 R9 재시도는 영속 dedup 기록에서 기존 결과를 찾는다.
+
+이 한 흐름에서 node는 실행 주체, log는 명령 역사, term은 선거 시대, quorum은 교집합을 만드는 집합, commit은 합의 경계, apply는 업무 실행, timeout은 기다림 정책, idempotency는 반복 효과의 성질이다. 용어는 독립 사전 항목이 아니라 앞뒤 상태를 설명한다.
+
+두 번째 흐름은 stream이다. source offset 1000과 operator state 55가 checkpoint CP20에 함께 저장된다. 1030에서 crash하면 CP20을 복원하고 1001부터 재생한다. sink가 CP ID로 중복 commit을 막지 않으면 외부 출력은 두 번 보일 수 있다.
+
+## 추가 종합 문제
+
+### 13. 5노드 matchIndex가 `[9,9,8,8,3]`이면 과반수 복제 최대 index는?
+세 번째 큰 값 8이므로 복제 수 기준 index 8이다. 직접 커밋은 index 8의 term이 현재 term인지 확인한다.
+
+### 14. lease token 7 worker가 정지한 뒤 token 8이 발급됐다. 7의 쓰기는?
+실제 저장소가 현재 token 8을 검사해 7을 거부해야 한다. 발급자 판단만으로는 부족하다.
+
+### 15. Iceberg writer 둘이 같은 metadata pointer를 읽었다. 둘 다 성공할 수 있는가?
+같은 기대 pointer에 대한 CAS는 한 writer만 성공한다. 다른 writer는 최신 metadata로 재계획한다.
+
+### 16. checkpoint state는 50인데 offset을 80에서 재개하면?
+51~80 입력 효과가 state에 없고 재생도 건너뛰므로 누락된다. 상태와 offset은 같은 경계여야 한다.
+
+### 17. p99가 500 ms인데 평균이 20 ms인 결과를 어떻게 읽는가?
+대부분은 빠르지만 느린 꼬리가 존재한다. 표본 수와 분포, 느린 요청의 장애 구간을 함께 조사한다.
+
 ## 기존 문제를 풀 때 따라갈 공통 추적법
 
 각 문제를 `입력 상태 → message 순서 → durable write → 응답 → 장애 → 복구 상태`로 다시 쓴다. “성공”이라는 말은 client 응답, quorum commit, state machine 적용, 외부 부작용 중 무엇인지 표시한다.

@@ -1,5 +1,52 @@
 # 05. 학습·검증·일반화
 
+## 모집단에서 표본을 뽑아 새 사례를 예측한다는 뜻
+
+**모집단(population)**은 관심 있는 모든 가능한 사례다. 앞으로 들어올 모든 배송, 모든 cell의 미래 traffic처럼 실제로 전부 볼 수 없는 대상이다. **표본(sample)**은 그중 관측해 데이터로 가진 일부다. 학습 목표는 표본을 암기하는 것이 아니라 같은 목적의 모집단에서 새로 온 사례에 유용한 예측을 하는 **일반화(generalization)**다.
+
+Training set은 parameter를 바꾸고, validation set은 모델 구조·학습률·epoch 같은 선택에 쓰며, test set은 선택을 끝낸 뒤 최종 추정에 쓴다. Test를 보고 설정을 바꾸면 그 test도 선택에 사용됐으므로 독립 test가 아니다.
+
+100일 데이터를 다음처럼 나눈다고 하자.
+
+```text
+day 1~60   training: parameter 학습
+day 61~80  validation: 후보 A/B와 threshold 선택
+day 81~100 test: 선택을 고정한 뒤 한 번 평가
+```
+
+시간 예측에서 행을 무작위로 섞으면 day 90과 거의 같은 day 89가 training에 들어갈 수 있다. 미래 분포를 예측하려면 과거→미래 방향을 보존한다.
+
+사용자나 cell도 경계다. 같은 cell A의 연속 window가 train/test 양쪽에 있으면 cell 고유 패턴을 외운 성능이 “새 cell 일반화”처럼 보일 수 있다. 시간 일반화와 대상 일반화를 각각 평가한다.
+
+**교차검증(cross-validation)**은 training 영역을 여러 fold로 나눠 번갈아 validation으로 쓰는 방법이다. 5-fold에서 각 표본은 네 번 학습, 한 번 validation에 쓰인다. 후보 선택 안정성을 보는 데 유용하지만 최종 test를 대체한다고 자동 결론 내리지 않는다.
+
+```text
+fold1 validate, fold2~5 train
+fold2 validate, 나머지 train
+...
+5개 validation score 평균
+```
+
+시간 series는 일반 K-fold보다 rolling split이 자연스럽다. `train day1~30→validate31~40`, `train1~40→validate41~50`처럼 항상 과거로 미래를 평가한다.
+
+**데이터 누수**는 예측 시점에 알 수 없는 정보가 feature·전처리·선택에 들어가는 일이다. 전체 100일의 평균과 표준편차로 먼저 정규화한 뒤 split하면 test 분포가 training 변환에 들어간다. Training에서 변환 parameter를 fit하고 validation/test에는 그대로 적용한다.
+
+후보 20개를 validation에서 고르면 최고 score에는 우연한 이득도 섞인다. 최종 test는 이 선택 전체의 일반화를 평가한다. Test를 반복 확인하며 후보를 바꾸면 새로운 독립 holdout이나 nested 평가가 필요하다.
+
+## 수치 시간표
+
+후보 A/B의 validation error가 0.18/0.15여서 B를 고정했다. Test 200건에서 34건 오류면 test error는 17%다. Validation 15%를 최종 성능으로 보고하지 않는다. Test 17%도 유한 표본 추정이며 모집단의 정확한 상수가 아니다.
+
+반례로 random split 90% 성능, 시간 split 70%라면 모델이 미래 변화에 약하다는 증거다. 편한 split만 선택하지 않는다.
+
+## 유도 문제 5개
+
+1. Validation으로 parameter를 직접 학습하면? **해설:** 선택 경계가 흐려져 validation 성능이 낙관적이 된다.
+2. Test를 세 번 보고 모델을 바꾸면? **해설:** Test가 선택 data가 됐다. 새 독립 평가가 필요하다.
+3. 같은 환자의 행이 양쪽 split에 있으면? **해설:** 개인 패턴 누수로 새 환자 성능이 부풀 수 있다.
+4. 시간 series에 random K-fold가 위험한 이유는? **해설:** 미래 정보와 인접 window가 과거 학습에 들어갈 수 있다.
+5. Population과 sample 차이는? **해설:** 모집단은 결론을 내리고 싶은 전체, 표본은 실제 관측한 일부다.
+
 [← 이전](04-classification-and-probabilities.md) · [목차](README.md) · [다음 →](06-regularization-and-data-quality.md)
 
 일반화는 training에서 보지 않은 data에도 유용한 예측을 하는 능력이다.

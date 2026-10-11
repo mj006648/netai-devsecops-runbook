@@ -1,5 +1,13 @@
 # 04. 스냅샷·시간 여행·브랜치
 
+## snapshot ID와 sequence number를 함께 읽기
+
+snapshot ID는 커밋 상태 식별자이고 sequence number는 변화 적용 순서를 비교한다. snapshot 100, sequence 7이 data-A를, 101과 8이 data-B를 추가하며 102와 9가 A의 delete를 추가했다고 하자. 현재 reader는 A에서 삭제 대상을 빼고 B를 읽는다. snapshot 101 시간 여행은 delete 전이라 A와 B 원래 행을 읽는다.
+
+rollback은 data file을 덮지 않고 현재 reference가 과거 snapshot을 가리키도록 metadata를 게시한다. audit branch가 101, main이 102를 가리키면 이후 독립적으로 전진할 수 있다. Write-Audit-Publish 검증 중 main이 104로 전진했다면 ancestry와 충돌을 다시 판정한다.
+
+expire snapshots는 history와 참조를, orphan removal은 어떤 metadata에도 없는 파일을, compaction은 살아 있는 data file 배치를 바꾼다. 세 작업의 삭제 대상과 안전 조건은 다르다.
+
 [이 책의 목차](README.md) · [이전 장](03-schema-and-partition-evolution.md)
 
 이 장에서는 “어제 읽었던 데이터를 다시 읽는다”를 실제 참조와 보존 조건으로 해석한다. 스냅샷은 파일의 복사본을 매번 만드는 방식과 다르다.

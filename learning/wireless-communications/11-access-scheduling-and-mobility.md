@@ -1,5 +1,67 @@
 # 11. 접속, 스케줄링, HARQ, 이동성
 
+## 접속은 cell 발견부터 IP session까지 여러 절차다
+
+UE는 synchronization signal로 cell timing과 식별 후보를 찾고 system information을 읽는다. **random access**는 uplink timing과 초기 발언권을 맞추는 radio 절차다. 가입자 **registration**과 authentication은 core의 AMF와 수행한다. **PDU session**은 data network까지 사용자 plane 문맥을 만든다.
+
+random access 성공은 가입자 인증 성공이 아니며, registration 성공은 PDU session과 앱 packet 성공이 아니다. 같은 “접속 실패” 화면 뒤에 서로 다른 단계가 있다.
+
+## scheduler의 입력과 grant
+
+**scheduler**는 gNB MAC 안에서 제한된 시간·주파수 resource를 UE 사이에 배분한다. 입력은 UE buffer, QoS deadline, CQI, HARQ 상태, 공정성, TDD 방향이다. 출력인 **grant**는 특정 UE가 언제 어느 resource에서 어떤 전송 조건을 사용할지 알리는 허가다.
+
+**CQI(Channel Quality Indicator)** 는 UE가 측정한 channel 품질을 정해진 범주로 보고한 값이다. **MCS**는 modulation과 coding 조합이다. CQI가 MCS를 자동으로 하나 결정하는 절대 법칙은 아니며 vendor scheduler, 목표 error, 지연된 CSI가 관여한다.
+
+| 시각 | 상태 | scheduler 행동 |
+|---:|---|---|
+| 0 ms | UE A buffer 1000 B, CQI 10 | 후보 MCS 선택 |
+| 0.5 ms | UE B deadline 1 ms | B 우선 grant |
+| 1.0 ms | A CQI가 5로 악화 | 더 robust MCS |
+| 1.5 ms | A HARQ NACK | 재전송 resource |
+
+## CSI aging과 deadline 반례
+
+t=0 CQI 12 측정, t=5 ms 보고, t=10 ms scheduling, t=15 ms 실제 전송이라고 하자. 이동 channel coherence time이 5 ms라면 전송 시점의 channel은 측정과 크게 달라질 수 있다. 높은 MCS가 NACK을 만들고 deadline을 놓칠 수 있다.
+
+보수적 MCS는 성공 가능성을 높이지만 같은 payload에 더 많은 RE를 써 다른 UE를 지연시킨다. scheduler는 throughput, reliability, deadline, fairness 사이에서 선택한다.
+
+## HARQ 한 건의 전체 상태
+
+2,000 data RE, 16-QAM 4 bit/RE, code rate 1/2라는 교육 모형이면 information 후보는 `2000×4×0.5=4000 bit=500 byte`다. 첫 decode CRC 실패 후 NACK을 보내고 수신기는 soft buffer를 보존한다. 재전송 parity를 결합해 성공하면 ACK한다.
+
+## handover packet trace
+
+UE가 source cell에서 target cell로 이동할 때 measurement report, handover decision, target resource 준비, UE 명령, random access·경로 전환이 이어진다. source에 남은 downlink packet을 forwarding하거나 core path를 바꾸는 동안 reorder·loss 가능성이 있다.
+
+| 단계 | packet 위치 | 제어 상태 |
+|---|---|---|
+| 전환 전 | source gNB queue | source 연결 |
+| target 준비 | source queue | target context 생성 |
+| UE 이동 | forwarding 중 | target random access |
+| path switch | target queue | UPF 경로 갱신 |
+| 완료 | target→UE | source context 해제 |
+
+## AI closed loop 조건
+
+AI scheduler proposal은 현재 연구·제품 조건 안에서 CQI, buffer, mobility를 입력으로 control 후보를 만든다. 표준 interface가 허용한 knob, inference deadline, fallback, stale model 탐지, 다른 UE 공정성 검증이 필요하다. offline 평균 throughput이 높다는 이유만으로 실시간 deadline 안전을 보장하지 않는다.
+
+## 추가 문제와 완전 해설
+
+### 1. random access 성공이면 인증도 성공했는가?
+아니다. radio 발언권·timing과 core 가입자 인증은 다른 단계다.
+
+### 2. 1500 RE, QPSK, rate 1/2 정보량은?
+`1500×2×0.5=1500 bit`다.
+
+### 3. CQI가 오래되면?
+현재 channel과 맞지 않는 MCS로 NACK·재전송이 늘 수 있다.
+
+### 4. HARQ NACK 뒤 수신기는 무엇을 보존하는가?
+이전 전송의 soft information을 HARQ buffer에 보존해 결합한다.
+
+### 5. handover 중 packet loss가 생기는 위치는?
+source queue, forwarding, path switch·reordering 경계에서 생길 수 있다.
+
 [이전: NR 무선과 프로토콜 스택](10-nr-radio-and-protocol-stack.md) · [목차](README.md) · [다음: RAN 분할과 Cloud RAN](12-ran-splits-fronthaul-and-cloud.md)
 
 자료 확인일: **2026-10-11**

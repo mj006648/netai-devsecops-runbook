@@ -1,5 +1,26 @@
 # 12. 연구 데이터 처리에 Spark를 연결하기
 
+## 연구 run 하나를 원천부터 결과까지 추적한다
+
+원천 그대로 재처리할 수 있게 저장한 층을 Bronze, type·단위·중복 규칙을 적용한 층을 Silver, 연구용 집계·feature를 저장한 층을 Gold라고 부르는 관례가 있다. Spark가 이 이름을 강제하지 않는다. materialization은 DataFrame 계획을 실제 파일·table snapshot으로 저장하는 일이다.
+
+장치 1,000대×분당1건×1,440분=1,440,000건/일이다. payload 120바이트면 약172,800,000바이트지만 envelope·Parquet metadata·압축·복제는 별도다. run R17이 source offsets와 Bronze snapshot 50을 고정하고, Spark가 100 input partition에서 schema·범위·중복을 검사한다고 하자.
+
+각 task가 valid, invalid, duplicate count와 Silver 행을 만든다. shuffle은 event_id별 중복 후보와 device별 일 집계를 모은다. Stage 0 입력 1,440,000행, invalid 14,400, duplicate 1,000이라면 Silver가 단순히 1,424,600행인지 규칙상 겹치는 행이 있는지 확인해야 한다. invalid와 duplicate 집합이 200행 겹치면 제외 합집합은 15,200, Silver는 1,424,800행이다.
+
+Silver commit snapshot 51 뒤 Gold 평균을 만들고 snapshot 52에 저장한다. Silver 성공 뒤 Gold 실패는 멀티테이블 원자 commit이 아니다. run table에 R17의 source range, code commit, input/output snapshot, row counts, plan hash와 오류를 남겨 Gold만 재시도한다.
+
+미래 정보 누수는 사건 시점 이후에 알게 된 장치 상태를 과거 feature에 붙이는 오류다. join이 성공했다는 사실은 연구 설계가 맞다는 증거가 아니다. time-valid join, train/eval split key와 snapshot을 기록한다.
+
+성능 주장은 동일 snapshot·결과 checksum·자원·cache에서 file byte, shuffle, spill, task 분포와 elapsed를 비교한다. QOaaS 같은 prototype의 결과를 모든 Spark workload의 안정 API 보장으로 확대하지 않는다.
+
+### 완전 풀이 문제 5개
+1. 하루 사건 수는? **해설:** 1,440,000이다.
+2. invalid와 duplicate가 겹치면 단순 합을 빼도 되는가? **해설:** 합집합을 계산해야 이중 제외를 막는다.
+3. Silver51 뒤 Gold 실패면 Silver도 취소되는가? **해설:** 별도 table commit이면 자동 취소가 아니다.
+4. snapshot ID만으로 재현 가능한가? **해설:** code·version·설정·자원·보존도 필요하다.
+5. random split의 누수 위험은? **해설:** 같은 장치·시간의 유사 행이 양쪽에 갈 수 있다.
+
 [이 책의 목차](README.md) · [이전 장](11-local-labs.md)
 
 이 장은 연구실의 현행 배포를 보고하는 문서가 아니다. 이 저장소의 [Spark archive 설계](../../kubernetes/observability/data-pipelines/06-spark.md)와 [NetAI 평가 경로](../../kubernetes/storage/lakehouse/03-netai-evaluation.md)를 출발점으로, 센서·실험·멀티모달 데이터를 어떻게 처리하고 어떤 증거를 남길지 설명하는 학습용 구성이다.

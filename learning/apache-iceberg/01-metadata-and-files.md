@@ -1,5 +1,13 @@
 # 01. Iceberg의 내부 지도
 
+## 같은 스냅샷을 여섯 객체로 읽기
+
+catalog pointer가 v2.metadata.json, current snapshot이 20이라고 하자. snapshot 20은 snap-20.avro manifest list를 가리킨다. list의 m1.avro에는 기존 data-a.parquet, m2.avro에는 새 data-b.parquet가 ADDED로 기록되어 있다. reader는 pointer를 고정한 뒤 이 경로만 따라 두 data file을 계획한다. 동시에 다음 metadata가 게시되어도 진행 중 reader가 중간에 갈아타지 않는다.
+
+manifest list는 manifest 단위 partition 범위와 파일 수를 요약하고, manifest는 파일별 경로·content·spec ID·sequence·통계를 기록한다. Puffin은 별도 통계·index blob container이며 manifest나 Parquet의 대체물이 아니다.
+
+v2 position delete는 data-file-path와 row-position으로 물리 행을 지우고 equality delete는 field ID 값으로 일치 행을 지운다. v3 deletion vector는 Puffin blob에서 한 data file의 삭제 위치를 표현한다. v3에서 새 position-delete 작성이 금지되어도 업그레이드 전 파일은 읽어야 하고 equality delete도 남는다. reader는 version, content type, sequence 범위와 data file당 snapshot에서 DV 최대 하나라는 규칙을 지원해야 한다.
+
 [이 책의 목차](README.md) · [이전 장](00-first-principles.md)
 
 이번 장에서는 테이블 이름에서 실제 행까지 찾아가는 경로를 배운다. 모든 파일을 외우기보다 **각 단계가 다음 단계의 어떤 주소를 제공하는지** 본다.

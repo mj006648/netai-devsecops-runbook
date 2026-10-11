@@ -1,5 +1,24 @@
 # 03. Transport: TCP, UDP, QUIC
 
+## 현대 NIC 공유 연구를 transport 설명과 구분해 읽기
+
+여러 tenant가 같은 NIC와 RDMA 자원을 공유하면 각 흐름의 TCP·UDP 규칙만으로 전체 지연을 설명하기 어렵다. NIC 내부 queue, 전송 스케줄러, rate control, tenant별 부하가 서로 간섭할 수 있다. USENIX ATC 2024의 PeRF 연구는 특정 multi-tenant RDMA 환경에서 이런 자원 간섭을 다룬다. 이는 모든 Ethernet·TCP 환경의 보편 성능 법칙이 아니라 해당 설계와 실험 조건에서 NIC scheduling 선택을 분석한 연구다.
+
+따라서 애플리케이션 timeout 증가를 곧바로 TCP 손실 하나로 단정하지 않는다. socket send queue, host qdisc, NIC queue, 링크 혼잡, 원격 처리 queue를 위치별로 관측한다.
+
+QUIC의 기본 프로토콜 명세는 [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000.html)이다. QUIC은 UDP 위에서 연결, 신뢰성 있는 stream, 손실 복구를 구현하고 TLS를 프로토콜에 통합한다. 여러 stream은 독립 byte 순서를 가지므로 한 stream의 손실이 다른 stream의 애플리케이션 전달을 TCP 단일 byte stream처럼 반드시 막지는 않는다. 다만 같은 경로 혼잡과 연결 수준 flow control 같은 공유 자원은 남는다.
+
+### 추가 문제 5
+
+한 QUIC 연결의 stream A에서 packet 손실이 났을 때 stream B가 항상 완전히 독립적인가?
+
+아니다. stream별 전달 순서는 분리되지만 같은 연결의 혼잡 제어, 경로, 연결 수준 흐름 제어를 공유할 수 있다. “head-of-line 일부 감소”를 “모든 자원 독립”으로 확대하면 안 된다.
+
+### 연구 출처
+
+- [PeRF: multi-tenant RDMA resource management, USENIX ATC 2024](https://www.usenix.org/conference/atc24/presentation/lee)
+- [RFC 9000: QUIC](https://www.rfc-editor.org/rfc/rfc9000.html)
+
 범위: 이 장은 IP 위에서 process(실행 중인 프로그램)와 process가 통신하는 방법을 다룬다.
 port(한 host 안의 통신 상대를 가리키는 16 bit 번호), socket(프로그램이 통신 endpoint를 다루는 운영체제 객체), 5-tuple(프로토콜·출발/목적 IP·출발/목적 port로 flow를 구별하는 다섯 값)을 먼저 설명한다. 이어서 TCP(Transmission Control Protocol, 순서 있고 신뢰성 있는 byte stream) sequence number(byte stream 위치 번호), ACK(Acknowledgment, 다음에 받기를 기대하는 byte 번호로 하는 확인), handshake(양쪽이 연결 상태를 맞추는 사전 메시지 교환), retransmission(손실 추정 데이터를 다시 보냄), RTT(Round-Trip Time, 왕복 시간), flow control(수신자의 처리 여유 보호), congestion control(공유 네트워크의 혼잡 억제)을 다룬다. UDP(User Datagram Protocol)는 전달 보장 없이 datagram 경계를 보존하는 전송 규칙이고, QUIC은 UDP 위에서 보호된 연결과 여러 reliable stream을 구현하는 전송 프로토콜이다.
 패킷 캡처나 호스트 설정은 하지 않는다.

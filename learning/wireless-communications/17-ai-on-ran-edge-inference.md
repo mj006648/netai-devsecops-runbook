@@ -1,5 +1,74 @@
 # 17. AI-on-RAN: edge inference와 user-plane 경로
 
+## 사용자의 AI 요청을 먼 cloud가 아니라 가까운 곳에서 처리하는 이유
+
+카메라 frame이나 음성 조각을 AI model에 넣고 결과를 받으려면 입력 byte가 무선망과 IP망을 지나 계산 장치까지 가야 한다. 왕복 지연, uplink 용량, 개인정보 위치 때문에 RAN 가까운 계산 장소를 선택할 수 있다. 이처럼 RAN 인접 edge에서 사용자·산업용 AI 추론을 제공하는 방향을 **AI-on-RAN**이라 부른다.
+
+**edge inference**는 학습 완료된 model이 새 입력에서 결과를 계산하는 작업이다. model weight는 GPU memory나 storage에 있고, 입력 tensor는 user-plane packet에서 재조립되어 inference queue에 들어간다. 결과는 다시 IP response로 UE에 돌아간다.
+
+**user plane**은 앱 packet을 실제로 운반하는 경로다. UE→gNB→UPF→edge service가 대표 흐름이다. **local breakout**은 traffic을 먼 중앙 data network까지 보내지 않고 가까운 UPF·edge 경로로 빼는 배치다. 가까운 물리 위치만으로 짧은 경로가 보장되는 것은 아니며 session routing과 UPF rule이 edge를 가리켜야 한다.
+
+```mermaid
+sequenceDiagram
+    participant U as UE 앱
+    participant G as gNB
+    participant P as UPF
+    participant E as Edge gateway
+    participant M as Model server
+    U->>G: 입력 packet
+    G->>P: user-plane tunnel
+    P->>E: local breakout
+    E->>M: tensor request
+    M-->>E: inference result
+    E-->>P: response
+    P-->>G: downlink packet
+    G-->>U: 앱 결과
+```
+
+## 한 요청의 byte와 상태 수명
+
+UE가 200 kB image를 20 Mbit/s 실제 uplink goodput으로 보낸다고 단순화하면 전송만 `200×8/20=80 ms`다. radio scheduling 8 ms, UPF·edge network 4 ms, preprocessing 6 ms, inference 20 ms, 후처리·downlink 7 ms라면 총 125 ms다.
+
+| 단계 | 시간 | 상태 위치 |
+|---|---:|---|
+| radio scheduling | 8 ms | UE·gNB queue |
+| uplink payload | 80 ms | radio bearer·UPF path |
+| edge network | 4 ms | switch·gateway |
+| preprocessing | 6 ms | CPU memory |
+| inference | 20 ms | GPU memory·queue |
+| response | 7 ms | user-plane downlink |
+
+입력을 50 kB로 줄이면 uplink는 20 ms가 되어 총 65 ms 후보가 된다. 그러나 압축으로 model 정확도가 낮아질 수 있다. latency와 accuracy를 함께 측정한다.
+
+## warm, cold, batch의 차이
+
+model weight가 GPU memory에 있고 worker가 실행 준비된 요청을 **warm request**라 한다. model download, container 시작, weight load가 필요한 첫 요청은 **cold start**를 겪는다. warm 20 ms model이라도 cold start 2초가 될 수 있어 deadline service는 pre-warm과 admission policy가 필요하다.
+
+batch는 여러 요청을 묶어 GPU 효율을 높일 수 있지만 첫 요청이 batch를 기다리는 queue latency를 만든다. 30 ms deadline인데 batch wait 15 ms, inference 20 ms면 이미 35 ms다.
+
+## 실패와 fallback
+
+edge model server가 실패했을 때 중앙 cloud로 보낼 수 있지만 경로 지연과 개인정보 정책을 다시 확인한다. 작은 local model, cached result, 사용자에게 지연 알림 같은 fallback도 있다. 오래된 model이 결과를 내는 것은 transport 성공이지만 model 품질 실패일 수 있다.
+
+AI-on service와 RIC xApp은 위치가 가까울 수 있어도 책임이 다르다. xApp은 RAN control을 만들고, AI-on service는 사용자 inference 결과를 돌려준다. 사용자 영상 model timeout을 RAN control 실패와 같은 상태로 취급하지 않는다.
+
+## 추가 문제와 완전 해설
+
+### 1. 100 kB를 10 Mbit/s로 보내는 순수 시간은?
+`100×8/10=80 ms`다.
+
+### 2. edge가 물리적으로 가까우면 local breakout인가?
+아니다. PDU session과 UPF routing이 edge 경로를 사용해야 한다.
+
+### 3. warm 15 ms, batch wait 20 ms, deadline 30 ms면?
+총 35 ms라 deadline을 넘는다.
+
+### 4. cold start를 줄이는 방법은?
+worker와 model weight를 미리 memory에 올리고 capacity를 예약한다.
+
+### 5. cloud fallback이 항상 안전한가?
+아니다. 추가 지연, data locality, privacy, 비용 조건을 확인해야 한다.
+
 [이 책 목차](README.md)
 
 [← 이전: 공유 계산](16-ai-and-ran-shared-compute.md) · [다음: 5G-Advanced와 6G](18-5g-advanced-6g-and-release-status.md)

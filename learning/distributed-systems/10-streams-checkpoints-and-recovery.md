@@ -1,5 +1,60 @@
 # 10. 스트림, 체크포인트, 복구
 
+## 네 상태를 한 복구 경계로 맞춘다
+
+source offset은 어디까지 입력을 읽었는지 나타낸다. operator state는 합계·window처럼 계산 중 기억이다. checkpoint는 특정 offset과 그때 operator state를 내구 저장한 복구 지점이다. sink commit은 외부 독자가 볼 결과를 게시하는 단계다.
+
+| 구성 요소 | 예 | 수명 | 복구 역할 |
+|---|---|---|---|
+| source offset | partition 0의 1000 | source·checkpoint | 재생 시작 |
+| operator state | 합계 55 | 메모리→checkpoint | 계산 복원 |
+| checkpoint metadata | CP20 완료 | 내구 저장소 | 권위 있는 경계 |
+| sink transaction | batch CP20 | sink | 중복 게시 차단 |
+
+offset만 저장하고 합계를 빼면 재생 시작은 알지만 이전 계산을 잃는다. 합계만 저장하고 offset을 빼면 어느 입력부터 다시 읽을지 몰라 누락이나 중복이 생긴다.
+
+## crash와 재생 전체 시간표
+
+CP20은 offset 1000과 합계 55를 담는다. 처리기는 1001~1030을 처리해 합계 61을 만들었지만 다음 checkpoint 전에 죽는다.
+
+| 시각 | offset | operator state | sink | checkpoint |
+|---:|---:|---:|---|---|
+| 0 | 1000 | 55 | CP20까지 공개 | CP20 완료 |
+| 10 | 1015 | 58 | 임시 결과 | 없음 |
+| 20 | 1030 | 61 | 일부 전송 가능 | 없음 |
+| 21 | crash | 메모리 손실 | 기존 공개 결과 남음 | CP20 |
+| 30 | 1000 복원 | 55 복원 | CP20과 조정 | 재생 시작 |
+| 50 | 1030 재처리 | 61 | 새 transaction commit | CP21 후보 |
+
+sink가 각 record를 즉시 비멱등 기록했다면 1001~1030 효과가 두 번 보일 수 있다. checkpoint ID를 sink transaction ID로 사용해 CP21 commit이 한 번만 공개되게 하거나 멱등 upsert를 사용한다.
+
+## barrier와 여러 입력
+
+두 source partition이 있는 operator는 한쪽 barrier만 보고 snapshot하면 다른 쪽의 경계 뒤 record가 상태에 섞일 수 있다. barrier 정렬은 입력별 CP 번호를 맞춰 일관된 cut을 만든다. unaligned checkpoint 같은 방식은 이동 중 buffer까지 캡처하는 별도 메커니즘과 비용이 있다.
+
+checkpoint 완료는 모든 필요한 operator state가 내구 저장되고 coordinator가 완료 metadata를 기록한 뒤 선언한다. 일부 파일 업로드만으로 완료가 아니다.
+
+## event time 반례
+
+watermark는 이 event time 이전 데이터가 대부분 도착했다고 보는 진행 추정이다. 절대 더 늦은 사건이 없다는 물리 증명이 아니다. 늦은 사건을 버릴지, 이전 window 결과를 수정할지 정책이 필요하다.
+
+## 추가 연습 문제와 해설
+
+### 1. CP가 offset 500, state 20이고 530에서 죽으면 몇 입력을 재생하는가?
+501~530의 30개다.
+
+### 2. state만 복원하고 offset을 530에서 시작하면?
+501~530의 계산이 state에 없는데 입력도 건너뛰어 누락된다.
+
+### 3. offset만 500으로 돌리고 state 26을 유지하면?
+이미 반영한 입력을 다시 더해 중복 계산한다.
+
+### 4. sink가 checkpoint transaction을 지원하지 않으면?
+멱등 키, upsert, dedup table 같은 별도 경계로 재생 중복을 처리해야 한다.
+
+### 5. watermark 뒤 늦은 사건이 오면 시스템 오류인가?
+반드시 아니다. watermark는 정책적 추정이므로 허용 지연과 결과 수정 규칙에 따라 처리한다.
+
 ## 내부 상태 복구와 외부 sink 게시의 별도 경계
 
 **스트림**은 계속 도착하는 event 흐름이다. Processor는 event를 읽어 합계와 input offset 같은 **상태**를 바꾼다. **체크포인트**는 내부 상태와 다음 입력 위치를 durable storage에 저장한 복구 기준점이다.

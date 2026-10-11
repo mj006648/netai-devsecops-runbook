@@ -1,5 +1,13 @@
 # 00. 파일에서 테이블까지
 
+## 행에서 카탈로그 포인터까지 추적하기
+
+파일은 저장소 경로의 바이트 객체이고 테이블은 스키마와 현재 파일 집합, 과거 상태를 함께 해석하는 논리 객체다. Parquet는 행을 열 단위로 인코딩한 data file format이고, Iceberg는 어떤 Parquet 파일이 현재 테이블에 속하는지 기술하는 table format이다. schema는 field ID·이름·type을 가진 metadata이며 catalog는 테이블 이름을 현재 metadata JSON 위치로 연결한다.
+
+writer가 주문 101번을 받으면 메모리 batch를 data-a.parquet로 저장한다. manifest Avro에 경로·행 수·partition 값·열 통계를 기록하고, manifest list Avro에 그 manifest를 기록한다. snapshot은 manifest list를 가리키고 metadata JSON은 schema·partition spec·snapshot 목록·현재 snapshot을 담는다. catalog pointer를 새 metadata JSON으로 원자적으로 바꿀 때 독자가 새 상태를 발견한다.
+
+파일 기록 주체는 엔진 writer이고 metadata를 조립하는 주체는 Iceberg library이며 catalog가 최종 pointer 교체를 중재한다. 파일 존재와 테이블 포함은 다르다. pointer 교체 전 실패한 data-a는 orphan 후보이고 독자는 이전 metadata를 읽는다. Puffin은 통계·index 보조 blob이고 행 data Parquet와 역할이 다르다.
+
 [이 책의 목차](README.md)
 
 이 장의 목표는 “Iceberg를 쓴다”가 어떤 구성요소를 추가하는 말인지 정확하게 설명하는 것이다. 설치하기 전에 작은 데이터부터 살펴본다.

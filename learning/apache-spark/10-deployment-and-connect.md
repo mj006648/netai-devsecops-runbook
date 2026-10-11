@@ -1,5 +1,22 @@
 # 10. Spark 배포와 Spark Connect
 
+## 프로세스 위치가 바꾸는 장애 경계
+
+client는 명령을 제출하고 driver process는 계획·scheduler state를 소유하며 executor process는 task를 실행한다. cluster manager는 CPU·memory를 node나 container에 배치한다. optimizer는 driver에서 SQL plan을 고르고 Kubernetes나 YARN은 자원 위치를 고른다.
+
+local[4]는 한 machine의 네 task thread이지 네 서버가 아니다. client mode는 제출 machine에 driver가 있어 terminal·network 장애 영향을 받는다. cluster mode는 cluster container에 driver를 둔다.
+
+Kubernetes driver pod 1개, executor 5개×2core이면 Spark pod는 기본 6개, task slot은 약10개다. 100 task는 단순히 10 wave다. executor heap 6GiB 외에 overhead, Python worker, native buffer가 container limit에 포함된다.
+
+Spark Connect client는 unresolved logical plan을 gRPC로 server에 보내고 server가 driver로 분석·실행한다. client가 executor에 task를 직접 보내지 않는다. client local path와 server path는 다르고 SparkContext·RDD·private JVM handle은 그대로 쓸 수 없다.
+
+### 완전 풀이 문제 5개
+1. pod 수는? **해설:** driver1+executor5=6이다.
+2. slot은? **해설:** task CPU1이면 약10개다.
+3. local[4]는? **해설:** 한 machine 네 thread다.
+4. Connect 실행 주체는? **해설:** server driver와 executor다.
+5. driver 종료 뒤 session이 자동 복구되는가? **해설:** 배포·checkpoint 계약을 별도 확인한다.
+
 [이 책 목차](README.md) · [이전: Spark와 Iceberg](09-iceberg-integration.md) · [다음: 로컬 실습](11-local-labs.md)
 
 같은 Spark 프로그램도 어디에서 driver가 실행되고 누가 executor를 만들며 client가 어느 프로세스와 통신하는지에 따라 장애와 보안 경계가 달라진다. 이 장에서는 local, standalone, YARN, Kubernetes 배포를 한 지도에 놓고 Spark Connect를 classic Spark와 구분한다. 예시는 구조를 설명하기 위한 설정 조각이며 운영 cluster를 배포하는 완성 manifest가 아니다.

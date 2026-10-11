@@ -1,5 +1,23 @@
 # 02. DataFrame과 SQL
 
+## DataFrame에서 stage 결과까지
+
+DataFrame 변수는 전체 행을 driver RAM에 담은 list가 아니라 schema와 계산 계획의 handle이다. analyzer가 column을 type과 결합하고 optimizer가 logical plan을 바꾸며 physical planner가 scan·aggregate·exchange를 고른다. 내장 expression은 주로 JVM engine에서 처리되고 Python UDF는 Python worker 경로를 추가한다.
+
+P0=(KR10,US20,KR30), P1=(JP40,KR50,US60), P2=(KR70,JP80,US90)에서 amount>=20을 region별 집계한다. P0은 KR(30,1),US(20,1), P1은 JP(40,1),KR(50,1),US(60,1), P2는 KR(70,1),JP(80,1),US(90,1)이다. shuffle 뒤 KR(150,3), US(170,3), JP(120,2)이고 평균은 50, 약56.67, 60이다. 부분 평균의 평균이 아니라 sum과 count를 합친다.
+
+source file은 저장 객체, Spark partition은 task 입력, Iceberg partition은 metadata transform이다. repartition은 shuffle로 실행 partition을 바꾸지만 write와 commit 전에는 source file을 바꾸지 않는다. action 전 transformation은 대체로 lazy지만 schema와 catalog metadata 조회가 앞서 일어날 수 있다.
+
+원문 문자열 12, 12.5, unknown을 long으로 cast한 뒤 NULL을 제거하면 12만 남을 수 있다. 평균 12만 확인하면 두 행 손실을 놓친다. 입력 수, cast failure, NULL 수와 분모를 함께 기록한다.
+
+### 완전 풀이 문제 5개
+
+1. P0 filter 뒤 상태는? **해설:** KR(30,1), US(20,1)이다.
+2. KR 평균은? **해설:** 150/3=50이다.
+3. COUNT(*)와 COUNT(amount)는 언제 다른가? **해설:** amount NULL 행이 있을 때다.
+4. repartition이 파일을 즉시 바꾸는가? **해설:** 아니며 실행 계획 변환이다.
+5. DataFrame이 driver에 전체 data를 담는가? **해설:** 아니며 executor가 partition을 읽는다.
+
 [이 책의 목차](README.md) · [이전 장](01-driver-executor.md)
 
 DataFrame은 데이터를 표처럼 표현하고 계산 계획을 구성하는 인터페이스다. Python의 작은 표가 전부 driver RAM에 들어 있는 객체와 동일한 것으로 이해하지 않는다.

@@ -1,6 +1,84 @@
 # 11. Helm, Kustomize와 GitOps
 
 [이 책 목차](README.md) · [이전: 보안과 RBAC](10-security-rbac.md) · [다음: 관찰성과 문제 해결](12-observability-troubleshooting.md)
+## 한 변경이 Git에서 Running Pod까지 가는 전체 경로
+
+이 장의 command와 출력은 교육용이며 실제 repository나 cluster에 적용한 기록이 아니다. 먼저 네 객체를 나눈다. **Source**는 Git의 chart·base·overlay 파일이다. **Rendered manifest**는 template과 값을 계산한 최종 Kubernetes YAML이다. **Live object**는 API server에 저장된 Deployment·Service다. **Runtime state**는 ReplicaSet·Pod·container process다.
+
+Helm은 Go template과 values로 manifest를 생성하고 chart package·release를 관리한다. Kustomize는 base YAML에 patch·namePrefix·image 변환을 적용해 manifest를 만든다. GitOps controller는 Git revision을 가져와 render하고 live object와 차이를 비교해 API에 조정한다. 세 과정은 같은 것이 아니다.
+
+```mermaid
+flowchart LR
+    G["Git commit c42<br/>values image digest B"] -->|"fetch"| R["GitOps source artifact"]
+    R -->|"Helm/Kustomize render"| Y["Deployment YAML<br/>template digest B"]
+    Y -->|"schema·policy 검증 후 apply"| A["API Deployment<br/>generation 8"]
+    A -->|"Deployment controller"| RS["new ReplicaSet hash-b"]
+    RS -->|"ReplicaSet controller"| P["Pod B"]
+    P -->|"kubelet·CRI"| C["container digest B"]
+    L["live drift: replicas=5"] -. "diff 관찰" .-> A
+```
+
+Git→artifact는 controller가 특정 revision을 가져온다는 뜻이다. Render→YAML은 아직 cluster 변경이 아니다. YAML→API에서 인증·인가·admission이 적용된다. Deployment→ReplicaSet→Pod는 workload controller의 비동기 조정이다.
+
+## 수치 사례: image 변경이 readiness에서 멈춘다
+
+초기 Git commit c41은 digest A, replicas 4이고 live Deployment generation 7, Ready 4다. Commit c42가 digest B로 바뀐다.
+
+| 시각 | GitOps 상태 | Deployment/RS | Pod 상태 | 해석 |
+|---:|---|---|---|---|
+| t0 | c41 Ready | gen7, A RS 4 | A Ready 4 | 동기 |
+| t1 | c42 fetch | 아직 gen7 | 변화 없음 | source만 새 revision |
+| t2 | render 성공 | apply gen8 | A4, B0 | API desired state 변경 |
+| t3 | reconciling | A4, B1 | B Running, Ready=false | rollout 진행 |
+| t4 | health check 실패 | A4, B1 | B `/readyz` 503 | Git revision 적용은 됐지만 workload 미준비 |
+| t5 | progress deadline | condition 실패 | A가 traffic 유지 가능 | 자동 rollback 여부는 정책별 |
+| t6 | c43에서 A로 되돌림 | 새 generation | A template 조정 | Git history로 복구 의도 기록 |
+
+GitOps UI의 “Synced”는 Git desired manifest와 API live spec이 같다는 뜻일 수 있다. 모든 Pod Ready와 business transaction 성공을 자동 뜻하지 않는다. Source Ready, Render 성공, Apply 성공, Health Ready를 별도 condition으로 읽는다.
+
+## Helm value가 코드로 바뀌는 위치
+
+Template에 `image: {{ .Values.image.repository }}@{{ .Values.image.digest }}`가 있고 values가 digest B라면 render 결과를 반드시 확인한다. YAML indentation, quote, default 함수 때문에 기대와 다른 type이 될 수 있다. `helm template`은 local render이고 install 성공 증거가 아니다. `helm lint`도 API admission과 controller 지원을 모두 재현하지 않는다.
+
+Chart `version`은 package version, `appVersion`은 설명용 application version이다. 실제 image field가 appVersion을 사용하도록 template을 작성하지 않았다면 자동 연결되지 않는다. Release revision은 Helm 작업 이력이며 Kubernetes Deployment revision과 같은 번호 체계가 아니다.
+
+## Kustomize overlay가 만드는 최종 상태
+
+Base에 replicas 2와 digest A가 있고 production overlay가 replicas 4와 digest B를 patch한다고 하자. Controller가 보는 입력은 overlay를 build한 최종 manifest다. Patch target의 apiVersion/kind/name이 틀리면 적용되지 않거나 오류가 난다.
+
+Overlay가 많아지면 환경 차이를 한눈에 보기 어렵다. 최종 render artifact를 CI에서 보존하고 schema/policy 검사를 수행한다. Base 변경이 모든 overlay에 미치는 결과를 diff한다.
+
+## Drift와 소유권
+
+누군가 live Deployment replicas를 4→6으로 수동 변경하면 Git desired=4와 drift가 생긴다. GitOps controller가 self-heal하도록 설정됐다면 다시 4로 조정할 수 있다. 이 동작은 사람의 긴급 변경을 무시하는 것처럼 보일 수 있으므로 break-glass 절차와 source-of-truth 복귀 방법이 필요하다.
+
+Server-side apply의 field manager는 어느 manager가 어떤 field를 소유하는지 추적한다. GitOps, HPA, operator가 같은 field를 서로 쓰면 fight가 생긴다. HPA가 replicas를 관리한다면 Git manifest의 replicas ownership을 어떻게 둘지 도구 지침을 따른다.
+
+## Secret과 Git 경계
+
+Base64 Secret YAML을 private Git에 넣었다고 암호화가 되는 것은 아니다. Encryption tool, external secret provider, sealed artifact 등 선택의 threat model과 key 복구 절차를 문서화한다. GitOps controller가 복호화 권한을 가지면 그 controller credential도 고가치 자산이다.
+
+Secret rotation은 Git commit merge만으로 완료되지 않는다. Provider 값, sync 객체, Pod volume/env, process reload, 외부 server old revoke 순서를 07장처럼 추적한다.
+
+## 실패 원인 분리
+
+```text
+SourceNotReady: authentication failed fetching repository
+BuildFailed: values schema/type error
+ApplyFailed: admission denied runAsNonRoot
+Reconciling: Deployment generation 8 observed 7
+Degraded: new Pod ImagePullBackOff
+```
+
+첫 오류는 Git credential/network, 둘째는 render 입력, 셋째는 API policy, 넷째는 controller가 최신 spec을 아직 처리 중, 다섯째는 node runtime image 경로다. 모두 “배포 실패”지만 수정 주체가 다르다.
+
+## 문제와 유도 해설 보강
+
+1. `helm template` 성공이면 cluster 배포 성공인가? **아니다.** API schema·admission·runtime 상태는 아직 검증되지 않았다.
+2. GitOps Synced인데 Ready 0인 것이 가능한가? **가능하다.** Desired spec 일치와 workload health는 다른 condition이다.
+3. Chart version과 image digest는 자동 연결되는가? **Template이 연결해야 한다.** AppVersion도 설명 field다.
+4. HPA와 GitOps가 replicas를 반복 변경하는 이유는? **같은 field ownership을 두 controller가 다르게 원하기 때문이다.**
+5. Rollback은 옛 Pod를 되살리는가? **보통 옛 desired template을 새 API 변경으로 다시 조정해 새 Pod를 만든다.** UID와 local state는 돌아오지 않는다.
 
 Manifest가 몇 개일 때는 YAML을 직접 관리할 수 있다. 환경과 application이 늘어나면 같은 구조를 반복하면서도 image, replica, hostname처럼 일부 값만 바꾸어야 한다. Helm과 Kustomize는 manifest를 만드는 방법이고, GitOps controller는 원하는 상태를 cluster와 계속 맞추는 운영 방식이다. 세 개념을 한 도구로 뭉뚱그리지 않는다.
 

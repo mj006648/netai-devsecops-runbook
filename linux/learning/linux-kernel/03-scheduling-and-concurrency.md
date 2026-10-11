@@ -359,7 +359,128 @@ PY
 | wakeup은 event를 저장한다 | condition과 wait 등록을 제대로 묶지 않으면 lost wakeup이 생긴다. |
 | RCU는 lock-free 만능 도구다 | reader 최적화 기법이며 updater 조정과 memory ordering 규칙이 필요하다. |
 
-## 13. 해설 문제
+## 13. 한 번의 스케줄링 결정을 끝까지 추적하기
+
+스케줄러를 “프로세스를 번갈아 실행하는 기능”이라고만 외우면 실제 장애를 설명할 수 없다. Linux에서 실행 단위는 보통 **task**다. 프로세스의 각 thread도 스케줄러에는 독립 task로 보인다. 각 CPU에는 실행 가능한 task를 모아 둔 **run queue(실행 대기열)**가 있고, 현재 CPU에서 실제 명령을 실행하는 task는 한 순간에 하나다. 8개 CPU가 있으면 최대 8개 task가 동시에 실행될 수 있지만 runnable task가 80개라면 나머지는 run queue에서 차례를 기다린다.
+
+다음은 CPU 0에서 task A가 디스크 읽기를 기다리게 되고 task B로 바뀌는 교육용 시간표다.
+
+| 시각 | A의 상태 | CPU 0과 커널이 하는 일 | B의 상태 |
+|---:|---|---|---|
+| 0 µs | running | A의 user instruction 실행 | runnable |
+| 3 µs | running | A가 `read()` system call로 kernel mode 진입 | runnable |
+| 5 µs | blocked 전환 | 필요한 page가 없어 I/O 요청을 제출하고 A를 wait queue에 연결 | runnable |
+| 7 µs | sleeping | scheduler가 CPU 0의 다음 후보를 고름 | runnable |
+| 9 µs | sleeping | A의 CPU register 상태를 저장하고 B의 상태를 복원 | running 전환 |
+| 11 µs | sleeping | B의 user instruction으로 복귀 | running |
+| 2 ms | runnable 전환 | 장치 완료 interrupt와 후속 처리에서 A를 깨워 run queue에 넣음 | running 또는 다른 상태 |
+| 그 뒤 | running 가능 | 정책상 A가 선택될 때 실제 실행 재개 | 상태에 따라 다름 |
+
+여기서 **wake-up(깨우기)**은 A에게 CPU를 즉시 넘긴다는 뜻이 아니다. A를 sleeping에서 runnable로 바꾸는 일이다. 더 이른 virtual deadline, 우선순위, 현재 CPU의 선점 가능 여부 같은 조건을 만족해야 A가 실제 running이 된다. 이 구분이 없으면 “I/O가 2ms 만에 끝났는데 왜 요청은 4ms 뒤에 응답했는가”라는 질문을 풀 수 없다. I/O 완료 뒤 run queue 대기 시간이 추가될 수 있기 때문이다.
+
+### context switch의 정확한 비용
+
+**context(문맥)**는 task가 나중에 이어 실행되기 위해 보존해야 할 CPU 실행 상태다. instruction pointer, stack pointer, 일반 register, architecture별 부가 상태가 들어간다. **context switch**는 현재 task의 실행 상태를 저장하고 다음 task의 상태를 복원해 CPU의 실행 주체를 바꾸는 과정이다. 항상 프로세스 주소 공간까지 바뀌는 것은 아니다. 같은 프로세스 안의 두 thread 사이 전환은 주소 공간을 공유할 수 있다. 반대로 다른 프로세스로 바뀌면 page-table 기준도 달라질 수 있다.
+
+비용은 하나의 숫자가 아니다.
+
+1. 직접 비용: register 저장·복원, scheduler 자료구조 갱신, kernel 경로 실행에 CPU cycle을 쓴다.
+2. cache 비용: 새 task가 이전 task와 다른 code와 data를 쓰면 L1/L2 cache의 유용한 line이 밀려난다.
+3. TLB 비용: 주소 공간과 PCID/ASID 조건에 따라 주소 변환 cache의 유효성이 달라진다.
+4. 간접 지연: 새 task의 working set이 다시 따뜻해질 때까지 cache miss가 늘어난다.
+
+따라서 `perf stat`의 context-switch 횟수가 두 배가 되었다는 사실만으로 처리 시간이 정확히 두 배라고 결론 내릴 수 없다. 같은 주소 공간의 두 thread가 작은 working set을 공유하는 경우와, 서로 다른 수십 GiB 주소 공간의 프로세스가 CPU를 번갈아 쓰는 경우의 간접 비용이 다르다. 반대로 switch 횟수가 적어도 한 task가 CPU를 오래 독점하면 tail latency는 나빠질 수 있다.
+
+## 14. CFS에서 EEVDF까지: 공정성 계산을 숫자로 읽기
+
+과거의 Linux fair class를 설명할 때 자주 등장하는 **CFS(Completely Fair Scheduler)**는 task가 받은 CPU 시간을 **virtual runtime, vruntime(가상 실행 시간)**으로 환산했다. 높은 가중치를 받은 task는 같은 실제 시간 동안 vruntime이 더 천천히 증가하므로 더 많은 CPU 몫을 받을 수 있다. red-black tree는 vruntime이 작은 entity를 효율적으로 찾는 데 쓰였다.
+
+현대 Linux의 fair scheduling 설명에서는 **EEVDF(Earliest Eligible Virtual Deadline First)**를 함께 봐야 한다. Linux는 6.6부터 fair class를 EEVDF 쪽으로 전환하기 시작했다. 이는 “6.6 이후 모든 scheduling 동작이 한 번에 완전히 같아졌다”는 뜻은 아니다. kernel 버전, backport, group scheduling과 설정을 확인해야 한다.
+
+EEVDF의 두 질문은 다음과 같다.
+
+- **eligible인가?** task의 lag를 보고 지금 선택 후보가 될 자격이 있는지 판단한다. lag는 공정한 몫에 비해 CPU 시간을 덜 받았는지, 더 받았는지를 나타내는 회계 값이다.
+- **누가 먼저인가?** eligible 후보 중 virtual deadline이 가장 이른 task를 고른다. virtual deadline은 벽시계의 업무 마감 시각이 아니라 virtual time 위에서 계산한 선택 기준이다.
+
+가중치가 같은 A와 B가 20ms 동안 계속 runnable이라고 단순화하자. 공정한 몫은 각각 10ms다. 실제로 A가 14ms, B가 6ms를 받았다면 A는 몫보다 4ms 더 받았고 B는 4ms 덜 받았다. 부호 정의를 “받아야 할 몫 - 실제 받은 시간”으로 두면 A의 lag는 -4ms, B의 lag는 +4ms다. 이 단순 모델에서 B가 eligible이고 A는 당장 덜 유리하다. 실제 kernel은 weight, virtual time, entity hierarchy와 lag decay를 포함하므로 이 산술을 그대로 내부 field 값으로 읽으면 안 된다.
+
+slice가 짧으면 virtual deadline이 앞당겨져 반응성이 좋아질 수 있다. 그러나 “짧은 slice 요청=실시간 deadline 보장”은 아니다. `SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE` 같은 다른 scheduling class와 CPU bandwidth control은 별도의 규칙을 가진다. 또한 task가 mutex, I/O, page fault로 잠들어 있으면 fair scheduler가 고를 수 없다.
+
+### 선점과 자발적 전환을 구분하기
+
+**preemption(선점)**은 현재 task가 스스로 CPU를 놓겠다고 결정하지 않았는데 더 적합한 runnable task가 CPU를 차지할 수 있게 하는 것이다. timer tick, wake-up, return-to-user 경로 등에서 reschedule 필요가 확인될 수 있다. **voluntary switch(자발적 전환)**는 task가 mutex, I/O, sleep처럼 당장 진전할 수 없는 조건 때문에 스스로 blocking하는 경우다. 관측 도구가 보여 주는 voluntary/nonvoluntary 분류는 이 차이를 찾는 단서이지, 원인을 자동 확정하는 판정문은 아니다.
+
+## 15. CPU가 여러 개면 load balancing이 필요하다
+
+각 CPU가 자기 run queue만 고집하면 CPU 0에는 runnable task가 12개인데 CPU 1은 idle일 수 있다. **load balancing(부하 균형)**은 runnable work를 CPU 사이에서 옮겨 이런 불균형을 줄이는 과정이다. Linux의 **scheduler domain**은 어떤 CPU끼리 어느 계층에서 균형을 맞출지 나타낸다. 가까운 SMT sibling, 같은 core/LLC, NUMA node, 전체 machine처럼 topology를 반영할 수 있다.
+
+kernel 문서의 기본 흐름은 주기적 trigger가 softirq를 올리고, domain 계층을 훑으며 busiest group과 busiest run queue를 찾은 뒤 task를 옮기는 식이다. **softirq**는 interrupt 뒤 미뤄 둔 kernel work를 처리하는 실행 문맥의 한 종류다. 이 작업은 공짜가 아니다. 두 run queue의 상태를 안전하게 바꾸는 locking 비용이 있고, task를 다른 CPU로 옮기면 cache locality를 잃을 수 있다.
+
+다음 수치 예를 보자.
+
+```text
+CPU 0: A, B, C, D가 runnable
+CPU 1: E 하나가 running
+
+단순 개수만 보면 CPU 0에서 CPU 1로 task 하나를 옮기면 3:2가 된다.
+그러나 D의 8 MiB working set이 CPU 0의 cache에 있고 CPU 1에서 모두 다시 읽어야 한다면
+즉시 이동의 cache 비용이 잠깐 기다리는 비용보다 클 수 있다.
+```
+
+이것이 **affinity(친화도)**가 필요한 이유다. CPU affinity는 task가 실행될 수 있는 CPU 집합을 제한한다. locality를 지키고 jitter를 줄이는 데 도움이 되지만, 허용 CPU가 한 개뿐인데 그 CPU가 바쁘면 다른 idle CPU를 쓸 수 없다. `cpuset`과 container CPU 설정, interrupt affinity도 함께 봐야 한다.
+
+NUMA에서는 CPU migration이 memory locality와 연결된다. task만 node 1 CPU로 옮기고 page는 node 0에 남으면 remote memory access가 늘 수 있다. 반대로 page migration은 data copy와 page-table 갱신 비용을 낸다. “모든 task를 균등 배치”와 “memory에 가까이 배치”가 충돌할 수 있으므로 처리량, latency, locality를 함께 측정한다.
+
+## 16. interrupt context와 task context에서 lock 선택이 달라지는 이유
+
+**task context**는 특정 task를 대신해 kernel code를 실행하는 문맥이다. 필요 조건을 충족하면 sleep하고 나중에 scheduler가 다시 실행할 수 있다. **hard interrupt context**는 장치 interrupt를 처리하는 짧고 제약이 큰 문맥이다. 현재 task의 일반적인 blocking sleep 경로처럼 기다릴 수 없다. 그래서 “kernel에서는 mutex를 쓰면 된다”는 문장은 불완전하다.
+
+spinlock은 짧은 critical section에서 lock이 풀리기를 CPU로 돌며 기다린다. mutex는 경쟁할 때 task를 sleep시킬 수 있다. interrupt handler와 task context가 같은 자료구조를 공유한다면 단순 spinlock만으로도 부족할 수 있다. local interrupt를 막아 같은 CPU의 handler가 lock을 다시 잡는 self-deadlock을 방지해야 하는 경우 `spin_lock_irqsave()` 계열처럼 interrupt state까지 다루는 규칙이 필요하다. 정확한 primitive는 자료구조가 접근되는 문맥과 preemption/interrupt 조건으로 결정한다.
+
+반례를 보자.
+
+```text
+task T: lock L 획득
+        같은 CPU에서 interrupt 발생
+IRQ handler: lock L을 얻으려 spin
+task T: interrupt가 끝나야 다시 실행되어 L을 풀 수 있음
+```
+
+handler는 영원히 돌고 T는 실행되지 못한다. “critical section이 짧으니 spinlock이면 안전하다”가 실패한다. 어떤 문맥에서 lock을 잡는지까지 lock 규약에 기록해야 한다.
+
+user space mutex의 느린 경로를 돕는 futex와 kernel 내부 mutex도 구분한다. futex wait는 user word가 예상 값과 같은지 kernel에서 다시 확인하고 waiter를 재운다. wake는 waiter를 runnable로 만들 뿐 lock 소유권을 직접 넘기지 않는다. 깨어난 thread는 user-space protocol에 따라 다시 atomic 연산으로 경쟁한다.
+
+## 17. 관측: “CPU가 느리다”를 runnable, switch, stall로 분해하기
+
+운영에서는 관측 대상을 먼저 정한다.
+
+| 질문 | 볼 수 있는 단서 | 해석할 때 주의할 점 |
+|---|---|---|
+| task가 CPU를 못 받았나? | run-queue latency, runnable time | blocked time과 섞지 않는다. |
+| 너무 자주 바뀌나? | context-switch rate, `sched_switch` trace | 횟수와 비용은 workload마다 다르다. |
+| 누가 깨웠나? | `sched_wakeup`과 다음 `sched_switch`의 시간 관계 | wake-up은 즉시 실행을 보장하지 않는다. |
+| quota에 막혔나? | cgroup CPU throttling 통계 | host CPU 사용률이 낮아도 가능하다. |
+| lock에 막혔나? | off-CPU stack, futex wait, lock contention | lock 보유자의 CPU 대기도 함께 본다. |
+| interrupt가 빼앗나? | IRQ/softirq CPU 시간과 affinity | application CPU만 보고 결론 내리지 않는다. |
+
+예를 들어 요청 thread가 `sched_wakeup` 뒤 800µs 후에야 `sched_switch`로 running이 되었다면 그 800µs는 I/O 시간이 아니라 wake-up 이후 scheduling delay다. 같은 구간에서 cgroup throttling이 증가했다면 quota 가설을, CPU run queue가 길었다면 contention 가설을, 특정 CPU의 softirq 시간이 높다면 interrupt 처리 가설을 세운다. 한 지표만으로 원인을 선언하지 않고 같은 시간축에서 연결한다.
+
+## 18. 최신 연구를 읽는 법: 운영체제 보장과 논문 조건을 분리한다
+
+최근 시스템 연구는 scheduler 하나만 바꿔 모든 문제를 해결한다고 말하지 않는다. 예를 들어 PeRF(USENIX ATC 2024)는 RDMA NIC를 공유하는 환경에서 work-conserving isolation과 preemption을 다룬다. 문제는 CPU fair scheduler가 공정해도 NIC 내부 queue와 network work가 한 tenant에 막힐 수 있다는 점이다. 이것은 “Linux EEVDF가 RDMA tail latency를 자동 해결한다”는 근거가 아니다. CPU, NIC, DMA, interrupt라는 서로 다른 scheduling 지점을 함께 설계해야 한다는 연구 사례다.
+
+논문을 교재에 연결할 때는 네 칸으로 읽는다.
+
+| 항목 | 묻는 질문 |
+|---|---|
+| 문제 | 기존 환경에서 어떤 contention 또는 tail latency가 발생했나? |
+| 기법 | 어느 계층에서 preemption, queueing, accounting을 바꿨나? |
+| 평가 | 어떤 hardware, workload, baseline에서 측정했나? |
+| 한계 | 일반 Linux/Kubernetes 기본 동작으로 착각하면 안 되는 조건은 무엇인가? |
+
+논문 수치는 해당 평가 조건의 결과다. NIC 세대, workload 크기, queue depth가 다르면 그대로 재현된다고 가정할 수 없다. 반면 “자원마다 별도의 대기열과 선점 지점이 있다”는 사고방식은 CPU scheduler를 공부할 때도 유용하다.
+
+## 19. 해설 문제
 
 1. syscall 중 task가 blocked되면 scheduler는 왜 다른 task를 고르는가?
    - 현재 task가 기다리는 사건이 해결되기 전에는 실행해도 진전이 없기 때문이다. CPU를 runnable task에 주어 전체 처리량과 반응성을 높인다.
@@ -373,9 +494,26 @@ PY
 4. RCU update 후 바로 old object를 free하면 왜 위험한가?
    - 교체 전에 시작한 reader가 아직 old object pointer를 들고 있을 수 있다. grace period를 기다려야 한다.
 
-## 14. 1차 참고 자료
+5. A가 I/O 완료 interrupt에서 깨어났지만 500µs 뒤에 실행되었다. context switch가 500µs 걸렸다고 말해도 되는가?
+   - 아니다. wake-up은 A를 runnable로 만든다. 그 뒤 run queue에서 기다린 시간과 실제 switch 실행 비용을 구분해야 한다. `sched_wakeup`부터 A를 선택한 `sched_switch`까지가 scheduling delay의 한 관측치이며, switch 자체의 register 저장·복원 시간과 같지 않다.
+
+6. 같은 weight의 A와 B가 20ms 구간에서 각각 14ms와 6ms를 실행했다. `공정한 몫-실행 시간`으로 lag를 단순 정의하면 값은 얼마인가?
+   - 각 몫은 10ms다. A는 `10-14=-4ms`, B는 `10-6=+4ms`다. B가 CPU 시간을 덜 받았다. 실제 kernel 내부 계산은 virtual time과 weight를 포함하므로 이 값은 개념 연습이다.
+
+7. CPU 1이 idle인데 affinity가 `{0}`인 task가 CPU 0 run queue에서 기다린다. load balancer가 CPU 1로 옮길 수 있는가?
+   - 허용 mask 밖이면 옮길 수 없다. affinity가 locality와 격리를 주는 동시에 사용 가능한 CPU를 제한한다는 반례다.
+
+8. task context와 interrupt handler가 lock L을 공유하고 handler도 L을 잡는다. task가 L을 가진 채 같은 CPU의 interrupt를 허용하면 어떤 고리가 생길 수 있는가?
+   - interrupt handler가 L을 기다리며 spin하지만 L을 풀 task는 interrupt 처리가 끝나기 전 재개되지 못한다. 접근 문맥에 맞는 interrupt-disable 규약과 lock primitive를 사용해야 한다.
+
+9. mutex 경쟁이 늘어 context switch가 증가했다. 무조건 CPU affinity를 고정하면 해결되는가?
+   - 아니다. affinity는 migration과 cache locality에는 영향을 주지만 lock critical section 길이, 보유자의 preemption, futex wake 경쟁은 남는다. 좁게 고정하면 run queue imbalance가 더 커질 수도 있다.
+
+## 20. 1차 참고 자료
 
 - Linux Kernel Documentation: [EEVDF Scheduler](https://docs.kernel.org/scheduler/sched-eevdf.html), [CFS Scheduler](https://docs.kernel.org/scheduler/sched-design-CFS.html), [Completions](https://docs.kernel.org/scheduler/completion.html)
 - Linux Kernel Documentation: [What is RCU?](https://docs.kernel.org/RCU/whatisRCU.html), [RCU requirements](https://docs.kernel.org/RCU/Design/Requirements/Requirements.html)
 - Linux Kernel Documentation: [Linux kernel memory barriers](https://docs.kernel.org/core-api/wrappers/memory-barriers.html), [Atomic types](https://docs.kernel.org/core-api/wrappers/atomic_t.html)
+- Linux Kernel Documentation: [Scheduler Domains](https://docs.kernel.org/scheduler/sched-domains.html), [CPU load](https://docs.kernel.org/scheduler/cpu-load.html)
 - Linux man-pages: [futex(7)](https://www.man7.org/linux/man-pages/man7/futex.7.html), [futex(2)](https://www.man7.org/linux/man-pages/man2/futex.2.html)
+- USENIX ATC 2024: [PeRF: Preemption-enabled RDMA Framework](https://www.usenix.org/conference/atc24/presentation/lee)

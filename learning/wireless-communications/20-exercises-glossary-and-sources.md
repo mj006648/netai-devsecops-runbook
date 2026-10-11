@@ -1,5 +1,34 @@
 # 20. 종합 문제·용어사전·공식 자료
 
+## 용어를 한 무선 요청 안에서 연결한다
+
+UE 앱의 bit는 baseband에서 FEC coded bit와 QAM symbol이 되고 I/Q sample로 표현된다. mixer는 이를 carrier 주변 passband로 옮기고 antenna가 전자기장으로 방사한다. channel은 path loss, multipath, Doppler, noise, interference를 더한다. receiver는 동기·channel 추정·equalization·LLR·FEC·CRC 순서로 bit를 추정한다.
+
+cellular에서는 SDAP·PDCP·RLC·MAC이 packet을 각 책임에 맞게 처리하고 PHY가 resource grid에 놓는다. scheduler는 CQI, buffer, QoS, HARQ 상태로 grant와 MCS를 정한다. registration과 PDU session이 준비돼야 UPF를 통한 user-plane IP 경로가 열린다.
+
+AI closed loop에서는 measurement가 feature가 되고 model inference가 control 후보를 만든다. policy·guard·deadline·interface support를 통과해야 RAN node가 action을 적용한다. 결과 KPI를 다시 측정해 rollback 여부를 정한다.
+
+## 추가 종합 문제 5개
+
+### 문제 13. 2 GHz 파장과 30 m/s Doppler
+파장은 0.15 m, 진행 방향 Doppler는 `30/0.15=200 Hz`다. 이동 각도가 있으면 radial 속도를 쓴다.
+
+### 문제 14. 10 RB의 raw RE
+normal CP 한 slot 14 symbol 조건에서 `10×12×14=1680 RE`다. pilot·control을 빼야 data RE가 된다.
+
+### 문제 15. stale CSI
+coherence time 5 ms인데 CSI age 20 ms면 네 coherence interval이 지나 현재 channel을 잘 대표하지 못할 수 있다. robust MCS나 fallback이 필요하다.
+
+### 문제 16. edge latency
+uplink 40, network 5, inference 20, downlink 10 ms면 총 75 ms다. deadline 60 ms면 model 정확도와 무관하게 실패다.
+
+### 문제 17. 표준과 연구
+표준 interface 지원은 메시지·역할 계약이고 논문 정확도는 특정 dataset·metric 결과다. 하나가 다른 하나를 자동 보장하지 않는다.
+
+## 용어를 읽는 규칙
+
+사전 항목을 볼 때 먼저 실제 객체 위치를 묻는다. CSI는 receiver 측정에서 생겨 scheduler까지 이동하며 짧은 수명을 가진다. model weight는 training 결과로 artifact 저장소와 inference memory에 살며 더 긴 수명을 가진다. 같은 “데이터”라도 위치와 유효 시간이 다르다.
+
 [이 책 목차](README.md)
 
 [← 이전: 로컬 모형](19-local-models-and-research.md) · [무선통신 교재 목차](README.md)

@@ -1,6 +1,103 @@
 # 05. DRA 할당의 전체 생명주기
 
 [← 이전 장](04-dra-concepts-and-objects.md) · [다음 장 →](06-dra-yaml-walkthrough.md)
+## 0. 생명주기는 “선택”과 “사용 준비”와 “정리”를 잇는다
+
+**할당**, allocation은 scheduler가 ResourceClaim의 요구와 ResourceSlice의 장치 inventory를 비교해 사용할 장치를 선택하고 그 결과를 Claim status에 기록하는 단계다. **준비**, prepare는 선택된 노드의 kubelet이 DRA driver에게 “이 Claim의 장치를 이 노드의 Pod가 실제로 쓰게 만들어 달라”고 요청하는 단계다. **주입**, injection은 container runtime이 CDI 정보에 따라 device file과 mount를 container 설정에 합치는 단계다. **해제**, unprepare는 마지막 사용이 끝난 뒤 node에 만든 준비 상태를 되돌리는 단계다. 네 단계는 서로 다른 주체와 실패 증거를 가진다.
+
+Claim의 spec은 사용자가 원하는 조건이고 status는 시스템이 관찰하거나 결정한 결과다. 사용자가 status를 원하는 값으로 써서 물리 GPU를 얻는 구조가 아니다. scheduler와 controller가 API server를 통해 status를 갱신하고, kubelet과 node driver는 노드 로컬 상태를 다룬다.
+
+## 0.1 2노드·3장치·2Pod의 전체 시간표
+
+`node-a`에는 `gpu-a0` 80 GiB와 `gpu-a1` 24 GiB가 있고, `node-b`에는 `gpu-b0` 40 GiB MIG instance가 있다고 하자. Pod A는 full GPU 40 GiB 이상, Pod B는 24 GiB 이상이며 MIG도 허용한다. 각 Pod는 ResourceClaimTemplate에서 자기 Claim을 하나씩 받는다.
+
+| 시각 | 주체 | 읽는 입력 | 쓰는 상태 | 결과 |
+| --- | --- | --- | --- | --- |
+| t=0.0 | Deployment controller | Pod template·Claim template | Pod A/B와 Claim A/B 생성 | 두 Claim 미할당 |
+| t=0.2 | scheduler | 두 Pod, 두 Claim, 세 device | 후보 집합 계산 | A={a0}, B={a0,a1,b0} |
+| t=0.3 | scheduler | 충돌하지 않는 조합 | Claim A allocation=`a0` | Pod A node-a |
+| t=0.4 | scheduler | A가 점유한 뒤 남은 후보 | Claim B allocation=`b0` | Pod B node-b |
+| t=0.6 | node-a kubelet | Pod A와 Claim A status | NodePrepareResources 호출 | a0 준비 중 |
+| t=0.7 | node-b kubelet | Pod B와 Claim B status | NodePrepareResources 호출 | b0 준비 중 |
+| t=0.9 | 각 node driver | 장치 ID와 Claim UID | node-local state·CDI 이름 | prepare 성공 |
+| t=1.1 | container runtime | container spec·CDI 이름 | device/mount/env 병합 | container 생성 |
+| t=1.5 | CUDA process | library와 device file | GPU context·VRAM | 계산 시작 |
+| t=10 | Pod B 삭제 | 사용 종료 | container 제거 | unprepare 가능 |
+| t=10.3 | node-b kubelet/driver | Claim B 사용 없음 | node-local 준비 해제 | b0 재사용 가능 |
+
+scheduler가 Pod B에 `b0`을 고른 것은 하나의 가능한 결과다. 점수화와 다른 제약에 따라 `a1`을 고를 수도 있다. 중요한 불변식은 같은 exclusive device를 충돌하는 두 Claim에 동시에 주지 않는 것과 Pod의 노드 선택이 device 접근 가능성과 일치하는 것이다.
+
+```mermaid
+sequenceDiagram
+    participant C as workload controller
+    participant A as API server
+    participant S as scheduler
+    participant KA as node-a kubelet
+    participant DA as node-a DRA driver
+    participant R as runtime
+    C->>A: Pod A + Claim A 생성
+    S->>A: Slice/Class/Claim 읽기
+    S->>A: allocation(a0)와 node-a 기록
+    KA->>DA: NodePrepareResources(Claim A)
+    DA-->>KA: CDI device name
+    KA->>R: container + CDI 요청
+    R-->>KA: container 시작
+    C->>A: Pod A 삭제
+    KA->>DA: NodeUnprepareResources(Claim A)
+    DA-->>KA: node 상태 정리 완료
+```
+
+## 0.2 prepare의 멱등성과 재시도
+
+**멱등성**, idempotence는 같은 요청을 여러 번 받아도 최종 상태가 한 번 처리한 것과 같아야 한다는 성질이다. 네트워크가 끊기면 kubelet은 driver가 준비를 끝냈는지 응답만 잃었는지 알 수 없다. 따라서 같은 Claim UID와 device ID로 prepare를 다시 호출할 수 있다. driver가 매번 별도 GPU partition을 새로 만들면 누수가 생긴다. 이미 준비됐는지 node-local state를 확인하고 같은 결과를 반환해야 한다.
+
+일시 실패는 재시도로 회복될 가능성이 있다. 예를 들어 runtime socket이 2초 동안 응답하지 않거나 device node 생성이 아직 끝나지 않은 경우다. 반면 **terminal failure**는 같은 입력을 반복해도 성공하지 않는다고 driver가 판단한 실패다. 선택된 장치가 요구 capability를 제공하지 않거나 복구에 관리자 설정 변경이 필요한 경우가 예다. terminal을 일시 오류처럼 무한 재시도하면 Pod가 계속 대기하고 운영자가 원인을 놓친다.
+
+| 실패 위치 | 대표 상태 | 자동 재시도 의미 | 필요한 증거 |
+| --- | --- | --- | --- |
+| 후보 선택 | Claim 미할당·Pod Pending | inventory 갱신 시 재평가 가능 | Claim condition, scheduler event |
+| API status 기록 | conflict/timeout | resourceVersion을 다시 읽고 재시도 | API audit·scheduler log |
+| prepare | 일시 gRPC 오류 | 같은 Claim로 멱등 재호출 | kubelet·driver log |
+| prepare | terminal failure | 조건·구성 수정 전 반복 무의미 | Claim/Pod condition, driver reason |
+| runtime injection | container create error | CDI spec·runtime 수정 필요 | runtime log, spec 파일 |
+| CUDA 시작 | library/driver 오류 | container 반복만으로 회복 안 될 수 있음 | app log, driver version |
+| unprepare | 일시 정리 실패 | 사용 없음 확인 후 재시도 | driver node state |
+
+## 0.3 삭제와 unprepare에서 데이터 손실을 막는 순서
+
+unprepare는 단순히 Claim API 객체를 삭제하는 일이 아니다. driver가 만든 node-local device 준비, mount, partition 또는 접근 상태를 해제하는 호출이다. 실행 중 container가 여전히 장치 파일을 사용한다면 먼저 container를 정지하고 참조가 사라졌는지 확인해야 한다. 준비를 먼저 풀면 process가 I/O 오류를 만나거나 공유 장치의 다른 사용자에게 영향을 줄 수 있다.
+
+Pod가 삭제 요청을 받으면 kubelet은 container 종료 절차를 수행한다. 모든 관련 container가 멈추고 해당 Claim을 쓰는 local Pod가 없음을 확인한 뒤 NodeUnprepareResources를 호출한다. 성공 응답 뒤 장치는 다음 할당에 사용할 수 있다. driver가 재시작했다면 Claim UID와 저장된 node state를 바탕으로 이미 정리됐는지 판단해야 한다.
+
+Claim을 여러 Pod가 사용할 수 있는 정책에서는 Pod 하나가 끝났다고 즉시 unprepare하면 안 된다. 마지막 local 사용자까지 사라졌는지 참조 수명 규칙을 따른다. 반대로 Pod가 사라졌는데 준비 상태가 영원히 남으면 장치 누수가 생긴다. API 객체 수명, kubelet의 desired state, driver의 actual state를 조정해야 한다.
+
+## 0.4 성능과 격리는 생명주기 성공 뒤의 별도 질문이다
+
+Pod A와 B가 모두 Running이고 prepare가 성공해도 성능 격리가 증명되지는 않는다. `gpu-b0`이 MIG instance라면 profile 범위의 하드웨어 구획이 있지만, 같은 PCIe link나 CPU·network 경로에서 경합할 수 있다. time-slicing이면 두 Claim이 논리적으로 할당돼도 같은 GPU 실행 시간을 공유하며 tail latency가 커질 수 있다. MPS도 동시 제출을 돕지만 모든 오류와 메모리를 tenant별로 완전 격리하는 계약은 아니다.
+
+단독 50 ms인 작업 둘이 time-slicing 장치에서 완전 직렬로 경쟁하면 단순 시간표는 A 0–50 ms, B 50–100 ms가 되어 B 응답이 100 ms다. 실제 GPU 동시성은 workload에 따라 달라 측정해야 한다. allocation status는 이 성능 값을 저장하지 않는다.
+
+## 0.5 추가 완전 풀이 문제
+
+**문제 1.** Claim allocation은 `gpu-a0`으로 기록됐지만 Pod가 node-b에 묶였다. prepare가 성공할 수 있는가?
+
+**해설.** `gpu-a0`이 node-a에만 접근 가능하다면 node-b driver는 준비할 수 없다. scheduler는 device와 node를 함께 선택해야 한다. 수동 nodeName 변경이나 stale inventory가 있는지 Pod spec, Claim status, ResourceSlice node 정보를 대조한다.
+
+**문제 2.** driver가 prepare를 완료했지만 응답이 손실되어 kubelet이 재호출했다. 두 번째 호출에서 새 partition을 또 만들면 어떤 문제가 생기는가?
+
+**해설.** 같은 Claim에 자원이 중복 생성되어 capacity 누수와 잘못된 정리가 발생한다. Claim UID와 device ID를 키로 기존 상태를 찾아 같은 성공 결과를 반환하는 멱등 처리가 필요하다.
+
+**문제 3.** Pod B가 삭제됐지만 같은 Claim을 쓰는 Pod C가 node-b에서 실행 중이다. 즉시 unprepare해야 하는가?
+
+**해설.** 아니다. 아직 local 사용자가 있으므로 장치 준비를 유지해야 한다. 마지막 참조가 끝난 뒤 unprepare한다. Claim 공유 정책과 kubelet desired state를 함께 판단한다.
+
+**문제 4.** Claim은 할당됐고 prepare도 성공했는데 container create가 실패했다. scheduler가 다른 GPU를 고르면 해결되는가?
+
+**해설.** 실패 지점은 runtime/CDI 주입이다. CDI spec 누락, runtime 지원, device path와 권한을 먼저 확인한다. 장치 자체 capability 문제가 아니라면 재할당은 원인을 우회하지 못한다.
+
+**문제 5.** DRA가 stable이므로 terminal failure는 없다는 주장이 왜 틀렸는가?
+
+**해설.** stable은 API 성숙도다. 잘못된 selector, 지원되지 않는 device capability, driver/runtime 조합 문제 같은 운영 실패는 여전히 있다. terminal은 프로토콜이 실패를 분류하는 방식이며 안정 API와 모순되지 않는다.
 
 > 이 장의 목표는 템플릿에서 Claim이 생기고, 스케줄러가 장치를 할당하고, 노드의 드라이버가 컨테이너 실행 환경을 준비한 뒤 정리하는 순서를 이해하는 것이다.
 

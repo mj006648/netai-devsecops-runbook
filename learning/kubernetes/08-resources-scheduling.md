@@ -1,6 +1,74 @@
 # 08. 자원과 스케줄링
 
 [이 책 목차](README.md) · [이전: Config와 Secret](07-config-secrets.md) · [다음: Health check와 rollout](09-health-and-rollouts.md)
+## 숫자를 넣어 scheduler 판단을 먼저 계산한다
+
+이 장의 manifest와 출력은 교육용이며 현재 클러스터에 적용한 기록이 아니다. CPU request, memory request, limit, 실제 사용량은 서로 다른 숫자다.
+
+Node A capacity가 CPU 8 core·memory 32Gi이고 system reservation 뒤 allocatable이 7 CPU·28Gi라고 하자. 이미 배치된 Pod request 합은 5 CPU·20Gi다. Scheduler가 새 Pod request 1500m·6Gi를 보면 남은 2 CPU·8Gi 안에 들어가므로 resource filter를 통과할 수 있다. 새 Pod가 실제로 지금 100m만 쓰더라도 배치는 request로 계산한다.
+
+Node B allocatable은 4 CPU·16Gi, 기존 request는 3 CPU·8Gi다. CPU가 1만 남아 새 Pod 1.5 CPU를 수용하지 못한다. 실제 CPU idle이 많아도 scheduler는 선언 request를 기준으로 격리 가능성을 판단한다.
+
+| Node | Allocatable | 기존 request 합 | 새 Pod 뒤 | 결과 |
+|---|---|---|---|---|
+| A | 7000m, 28Gi | 5000m, 20Gi | 6500m, 26Gi | resource filter 통과 |
+| B | 4000m, 16Gi | 3000m, 8Gi | 4500m, 14Gi | CPU 부족으로 제외 |
+
+Capacity는 hardware 전체, allocatable은 system과 Kubernetes 구성 요소 몫을 뺀 Pod 사용 가능량이다. Request 합이 allocatable 이하여도 실제 사용량 spike와 node pressure가 없다는 보장은 아니다.
+
+```mermaid
+flowchart LR
+    P["Pod request<br/>1500m, 6Gi"] --> F["Filter"]
+    A["Node A 남음<br/>2000m, 8Gi"] --> F
+    B["Node B 남음<br/>1000m, 8Gi"] --> F
+    F -->|"A 가능, B CPU 부족"| S["Score 후보 A"]
+    H["Hard 조건<br/>nodeSelector·required affinity·taint"] --> F
+    Q["Soft 선호<br/>preferred affinity"] --> S
+    S --> N["Binding nodeName=A"]
+```
+
+Hard 조건은 만족하지 않으면 후보에서 제외한다. Soft 선호는 후보가 남은 뒤 점수에 영향을 주며 반드시 지켜진다는 뜻이 아니다.
+
+## CPU와 memory limit의 다른 실패 방식
+
+CPU limit은 cgroup quota로 일정 기간 CPU 실행 시간을 제한할 수 있다. 사용하려는 CPU가 quota를 넘으면 process를 종료하기보다 다음 period까지 throttling한다. Latency는 늘 수 있지만 Pod phase가 Failed가 되는 것은 아니다.
+
+Memory limit은 회수 가능한 page를 줄인 뒤에도 cgroup 사용이 상한을 넘으면 OOM kill로 이어질 수 있다. Kubelet이 같은 container를 재시작하면 Pod UID는 같고 restartCount가 증가하며 lastState reason이 OOMKilled일 수 있다. Pod phase Running과 `kubectl get`의 CrashLoopBackOff 표시를 같은 상태 필드로 보지 않는다. CrashLoopBackOff는 반복 restart의 대기 상태 표시이고 OOMKilled는 이전 container 종료 이유다.
+
+## QoS는 이름이 아니라 필드 조합 결과다
+
+모든 container에 CPU·memory request와 limit이 있고 각 자원의 request=limit이면 Guaranteed 조건을 만족할 수 있다. Request가 일부 있거나 request와 limit이 다르면 Burstable, 아무 request/limit도 없으면 BestEffort가 된다. Init container와 sidecar를 포함한 Pod 전체 field를 본다.
+
+Guaranteed도 절대 OOM 면제가 아니다. 자기 cgroup limit을 넘거나 node 전체 위기에서 영향을 받을 수 있다. QoS는 eviction과 자원 관리의 입력이지 application SLO 보장이다.
+
+## Taint, toleration, affinity
+
+Taint는 node가 일반 Pod를 밀어내거나 scheduling을 막는 표시이고 toleration은 Pod가 그 taint를 견딜 수 있다는 선언이다. Toleration만으로 그 node를 선택하지 않는다. GPU Pod를 GPU node에 강제하려면 label/required affinity와 request를 함께 쓴다.
+
+Required node affinity와 nodeSelector는 hard filter다. Preferred affinity와 topology spread의 일부 선호는 score에 영향을 준다. Required 조건을 너무 많이 교차하면 후보 0개가 된다. Event의 각 filter reason을 세어 가장 제한적인 조건을 찾는다.
+
+## HPA 관찰값과 replica 계산
+
+HPA가 average CPU utilization target 60%, 현재 replicas 4, 관찰 평균 90%라면 단순 핵심 비율은 `ceil(4 × 90 / 60) = 6`이다. 실제 controller는 tolerance, stabilization, scale policy, missing metric과 준비되지 않은 Pod 처리를 적용하므로 이 식 하나로 최종 수를 보장하지 않는다.
+
+CPU utilization은 보통 사용량을 request로 나눈 비율이다. CPU request가 없으면 해당 metric으로 계산하기 어렵다. Missing metric Pod를 0% 또는 100%처럼 보수적으로 가정해 scale 방향을 완화할 수 있으므로 관찰된 두 Pod만 평균내는 손계산과 다를 수 있다.
+
+| Pod | CPU request | 관찰 사용 | utilization |
+|---|---:|---:|---:|
+| p1 | 500m | 500m | 100% |
+| p2 | 500m | 400m | 80% |
+| p3 | 500m | metric missing | 미확정 |
+| p4 | 500m | 초기화 중 | 준비 조건 적용 |
+
+`(100+80)/2=90%`만으로 6개를 확정하지 않는다. Missing metrics와 readiness, behavior field를 확인한다.
+
+## 문제와 유도 해설 보강
+
+1. Allocatable 4 CPU node에 request 합 3 CPU인데 새 Pod request 1500m가 왜 Pending인가? **합이 4.5 CPU라 allocatable을 넘는다.** 실제 idle은 filter를 바꾸지 않는다.
+2. CPU limit 초과와 memory limit 초과의 대표 결과 차이는? **CPU는 throttling, memory는 OOM kill 가능성**이다.
+3. Toleration이 있으면 GPU node에 반드시 가는가? **아니다.** Taint를 견딜 뿐이며 label affinity와 device request가 필요하다.
+4. HPA 4개, 현재 90%, target 60% 손계산은? **ceil(4×90/60)=6**이지만 missing metric과 policy로 달라질 수 있다.
+5. Guaranteed면 OOMKilled가 불가능한가? **아니다.** Cgroup limit 초과와 node 위기 가능성이 남는다.
 
 Scheduler는 실제 순간 사용량이 아니라 주로 resource **request**를 보고 Pod를 배치한다. Runtime은 **limit**과 node pressure를 통해 사용을 제한한다. 두 숫자를 같다고 생각하면 Pending, throttling, OOM을 해석하기 어렵다.
 

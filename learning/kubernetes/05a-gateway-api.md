@@ -346,60 +346,47 @@ spec:
 
 다른 namespace의 Gateway에 attach하는 관계에는 ReferenceGrant를 대신 쓰지 않는다. allowedRoutes가 제어하는 관계다. 반대로 allowedRoutes를 넓혔다고 모든 namespace의 Service·Secret을 자유롭게 참조할 수 있는 것도 아니다. [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [Gateway API 보안 모델](https://gateway-api.sigs.k8s.io/docs/concepts/security/)
 
-## 8. HTTPS는 어느 구간을 암호화하나
+## 요청 한 건의 실제 경로
 
-**TLS termination, TLS 종료 처리**는 proxy가 client와 TLS 연결을 맺고 복호화해 HTTP를 읽는 것이다. 이 경우 client가 보낸 hostname·path·header를 HTTPRoute로 판단할 수 있다. 인증서와 private key를 담은 Secret은 해당 listener 설정에서 참조한다.
-
-아래는 기존 Gateway에 HTTPS listener를 **추가하는 부분 예시**다. `api-example-tls` Secret이 실제로 준비돼 있어야 한다. 인증서와 key를 이 문서에 넣거나 이번 작업에서 발급하지 않는다. HTTPRoute도 `sectionName: https`로 이 listener에 attach하도록 별도로 구성해야 한다.
-
-```yaml
-listeners:
-  - name: https
-    protocol: HTTPS
-    port: 443
-    hostname: api.example.test
-    tls:
-      mode: Terminate
-      certificateRefs:
-        - group: ""
-          kind: Secret
-          name: api-example-tls
-    allowedRoutes:
-      namespaces:
-        from: Selector
-        selector:
-          matchLabels:
-            gateway-demo-access: allowed
-```
-
-두 연결을 별도로 그린다. **Downstream**은 client→Gateway, **upstream**은 Gateway→backend 구간이다. 여기서 위·아래는 물리 위치가 아니라 proxy를 기준으로 한 방향이다.
+1. 외부 DNS가 `api.example.test`를 Gateway proxy address로 해석한다.
+2. Client가 TCP 443과 TLS ClientHello의 SNI를 보낸다.
+3. Proxy가 이름 `https` listener의 certificate로 TLS를 종료한다.
+4. Proxy가 HTTP host와 `/v1/books` path를 HTTPRoute rule과 비교한다.
+5. `backendRefs`의 Service `books`, port 80을 해결하고 ready endpoint `10.20.2.9:8080`을 선택한다.
+6. App가 응답하고 proxy가 client TLS 연결로 돌려준다.
 
 ```mermaid
-flowchart LR
-    C["Client"] -->|"TLS 연결 A: HTTPS"| G["Gateway proxy: 복호화·HTTP 판단"]
-    G -->|"HTTP 또는 별도 TLS 연결 B"| B["Backend"]
-    P["BackendTLSPolicy"] -. "연결 B의 TLS 검증 설정" .-> G
+sequenceDiagram
+ participant A as Kubernetes API
+ participant C as Gateway controller
+ participant P as Gateway proxy
+ participant U as 외부 client
+ participant B as backend Pod
+ A-->>C: GatewayClass·Gateway·HTTPRoute·Service watch
+ C-->>P: listener·route·backend 설정
+ U->>P: TLS SNI + GET /v1/books
+ P->>B: HTTP request 10.20.2.9:8080
+ B-->>P: HTTP 200
+ P-->>U: TLS HTTP 200
 ```
 
-외부가 HTTPS라고 내부 연결까지 자동으로 TLS가 되는 것은 아니다. backend TLS를 쓰려면 backend도 TLS로 응답하고, `BackendTLSPolicy` 등 지원 정책으로 신뢰할 CA와 검증 hostname/SNI를 설정한다. SNI는 TLS 연결에서 접속할 서버 이름을 전달하는 정보다. [공식 TLS 가이드](https://gateway-api.sigs.k8s.io/guides/user-guides/tls/)
+API→controller→proxy는 제어 경로이고 client→proxy→backend는 실제 data path다. HTTPRoute 객체와 API server가 요청 byte를 직접 처리하지 않는다.
 
-**TLS passthrough**는 proxy가 TLS를 끝내지 않고 암호화된 연결을 backend로 넘기는 방식이다. `protocol: TLS`, `mode: Passthrough`와 TLSRoute의 hostname/SNI 선택을 사용한다. 이 경우 proxy는 암호화된 HTTP의 `/v1/books`나 header를 읽어 HTTPRoute로 선택할 수 없다.
+## TLS termination과 passthrough
 
-| 방식 | Gateway가 HTTP path를 읽나? | 인증서의 일반적인 위치 |
-| --- | --- | --- |
-| HTTPS termination | 읽을 수 있음 | Gateway listener가 참조하는 Secret |
-| TLS passthrough | 암호화된 HTTP 내용을 읽지 못함 | Backend가 제시 |
-| Termination 후 backend TLS | HTTP 판단 후 새 TLS 연결 가능 | Gateway와 backend의 인증 조건 각각 |
+Termination은 proxy가 client TLS를 끝내 인증서를 제시한 뒤 HTTP path를 읽는 방식이다. Certificate Secret reference 권한과 hostname을 확인한다. Backend 구간 TLS는 별도 정책과 구현 지원이 필요하다.
 
-TLS에서 hostname을 시험할 때는 HTTP Host뿐 아니라 SNI·인증서 이름도 맞아야 한다. DNS를 대신할 준비된 환경의 예시는 다음과 같다.
+Passthrough는 HTTP를 해독하지 않고 TLS stream을 backend에 전달한다. HTTP path match를 할 수 없고 SNI 같은 TLS 정보로 route한다. TLSRoute의 설치 channel과 구현 지원은 HTTPRoute와 다를 수 있다.
 
-```text
-curl --resolve api.example.test:443:<GATEWAY_IP> https://api.example.test/v1/books
-```
+## 구현 호환성
 
-이 명령은 이름을 지정한 IP로 연결하면서 URL의 hostname을 사용한다. 실제로 신뢰할 수 있는 인증서가 준비돼 있어야 한다. 단지 IP URL에 Host header를 넣는 HTTP 예제와 TLS의 이름 확인 조건을 같게 보지 않는다.
+Standard channel CRD 존재, API field의 Core/Extended 분류, 설치 controller의 실제 지원은 세 단계다. Standard channel에는 GatewayClass, Gateway, HTTPRoute, ReferenceGrant가 포함된다. Experimental 자원·field는 breaking change 가능성이 있다. Controller conformance report와 supported features를 확인한다.
 
-## 9. Redirect와 rewrite는 누가 다시 요청하는가가 다르다
+## 요청 규칙을 확장하고 실패 지점을 진단하기
+
+앞의 요청 흐름을 이해한 다음에는 client의 재요청과 proxy의 내부 변경, backend 분배, 상태 조건을 구분해야 한다. 다음 예시는 같은 Gateway·Route 구조에서 이 차이를 끝까지 따라간다.
+
+### Redirect와 rewrite는 누가 다시 요청하는가가 다르다
 
 **Redirect, 이동 응답**은 client에게 새 주소로 요청하라고 알려 준다. proxy가 3xx 상태와 `Location`을 돌려주면 browser/client가 그 주소로 새 요청을 보낸다.
 
@@ -450,7 +437,7 @@ rules:
 
 이것들은 전체 객체가 아니라 앞의 HTTPRoute `rules`를 바꾸어 읽는 부분 예시다. Redirect와 URLRewrite를 같은 rule에 함께 사용하지 않는다. path rewrite나 307/308 redirect 등은 Extended support 조건을 확인한다. API schema에 필드가 있다는 사실만으로 설치 controller가 모든 기능을 구현했다고 가정하지 않는다. [Redirect·rewrite 공식 가이드](https://gateway-api.sigs.k8s.io/guides/user-guides/http-redirect-rewrite/)
 
-## 10. Backend weight는 replica 수와 같은가
+### Backend weight는 replica 수와 같은가
 
 새 버전 앱 Service `echo-canary`가 실제 준비됐다고 가정한다. 같은 요청 규칙에서 다음 backendRef를 사용할 수 있다.
 
@@ -468,7 +455,7 @@ backendRefs:
 
 새 Service가 없거나 참조가 유효하지 않으면 단순히 “10% 신버전 테스트 중”이라고 보고하지 않는다. Route의 `ResolvedRefs`와 실제 backend readiness를 먼저 확인한다. weight와 앱 정상 동작은 별도다. [HTTPRoute의 backendRef 설명](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/)
 
-## 11. 객체가 만들어졌는데 연결이 안 되면 어디를 보나
+### 객체가 만들어졌는데 연결이 안 되면 어디를 보나
 
 `kubectl apply` 성공은 API가 객체를 받아 저장했다는 확인이다. Class가 해당 controller에 수용됐는지, Route가 listener에 attach했는지, 설정이 실제 처리 계층에 전달됐는지는 status에서 따로 읽는다.
 
@@ -540,7 +527,7 @@ flowchart TB
 
 status부터 확인해 가설을 좁힌 뒤 실제 요청과 로그로 결과를 확인한다. 404·502·503 같은 숫자만으로 한 가지 원인을 확정하지 않는다. [공식 status·진단 설명](https://gateway-api.sigs.k8s.io/docs/concepts/troubleshooting/)
 
-## 12. HTTPRoute 밖의 Route와 지원 조건
+### HTTPRoute 밖의 Route와 지원 조건
 
 모든 트래픽이 HTTP는 아니다. Route 종류는 proxy가 어느 계층의 정보를 보고 선택할지와 연결된다.
 
@@ -559,15 +546,38 @@ status부터 확인해 가설을 좁힌 뒤 실제 요청과 로그로 결과를
 
 예를 들어 Standard 리소스 안에도 Extended 기능이 있다. 설치 controller의 conformance·지원 기능과 GatewayClass의 `supportedFeatures` 등을 함께 확인한다. Experimental bundle에는 호환성 약속이 다른 실험 필드/종류가 더해질 수 있다. 정확한 정의는 [Gateway API versioning](https://gateway-api.sigs.k8s.io/docs/concepts/versioning/)을 따른다.
 
-## 13. 직접 설명해 보는 문제
+## 확인 문제와 완전 해설
 
-1. **Gateway API CRD만 설치했는데 요청이 처리되지 않는다. 왜인가?** CRD는 객체의 schema다. 이를 읽는 controller와 실제 데이터 처리 계층·주소·backend가 준비돼야 한다.
-2. **HTTP 요청은 HTTPRoute 객체를 통과하는가?** 아니다. controller가 그 선언을 바탕으로 만든 실제 proxy 설정을 따라 흐른다.
-3. **backendRefs.port가 80이고 Pod는 5678에서 listen하면 오류인가?** Service port 80과 targetPort가 5678로 연결돼 있으면 맞는 구성이다.
-4. **Route를 다른 namespace Gateway에 붙일 때 어떤 허가를 보나?** listener의 allowedRoutes다. 다른 namespace Service/Secret을 참조할 때는 대상 소유자의 ReferenceGrant를 따로 본다.
-5. **PathPrefix /v1은 /v10도 고르는가?** path element 경계가 달라 고르지 않는다.
-6. **HTTPS termination이면 backend 연결도 반드시 암호화되는가?** 아니다. upstream TLS와 backend 인증 조건은 별도다.
-7. **/v1을 backend에서 제거하고 싶으면 redirect를 쓰나?** client 주소를 바꾸려는지 전달 path만 바꾸려는지 먼저 구분한다. 전달만 바꾸려면 지원 rewrite 설정을 사용한다.
-8. **Programmed=True인데 backend가 500을 돌려주면 모순인가?** 설정 전달과 앱 업무 응답은 별도 상태라 모순이 아니다.
+### 문제 1
+GatewayClass와 Gateway의 차이는?
 
-[05장으로 돌아가기](05-networking-services.md) · [다음: 저장소](06-storage.md) · [교재 목차](README.md)
+**해설:** GatewayClass는 cluster 범위에서 controller 구현을 연결한다. Gateway는 namespace에서 listener address·port·protocol·hostname을 요청한다.
+
+### 문제 2
+`parentRefs.sectionName: https`는 무엇을 뜻하는가?
+
+**해설:** Route가 같은 Gateway의 모든 listener가 아니라 이름이 https인 listener에 attach하려는 뜻이다. Hostname 교집합과 allowedRoutes도 함께 검사한다.
+
+### 문제 3
+다른 namespace Service를 backendRef로 쓸 때 필요한 객체는?
+
+**해설:** 참조받는 namespace 소유자가 ReferenceGrant로 허용해야 한다. 없으면 보통 `ResolvedRefs=False` reason으로 나타난다.
+
+### 문제 4
+Weight 90:10은 매 열 요청의 정확한 9:1 순서인가?
+
+**해설:** 상대 비율 의도다. Connection reuse, hash, 작은 표본과 endpoint readiness 때문에 실제 짧은 관측은 다를 수 있다.
+
+### 문제 5
+Accepted=True인데 503이면?
+
+**해설:** Attachment는 수락됐지만 ResolvedRefs, Gateway Programmed, Service port, EndpointSlice readiness, proxy log는 별도다. observedGeneration도 본다.
+
+## 공식 자료
+
+- [Gateway API Getting Started](https://gateway-api.sigs.k8s.io/guides/)
+- [Gateway API Overview](https://gateway-api.sigs.k8s.io/concepts/api-overview/)
+- [Gateway API Implementations](https://gateway-api.sigs.k8s.io/implementations/)
+- [Gateway API TLS](https://gateway-api.sigs.k8s.io/guides/tls/)
+
+[Service와 네트워크](05-networking-services.md) · [교재 목차](README.md)

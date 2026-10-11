@@ -1,5 +1,13 @@
 # 02. 읽기·쓰기·동시성
 
+## 두 writer의 pointer 경쟁
+
+시작 pointer가 metadata v5라고 하자. W1은 data-A와 v6 후보를, W2는 data-B와 별도 v6 후보를 만든다. W1이 현재 pointer가 v5라는 조건으로 v6A를 게시한다. W2의 같은 조건은 실패한다. W2는 최신 v6A를 읽고 충돌 검사 뒤 A와 B를 포함한 v7B를 게시할 수 있다. 같은 partition overwrite처럼 논리 충돌이면 안전한 rebase가 불가능하다.
+
+100개 manifest 중 90개를, 남은 1,000개 data file 중 통계로 950개를 제외하면 50개가 task 후보다. pruning은 결과 계산이 아니다. NULL count, 잘린 bound, transform을 잘못 해석해 false negative를 만들면 정답 파일을 잃는다.
+
+commit timeout은 실패 확정이 아니므로 pointer와 operation ID를 확인한다. COW는 writer가 영향 data file을 다시 쓰고, MOR은 delete file 또는 DV를 게시해 reader가 병합한다. 엔진 command·설정·지원 기능이 전략을 선택한다.
+
 [이 책의 목차](README.md) · [이전 장](01-metadata-and-files.md)
 
 이 장에서는 `SELECT`와 `INSERT`를 내부 작업으로 펼친다. 엔진은 계산을 수행하고 Iceberg의 파일·메타데이터 규칙과 카탈로그의 커밋 경로를 사용한다.

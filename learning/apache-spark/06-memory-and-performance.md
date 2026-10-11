@@ -1,5 +1,25 @@
 # 06. 메모리와 성능
 
+## 한 stage의 memory·spill·GC를 계산한다
+
+executor 하나에 4 core와 JVM heap 4GiB가 있고 네 task가 동시에 실행된다고 하자. 각 task의 sort 상태 600MiB면 합 2.4GiB다. broadcast relation 500MiB, cache 900MiB가 함께 살아 있으면 단순 합은 3.8GiB이고 객체 overhead와 JVM 자체 공간 전부터 여유가 작다. execution memory가 부족하면 sort run을 spill하거나 GC가 잦아지고, 확보 실패 시 executor OOM이 난다.
+
+같은 executor의 각 task가 Python worker에서 700MiB를 쓰면 Python 쪽만 2.8GiB다. JVM heap 그래프가 2GiB로 여유 있어도 container limit 7GiB에서 JVM, Python, native·Arrow buffer 합이 한도를 넘을 수 있다. 종료 주체가 JVM OOM인지 Python worker crash인지 cgroup kill인지 로그를 구분한다.
+
+주문 shuffle에서 Q0이 80바이트, Q1이 48바이트인 교육 예는 spill하지 않는다. 실제 hot key Q0이 20GiB, 다른 399 partition 평균 205MiB이면 Q0 하나만 spill·GC·OOM을 만들 수 있다. cluster 전체 RAM 평균보다 최대 task working set이 중요하다.
+
+cache는 첫 action이 partition을 계산하며 채우고, memory pressure로 일부 block이 evict되면 두 번째 action이 빠진 partition을 lineage로 재계산한다. 한 번만 쓰는 100GiB 중간 결과를 cache하면 execution memory를 밀어내 성능을 악화할 수 있다. unpersist는 더는 필요 없는 cache의 수명 종료를 명시한다.
+
+driver collect는 별도다. 1억 행×100바이트=10GB payload를 4GB driver에 모으면 executor heap을 늘려도 해결되지 않는다. 작은 aggregate를 collect하고 큰 결과는 분산 sink에 write한다.
+
+### 완전 풀이 문제 5개
+
+1. 네 task×600MiB는? **해설:** 2,400MiB다.
+2. broadcast500+cache900까지 합은? **해설:** 3,800MiB이며 overhead 전 값이다.
+3. JVM 여유인데 container kill이 가능한가? **해설:** Python·native·off-heap 합이 limit을 넘을 수 있다.
+4. cache하면 항상 빠른가? **해설:** 재사용이 적고 크면 채우기·eviction·memory 압박 때문에 느릴 수 있다.
+5. 평균 205MiB인데 왜 OOM인가? **해설:** hot partition 한 개의 20GiB working set이 task 한도에 몰린다.
+
 [이 책의 목차](README.md) · [이전 장](05-joins-and-aqe.md)
 
 Spark 성능을 설명하려면 “RAM을 더 준다”보다 어느 프로세스의 어떤 작업이 자원을 사용하는지 먼저 구분한다. 이 장의 수치는 계산용 가정이며 실제 연구실 측정이 아니다.

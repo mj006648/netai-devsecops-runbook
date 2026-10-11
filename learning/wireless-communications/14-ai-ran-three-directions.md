@@ -1,5 +1,56 @@
 # 14. AI-RAN의 세 방향: AI-for, AI-and, AI-on
 
+## 같은 AI라는 말이 세 가지 다른 문제를 가린다
+
+첫째, RAN이 더 나은 무선 결정을 하도록 AI를 쓰는 문제가 있다. 측정값을 보고 beam·MCS·parameter 후보를 만드는 방향을 **AI-for-RAN**이라 부른다.
+
+둘째, RAN processing과 AI workload가 같은 GPU·CPU·NIC를 나눠 쓰는 문제가 있다. radio deadline을 지키면서 남는 계산 자원을 AI에 주는 방향을 **AI-and-RAN**이라 부른다.
+
+셋째, RAN 가까운 edge 위치에서 사용자·산업용 AI inference를 제공하는 문제가 있다. 카메라 분석이나 언어 모델처럼 무선 제어가 아닌 AI 서비스를 RAN edge에 배치하는 방향을 **AI-on-RAN**이라 부른다.
+
+| 방향 | 입력 | 실행 위치 | 결과 | 실패 영향 |
+|---|---|---|---|---|
+| AI-for | CSI·traffic·KPI | RIC·RAN 앱 | control 후보 | radio 성능 |
+| AI-and | RAN job+AI job | 공유 compute | 두 workload schedule | deadline miss |
+| AI-on | 사용자 model request | edge GPU | inference response | 앱 지연·정확도 |
+
+## 경기장 한 UE를 세 방향으로 추적한다
+
+UE A가 경기장 cell에서 영상 uplink를 보낸다. AI-for 앱은 cell congestion과 UE radio 품질로 scheduling parameter 후보를 만든다. AI-and resource manager는 DU PHY kernel deadline을 먼저 예약하고 남은 GPU slice에 영상 inference를 배치한다. AI-on service는 실제 영상 객체를 입력받아 결과를 앱에 돌려준다.
+
+| 시각 | 방향 | 주체 | 상태 |
+|---:|---|---|---|
+| 0 ms | AI-for | DU·xApp | CQI·buffer 측정 |
+| 5 ms | AI-and | admission manager | RAN deadline budget |
+| 8 ms | AI-for | RAN node | 안전한 control 적용 |
+| 12 ms | AI-on | edge service | video tensor queue |
+| 30 ms | AI-on | GPU | inference result |
+
+영상 inference 정확도가 높아도 DU deadline을 침범하면 AI-and 설계는 실패다. RAN throughput이 높아도 객체 탐지 model이 drift하면 AI-on 품질은 실패다.
+
+## 표준과 prototype을 분리한다
+
+표준 interface는 메시지 의미·역할·상호 운용 계약을 정의한다. 연구 prototype은 특정 hardware, dataset, simulation, metric에서 방법을 비교한다. O-RAN R005가 AI lifecycle 기능을 다룬다는 사실을 특정 model의 throughput 향상 논문으로 읽지 않는다.
+
+multi-task learning 연구의 네 simulation task와 partial federation 결과는 [연구 조건](https://arxiv.org/abs/2404.15197) 안에서 읽는다. 한 task가 다른 task 학습을 방해하는 negative transfer가 생길 수 있어 공동 model이 항상 낫지 않다.
+
+## 추가 문제와 완전 해설
+
+### 1. xApp의 MCS 추천은 어느 방향인가?
+무선 제어를 개선하므로 AI-for-RAN이다.
+
+### 2. DU와 LLM이 GPU 시간을 나누는 문제는?
+공유 compute deadline 문제이므로 AI-and-RAN이다.
+
+### 3. 기지국 edge의 영상 탐지는?
+사용자 AI service이면 AI-on-RAN이다.
+
+### 4. 같은 GPU를 쓰면 세 방향이 같은 시스템인가?
+아니다. 입력·책임·deadline·실패 영향이 다르다.
+
+### 5. 표준 release와 model 성능 결과의 차이는?
+표준은 interface/lifecycle 계약이고 성능은 특정 평가 조건의 실험 결과다.
+
 [이 책 목차](README.md)
 
 [← 이전: O-RAN RIC와 제어 고리](13-oran-ric-and-control-loops.md) · [다음: AI-for-RAN 데이터와 제어](15-ai-for-ran-data-training-control.md)

@@ -4,6 +4,60 @@
 
 이 장은 앞의 계산을 다시 풀고 용어를 한곳에서 찾게 한다.
 
+## 열두 문제를 하나의 학습 흐름으로 연결하기
+
+문제 1과 2의 벡터·행렬은 데이터와 parameter를 담는 그릇이다. 문제 3의 MSE는 예측과 정답을 비교하고, 문제 4의 SGD가 그 손실의 기울기로 parameter를 바꾼다. 문제 5와 6은 분류 점수를 확률과 판단 지표로 바꾸는 단계다. 문제 7은 이 계산을 어떤 데이터에서 선택·평가해야 하는지 묻는다.
+
+문제 8의 L2는 학습 목표에 parameter 크기 비용을 더한다. 문제 9는 계산 graph의 여러 경로가 같은 parameter gradient로 합쳐지는 이유를 확인한다. 문제 10은 Q·K·V가 score와 가중합으로 이어지는 attention의 작은 사례다. 문제 11은 수학적 gradient가 좁은 숫자 형식에서 사라지지 않게 다루는 조건을 묻고, 문제 12는 좋은 모델 수치가 실제 RAN 운영 성공과 같지 않음을 확인한다.
+
+```mermaid
+flowchart LR
+ A["1~2 표현"] --> B["3~4 손실·갱신"]
+ B --> C["5~6 분류 평가"]
+ C --> D["7 독립 분할"]
+ D --> E["8~10 구조·미분"]
+ E --> F["11 수치 실행"]
+ F --> G["12 운영 판단"]
+```
+
+## 종합 추적: 한 주문 예측을 연구 주장까지 가져가기
+
+입력 `x=[2 km,3개]`, weight `[4,1]`, bias 2라면 예측은 13분이다. 정답 14분과 잔차는 -1분, 제곱손실은 1분²다. 여러 주문 평균 gradient로 weight를 갱신하고 validation에서 학습률을 선택한다. 선택이 끝난 모델의 test MAE가 2.4분이라면 그 값은 같은 분할 모집단에 대한 추정이다.
+
+운영에서는 feature 생성 5 ms, queue 4 ms, inference 3 ms, 적용 4 ms로 총 16 ms가 든다고 하자. Deadline이 15 ms면 예측 오차가 작아도 동작은 늦다. 이때 test MAE 2.4분과 폐루프 지연 16 ms는 다른 단위와 다른 질문의 답이다. 모델 품질, 시스템 성능, 서비스 효과를 한 숫자로 합치지 않는다.
+
+## 용어를 문장 속 관계로 기억하기
+
+Sample은 관측 한 건이고 feature는 그 sample에서 예측 시 사용할 값이며 label은 나중에 맞힐 목표다. Model은 feature를 prediction으로 바꾸고 parameter는 training 중 optimizer가 바꾼다. Loss는 prediction과 label의 차이를 학습 가능한 scalar로 요약하고 gradient는 각 parameter를 조금 바꿀 때 loss가 변하는 방향을 모은다.
+
+Logit은 아직 확률이 아닌 점수다. Sigmoid는 독립적인 이진 확률에, softmax는 서로 배타적인 여러 class의 합 1 분포에 주로 쓴다. Cross-entropy는 정답에 준 확률이 작을수록 크게 벌한다. Threshold는 확률을 업무 결정으로 바꾸며, threshold가 바뀌면 precision과 recall도 함께 바뀐다.
+
+Train 집합은 parameter를 갱신하고 validation 집합은 model·hyperparameter를 고른다. Test 집합은 선택이 끝난 한 후보를 독립 평가한다. Test를 반복해서 보고 선택하면 leakage가 생긴다. Generalization은 아직 보지 않은 같은 목표 모집단에서 유용한 성질이고, drift는 운영 중 그 모집단이나 관계가 달라지는 현상이다.
+
+Attention에서 query는 찾는 기준, key는 비교 표지, value는 실제로 섞을 내용이다. Transformer는 attention 하나가 아니라 projection, multi-head attention, residual, normalization, MLP를 층으로 쌓은 구조다. FP16·BF16·FP32는 값을 저장하는 범위와 정밀도가 다르며 loss scaling은 주로 작은 FP16 gradient를 다루는 실행 기법이다.
+
+## 추가 완전 해설 문제
+
+**문제 13.** Binary, multiclass, multilabel의 출력 처리를 구분하라.
+
+**해설.** 하나의 예/아니오는 logit 하나에 sigmoid를 쓸 수 있다. 셋 중 정확히 하나면 세 logit에 softmax를 써 합 1로 만든다. 여러 label이 동시에 참이면 각 logit에 sigmoid를 적용한다. Multilabel에 softmax를 쓰면 참 label들이 확률 질량을 서로 빼앗는다.
+
+**문제 14.** Train loss는 0.1, validation loss는 0.8로 벌어졌다. 무엇을 의심하는가?
+
+**해설.** 학습 자료에는 맞지만 새 자료에는 약한 과적합을 먼저 의심한다. 분할 누수·분포 차이·평가 mode도 확인한다. 단순히 epoch를 더 늘리면 간격이 더 커질 수 있다.
+
+**문제 15.** Gradient 두 번을 누적했는데 optimizer step 전에 zeroing하지 않았다면?
+
+**해설.** 기존 grad buffer에 새 gradient가 더해진다. 의도한 gradient accumulation이면 batch 합에 맞게 scale해야 하고, 의도가 아니면 이전 step 값이 섞인 오류다. Backward와 parameter update는 별도 단계다.
+
+**문제 16.** 평균 latency 8 ms, p99 30 ms, deadline 20 ms다. 평균만으로 통과인가?
+
+**해설.** 아니다. 적어도 1% 부근 요청이 20 ms 경계를 넘을 가능성이 있다. Deadline 대상 분포와 timeout을 포함한 tail을 평가해야 한다.
+
+**문제 17.** 후보가 baseline보다 accuracy 1%p 높지만 전력을 30% 더 쓴다. 결론은?
+
+**해설.** 사전 목표와 비용에 따라 판단한다. 정확도 개선만 사실로 보고하고 전체 우월성은 주장하지 않는다. 같은 hardware·요청·측정 창인지도 확인한다.
+
 ```mermaid
 flowchart LR
  D[데이터] --> M[모델]

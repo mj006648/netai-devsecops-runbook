@@ -1,5 +1,58 @@
 # 16. AI-and-RAN: 공유 GPU에서 deadline을 지키는 법
 
+## 같은 GPU를 쓴다는 말 안의 실제 자원
+
+GPU는 계산 core만 있는 장치가 아니다. device memory, memory bandwidth, copy engine, execution queue가 있다. CPU thread가 kernel을 제출하고 NIC·DMA가 input을 옮기며 GPU scheduler가 실행 순서를 정한다. RAN PHY job과 AI inference가 어느 자원을 동시에 요구하는지 알아야 한다.
+
+**deadline**은 결과가 유용하려면 끝나야 하는 시각이다. RAN slot 처리 결과는 radio 전송 시점을 지나면 늦은 정답이 된다. AI batch job은 수십 ms 늦어도 허용될 수 있지만 service 계약에 따라 다르다.
+
+## 1 ms 창의 admission 계산
+
+한 1 ms 창에서 RAN job이 GPU 0.45 ms, 입력 copy 0.10 ms, 출력·후처리 0.10 ms를 요구하면 총 0.65 ms다. 안전 여유 0.15 ms를 두면 AI에 줄 수 있는 연속 budget은 0.20 ms뿐이다.
+
+| 구간 | 작업 | 누적 |
+|---|---|---:|
+| 0~0.10 ms | RAN input copy | 0.10 |
+| 0.10~0.55 ms | PHY kernel | 0.55 |
+| 0.55~0.65 ms | output | 0.65 |
+| 0.65~0.80 ms | 안전 여유 | 0.80 |
+| 0.80~1.00 ms | 허용 가능 AI slice | 1.00 |
+
+AI inference가 0.30 ms이면 이 창에 admission하면 0.10 ms 초과한다. 다음 창으로 미루거나 더 작은 model/fallback을 써야 한다.
+
+## queue와 memory 간섭
+
+AI kernel이 GPU core를 선점하지 않아도 큰 memory copy가 bandwidth를 점유해 RAN kernel 시간을 늘릴 수 있다. device memory가 부족해 eviction·재적재가 생겨도 deadline tail이 커진다. 평균 실행시간만 더해서 capacity를 정하면 안 된다.
+
+| 상태 | RAN p50 | RAN p99 | 판단 |
+|---|---:|---:|---|
+| RAN 단독 | 0.45 ms | 0.55 ms | 여유 있음 |
+| AI 동시 | 0.50 ms | 1.20 ms | deadline 위반 |
+| AI admission 제한 | 0.47 ms | 0.70 ms | 모형상 회복 |
+
+## 안전 fallback
+
+admission controller는 현재 RAN queue, 남은 deadline, memory, accelerator health를 보고 AI job을 수락한다. telemetry가 오래됐거나 예측이 불확실하면 RAN 우선, AI 지연·CPU fallback·작은 model 중 검증된 경로를 선택한다.
+
+Kubernetes resource 요청은 배치와 격리를 돕지만 μs~ms 실행 deadline을 자동 보장하지 않는다. device plugin·DRA로 장치를 할당해도 GPU 내부 queue, priority, memory bandwidth와 실제 worst-case latency를 측정해야 한다.
+
+## 추가 문제와 완전 해설
+
+### 1. 1 ms 창에 RAN 0.7 ms, 여유 0.2 ms면 AI budget은?
+0.1 ms다.
+
+### 2. 평균 0.5 ms, p99 1.2 ms면 1 ms deadline을 만족하는가?
+최소 1% 부근에서 위반하므로 안정적 만족이라 할 수 없다.
+
+### 3. GPU memory만 충분하면 간섭이 없는가?
+아니다. core, bandwidth, copy engine, queue를 공유한다.
+
+### 4. Kubernetes limit가 radio deadline 보장인가?
+아니다. 실제 accelerator scheduling과 tail 측정이 필요하다.
+
+### 5. inference가 늦을 때 안전 행동은?
+job 거부·지연, 작은 model, CPU/rule fallback 등 검증된 경로를 사용한다.
+
 [이 책 목차](README.md)
 
 [← 이전: AI-for-RAN](15-ai-for-ran-data-training-control.md) · [다음: AI-on-RAN](17-ai-on-ran-edge-inference.md)

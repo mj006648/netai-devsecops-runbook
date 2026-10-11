@@ -1,6 +1,75 @@
 # 14. 연구용 Spark on Kubernetes 플랫폼
 
 [이 책 목차](README.md) · [이전: 로컬 실습](13-local-labs.md) · [다음: 버전과 확장](15-versions-and-extensions.md)
+## 한 실험을 제출에서 결과 해석까지 따라간다
+
+이 장의 수치는 비교 방법을 설명하는 교육용 모형이며 실제 cluster benchmark 결과가 아니다. Spark job이 1TiB Parquet를 읽어 groupBy한 뒤 object storage에 결과를 쓴다고 하자. Driver 1개, executor 8개, executor마다 CPU 4·memory 16Gi·GPU 1개를 요청한다.
+
+**Driver**는 Spark application의 계획과 executor 상태를 관리하는 process다. Cluster deploy mode에서는 Pod 안에서 실행된다. **Executor**는 stage의 task를 실행하고 shuffle block과 결과를 만든다. Kubernetes scheduler는 executor Pod의 request·affinity를 보고 node를 고르지만 Spark stage DAG, partition skew, GPU kernel duration을 직접 최적화하지 않는다.
+
+```mermaid
+flowchart LR
+    S["spark-submit<br/>image·conf·main class"] -->|"API create"| D["Driver Pod"]
+    D -->|"executor Pod create/watch"| A["Kubernetes API"]
+    A -->|"scheduler binding"| E["Executor Pods 8개"]
+    E -->|"Parquet read"| O["Object storage"]
+    E -->|"shuffle blocks"| N["Pod/node network"]
+    E -->|"task status"| D
+    D -->|"table commit 요청"| C["Catalog·Iceberg metadata"]
+    M["metrics·event·trace"] --> R["실험 결과 해석"]
+    E --> M
+    D --> M
+```
+
+Driver→API는 Kubernetes object 관리이고 executor→driver는 Spark RPC다. Executor→object storage와 shuffle은 data path다. Catalog commit은 Pod 성공과 다른 transaction 경계다.
+
+## 완전 수치 trace
+
+초기 데이터 1TiB, 8 executor, 각 128 partition을 처리한다고 단순화한다.
+
+| 시각 | Kubernetes 상태 | Spark 상태 | 자원·관측 | 해석 |
+|---:|---|---|---|---|
+| 0s | Driver Pending | 제출됨 | GPU node 후보 4 | 아직 job 시작 전 |
+| 8s | Driver Running | DAG 생성 | API 권한 정상 | executor 요청 시작 |
+| 12s | Executor 8개 중 4 Pending | stage 0 대기 | GPU allocatable 부족 | Pod request가 병목 |
+| 30s | 8개 Running | scan task 512개 | read 20GiB/s | warm-up |
+| 70s | 1 executor CPU 100%, GPU 20% | skew partition | p99 task 40s | GPU 부족이 아닌 data skew |
+| 95s | executor e5 OOMKilled | task retry | memory peak 17Gi | 같은 Pod container restart/실패 확인 |
+| 130s | stage retry 완료 | shuffle fetch 증가 | network 80Gb/s 포화 | communication 병목 후보 |
+| 180s | tasks complete | commit 시작 | output files 존재 | 아직 table commit 전 |
+| 185s | Driver crash | application 실패 | metadata commit 불명 | orphan file·commit 상태 확인 |
++
++Pod가 Running이었던 시간만 비교하면 Spark 작업 단계 차이를 놓친다. 제출→Pod scheduling, executor 준비, scan, shuffle, commit을 따로 측정한다. Driver crash 뒤 object file이 일부 존재해도 Iceberg table snapshot에 commit됐는지는 catalog metadata로 판단한다.
++
++## 반복 실험 설계
++
++독립 변수는 scheduler 정책 A/B, 종속 변수는 job completion time·p99 task time·GPU utilization·network bytes다. Dataset, image digest, Spark conf, executor 수, node pool, cache 조건을 통제한다. 같은 순서로 A만 여러 번 실행하면 시간대 변화가 섞일 수 있어 실행 순서를 randomize하거나 paired design을 검토한다.
++
++각 반복의 raw 값이 `A: 180,176,310,179,181s`, `B: 168,171,170,169,172s`라면 A 평균은 outlier에 크게 흔들린다. Median, p95, 실패율과 310초의 event·trace를 함께 남긴다. Outlier를 이유 없이 삭제하지 않는다.
++
++## GPU scheduling 연구를 읽는 경계
++
++IWQoS 2024 GPU sharing scheduling 연구는 특정 GPU sharing model, workload trace, 목적 함수와 baseline에서 정책을 평가한다. 논문의 평균 completion time 개선을 “Kubernetes에서 GPU request를 쓰면 자동 적용”으로 해석하지 않는다. 구현 scheduler/plugin, device sharing mechanism, preemption 비용, fairness metric이 실제 환경과 같은지 확인한다.
++
++반례는 workload가 GPU memory를 거의 가득 사용해 sharing할 수 없거나 kernel이 동시에 실행될 때 interference가 더 커지는 경우다. Throughput이 늘어도 개별 job tail latency와 fairness가 나빠질 수 있다. 평균 하나가 아니라 per-job slowdown과 deadline miss를 본다.
++
++## PeRF와 RDMA 조건
++
++PeRF 계열 연구의 성능 관측 방법과 RDMA를 사용하는 실험은 kernel/network bypass, NIC queue, memory registration, topology 같은 조건에 민감하다. 일반 TCP CNI 결과를 RDMA 결과로 바꾸어 말하지 않는다. RDMA device plugin과 network attachment가 있다고 collective 성능이 자동 보장되지 않는다.
++
++GPU와 NIC의 PCIe/NUMA 근접성, GPUDirect 지원, switch oversubscription, message size를 기록한다. Small message latency가 중요한 workload와 large all-reduce bandwidth workload의 최적 placement가 다를 수 있다. Kubernetes 기본 scheduler의 node 선택과 연구 scheduler의 topology-aware objective를 분리한다.
++
++## 실패 반례
++
++Executor Pod Pending을 Spark code 오류로 보면 안 된다. FailedScheduling event에서 GPU·CPU·taint를 본다. Executor Running인데 task p99가 길면 data skew, GC, network, storage, GPU utilization을 본다. Driver Pod Succeeded여도 external sink transaction이 정확한지는 application commit log를 확인한다.
++
++## 문제와 유도 해설 보강
++
++1. Executor 8개 중 4개가 Pending이면 stage 시간이 긴 원인을 어디서 시작하는가? **Scheduler event와 GPU allocatable/request를 먼저 본다.**
++2. GPU utilization 20%, CPU 100%면 GPU를 더 배정하면 해결되는가? **CPU decode·data skew 병목이면 해결되지 않는다.** Profile이 필요하다.
++3. Output file이 존재하면 Iceberg commit 성공인가? **아니다.** Catalog의 새 snapshot metadata commit을 확인한다.
++4. A 평균이 B보다 느린데 A의 한 outlier만 크다. 무엇을 보고할까? **모든 raw 반복, median/tail/failure와 outlier 원인을 함께 보고한다.**
++5. GPU sharing 논문 개선율을 기본 scheduler에 적용해도 되는가? **아니다.** Sharing 구현, workload, topology, metric 조건이 같은지 검증한다.
 
 Spark를 Kubernetes에서 실행하면 driver와 executor가 Pod가 된다. Kubernetes는 Pod 배치와 재시작 기반을 제공하지만 Spark job의 commit, streaming source·sink correctness, Iceberg catalog 계약을 대신하지 않는다.
 

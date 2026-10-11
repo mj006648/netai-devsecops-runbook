@@ -1,5 +1,29 @@
 # 03. 지연 실행과 DAG
 
+## 한 action의 레코드와 byte를 stage별로 추적한다
+
+P0에 KR10,US20,KR30, P1에 JP40,KR50,US60, P2에 KR70,JP80,US90이 있고 region별 합계를 구한다고 하자. logical plan은 scan→project(region,amount)→aggregate를 표현한다. physical plan은 partial hash aggregate, Exchange hashpartitioning(region,2), final aggregate를 선택했다고 가정한다.
+
+Stage 0의 task 0은 입력 3행을 읽어 KR40,US20 두 상태를 만든다. task 1은 JP40,KR50,US60 세 상태, task 2는 KR70,JP80,US90 세 상태다. 상태 하나가 key와 합계를 합쳐 16바이트라는 교육 모형이면 shuffle map output은 각각 32,48,48바이트, 총 128바이트다. 실제 serializer와 block header는 별도다.
+
+partitioner가 KR과 JP를 Q0, US를 Q1로 정했다고 가정하면 Q0 shuffle fetch는 KR40·JP40·KR50·KR70·JP80의 80바이트, Q1은 US20·US60·US90의 48바이트다. Stage 1 task Q0은 KR160,JP120을, Q1은 US170을 만든다. action collect는 세 결과만 driver로 가져온다.
+
+Exchange가 stage 경계가 되는 이유는 Q0 하나가 P0·P1·P2의 block을 모두 기다려야 하기 때문이다. filter와 projection은 각 P 안에서 이어질 수 있는 narrow dependency다. Python 코드 한 줄과 task 하나, SQL 한 문장과 stage 하나를 대응시키지 않는다.
+
+AQE는 materialized shuffle 통계를 보고 2개의 작은 reduce partition을 하나로 합칠 수 있다. 그러면 최종 결과는 같지만 Stage 1 task 수는 1이 된다. AQE의 query stage와 일반 stage 표시는 버전별 UI에서 확인한다.
+
+P1 map output을 가진 executor가 사라지면 Q0과 Q1의 fetch가 실패할 수 있다. scheduler는 lineage로 P1 task를 재실행해 두 bucket block을 다시 만든 뒤 reduce를 재시도한다. 원천 파일이 삭제되었다면 lineage만으로 같은 결과를 복구하지 못한다.
+
+### 완전 풀이 문제 5개
+
+1. shuffle map 상태 수는? **해설:** 2+3+3=8개다.
+2. 교육 모형 shuffle byte는? **해설:** 8×16=128바이트다.
+3. Q0 fetch byte는? **해설:** 상태 5개×16=80바이트다.
+4. action 두 번이면 항상 재사용되는가? **해설:** cache가 없으면 lineage를 다시 실행할 수 있다.
+5. AQE가 reduce task를 합치면 결과가 바뀌는가? **해설:** 의미 보존 조건에서 task 배치만 바뀌고 합은 같다.
+
+QOaaS는 optimizer service 연구 proposal·prototype이고 Spark의 Catalyst와 AQE는 안정 제품 API·실행 기능이다. prototype 결과를 현재 Spark 모든 query의 성능 보장으로 읽지 않는다.
+
 [이 책의 목차](README.md) · [이전 장](02-dataframes-sql.md)
 
 Spark 코드를 읽을 때 “Python 줄이 몇 줄인가”와 “실제로 실행되는 task가 몇 개인가”를 구분한다. 하나의 SQL 요청은 여러 stage와 task로 실행될 수 있다.

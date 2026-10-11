@@ -1,5 +1,55 @@
 # 12. etcd, Spark, Iceberg와 저장소
 
+## 같은 “분산” 안에서 서로 다른 세 보장
+
+etcd는 작은 제어 상태를 합의 로그로 저장한다. Spark는 입력 partition을 task로 계산하며 실패한 task를 재실행할 수 있다. Iceberg는 data file과 metadata snapshot을 연결하고 catalog pointer를 조건부 교체한다. 세 도구의 성공 지점은 서로 다르다.
+
+### etcd 읽기와 revision
+
+etcd의 revision은 저장소 전체 변경에 따라 증가하는 논리 번호다. wall clock이 아니다. linearizable read는 현재 합의 상태를 확인하는 경로를 사용하고, serializable read는 로컬 멤버의 이미 적용된 상태를 읽어 더 오래된 revision일 수 있다.
+
+| 시각 | 리더 revision | follower 적용 revision | 로컬 읽기 | 선형화 읽기 |
+|---:|---:|---:|---|---|
+| 0 | 20 | 20 | rev20 | rev20 |
+| 10 | 21 커밋 | 20 | rev20 가능 | rev21 |
+| 30 | 21 | 21 | rev21 | rev21 |
+
+watch 소비자는 받은 revision을 기록하고 재연결 때 다음 revision부터 요청한다. compaction보다 오래된 revision이면 snapshot성 재조회가 필요하다.
+
+### Spark task retry와 부수 효과
+
+driver가 stage를 만들고 executor가 partition task를 수행한다. task 결과 파일이 원자적 commit protocol에 들어가기 전 executor가 죽으면 다른 executor가 같은 partition을 다시 계산할 수 있다. 순수 변환은 같은 결과를 만들지만 외부 이메일이나 비멱등 API 호출은 두 번 실행될 수 있다.
+
+### Iceberg의 CAS 게시
+
+writer A와 B가 metadata pointer M10을 읽는다. A가 새 data file과 M11을 쓰고 catalog를 `M10이면 M11로` 조건부 교체해 성공한다. B가 M10 기준 M12 교체를 시도하면 현재 값이 M11이므로 실패한다. B는 M11을 읽고 충돌 검증 뒤 새 metadata를 만든다.
+
+| 단계 | A | B | 독자에게 보이는 snapshot |
+|---|---|---|---|
+| 시작 | M10 읽음 | M10 읽음 | M10 |
+| 파일 작성 | file A | file B | M10 |
+| CAS | M10→M11 성공 | M10→M12 실패 | M11 |
+| 재시도 | 완료 | M11 기준 재계획 | M11 |
+
+data file 업로드 성공은 table commit이 아니다. 현재 catalog pointer가 가리키는 metadata에 포함되어야 독자가 본다.
+
+## 추가 문제와 해설
+
+### 1. revision 30이 30초인가?
+아니다. 논리 변경 순서다.
+
+### 2. follower가 rev29일 때 최신 rev30을 반드시 읽어야 하면?
+linearizable read 계약을 사용한다.
+
+### 3. Spark task가 두 번 실행돼도 안전한 조건은?
+계산이 순수하거나 외부 효과가 멱등·중복 제거 경계 안에 있어야 한다.
+
+### 4. Iceberg CAS 실패는 data file 실패인가?
+아니다. 파일은 존재할 수 있지만 현재 table metadata에 게시되지 않았다.
+
+### 5. etcd에 대형 분석 파일을 저장하면?
+작은 합의 제어 상태라는 목적과 맞지 않아 로그·복제 비용을 키운다.
+
 ## 세 system의 보장 경계를 실제 요청으로 보기
 
 **etcd**는 작은 coordination state를 Raft로 복제하는 key-value store다. **Linearizable read**는 호출 전 완료된 최신 write를 반영하도록 합의 경계를 확인하는 읽기다. **Serializable read**는 한 member의 일관된 revision을 읽지만 최신이 아닐 수 있다.

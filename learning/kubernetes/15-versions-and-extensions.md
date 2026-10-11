@@ -1,6 +1,90 @@
 # 15. Version, API와 extension
 
 [이 책 목차](README.md) · [이전: 연구용 Spark 플랫폼](14-research-spark-platform.md) · [다음: 종합 문제와 용어집](16-exercises-and-glossary.md)
+## Version 숫자보다 호환 경로를 먼저 그린다
+
+이 장의 version 표는 원문의 기준일에 확인한 예시다. 설치 전에는 upstream release, distribution, CNI·CSI·Gateway·GPU Operator 지원표를 다시 확인한다. “최신”은 시간이 지나 바뀐다.
+
+Kubernetes upgrade는 API server binary만 바꾸는 작업이 아니다. API storage version, controller·scheduler, kubelet, kubectl, admission webhook, CRD conversion, CNI·CSI와 workload image가 서로 계약을 가진다.
+
+```mermaid
+flowchart LR
+    U["업그레이드 계획"] --> A["API deprecation·storage version 조사"]
+    A --> C["CNI·CSI·webhook·controller 지원 확인"]
+    C --> P["control plane 한 minor 단계"]
+    P --> N["node drain·kubelet/runtime 단계"]
+    N --> V["workload rollout·SLO 검증"]
+    V --> R["rollback/restore 가능성 확인"]
+```
+
+API 조사→addon 지원은 새 API server가 올라온 뒤 webhook이 요청을 막는 상황을 예방한다. Control plane→node는 version skew 정책 안에서 순서를 정한다. Drain은 application disruption budget과 storage detach 시간을 포함한다.
+
+## 완전 upgrade trace
+
+1.34에서 1.35로 간다는 교육 모형을 보자.
+
+| 단계 | 관찰 객체 | 성공 조건 | 실패 반례 |
+|---:|---|---|---|
+| 0 | Deprecated API inventory | 저장 manifest·live object·client 사용 파악 | Git만 보고 runtime client 누락 |
+| 1 | CRD storedVersions | conversion 가능한 version | 옛 storedVersion이 남아 CRD update 실패 |
+| 2 | Webhook | 새 version API 호출 성공 | webhook image가 새 schema를 거부 |
+| 3 | Control plane | API health·etcd backup | API server skew 위반 |
+| 4 | Addon | CNI/CSI/controller Ready | Pod network·volume mount 실패 |
+| 5 | Node 1 drain | PDB·graceful termination | single replica가 eviction 차단 |
+| 6 | Kubelet/runtime | Node Ready, Pod probe 정상 | cgroup/runtime 설정 불일치 |
+| 7 | Workload | SLO·error budget 정상 | Running이지만 readiness/latency 악화 |
+
+Etcd snapshot은 API state 복구용이고 PV data backup을 포함하지 않는다. Rollback은 binary만 내리는 문제가 아니라 저장 version과 schema 변화가 되돌릴 수 있는지 확인해야 한다.
+
+## API version과 storage version
+
+Manifest의 `apiVersion`은 client가 요청하는 표현이다. API server는 여러 served version을 내부 hub와 storage version으로 변환할 수 있다. `served: false`가 되면 그 version endpoint로 새 요청을 받지 않지만 이미 etcd에 저장된 version 이력 문제는 CRD status를 확인해야 한다.
+
+Deprecated는 즉시 제거와 다르다. Warning이 있을 때 migration을 준비하고 removal release 전에 manifest와 client를 바꾼다. Kubectl convert 하나로 controller가 사용하는 옛 endpoint까지 자동 수정되지 않는다.
+
+## CRD는 schema이고 controller는 동작이다
+
+CRD(CustomResourceDefinition)를 설치하면 API server가 새 kind의 필드를 validation하고 저장할 수 있다. CRD만으로 외부 resource가 생성되거나 status가 갱신되지 않는다. Operator/controller가 custom object를 watch해 Deployment, cloud resource, device 등을 조정해야 한다.
+
+```mermaid
+sequenceDiagram
+ participant U as 사용자
+ participant A as API server
+ participant O as Operator controller
+ participant X as 외부 system
+ U->>A: CREATE DatabaseCluster spec.replicas=3
+ A-->>U: schema 검증 후 저장
+ A-->>O: watch event
+ O->>A: StatefulSet·Service 생성
+ O->>X: database bootstrap 요청
+ O->>A: status.conditions 갱신
+```
+
+API 저장 성공과 operator reconcile 성공을 구분한다. CRD가 존재하지만 controller가 없으면 custom object는 저장된 채 실제 동작이 없을 수 있다.
+
+## DRA maturity를 정확히 읽는다
+
+Dynamic Resource Allocation은 ResourceClaim 등으로 device 요청과 allocation을 API 객체화한다. DRA core가 Kubernetes 1.34에서 GA가 된 역사와, 1.35 문서 badge에서 stable/feature gate locked 상태로 표시되는 사실은 다른 문장이다. “1.35에서 처음 stable”이라고 섞지 않는다.
+
+API stable이어도 모든 device driver와 vendor 기능이 같은 수준으로 지원되는 것은 아니다. ResourceClaim이 Allocated여도 GPU sharing 성능, memory 격리, RDMA topology가 자동 보장되지 않는다. Driver, kubelet plugin, scheduler 지원과 vendor matrix를 확인한다.
+
+## Feature gate와 locked
+
+Feature gate는 component에서 기능을 켜고 끄는 switch다. Alpha·beta 기능은 default와 제거 가능성이 다르다. Stable 뒤 gate가 locked된다는 표시는 사용자가 자유롭게 disable할 수 없는 단계라는 뜻일 수 있다. 최초 도입·beta·GA·locked 시점을 각각 release note에서 확인한다.
+
+## Compatibility matrix를 읽는 방법
+
+GPU Operator matrix에 Kubernetes·OS·driver/container runtime 조합이 지원된다고 적혀도 모든 kernel patch와 GPU model 성능을 보장하지 않는다. “지원”은 vendor가 시험·지원하는 범위이고 application latency SLO는 별도다.
+
+PeRF/RDMA 연구 환경도 특정 NIC firmware, kernel, topology를 사용한다. Stable Kubernetes API라는 이유로 논문 성능이 재현되지 않는다. Version, feature, implementation, experiment condition의 네 층을 기록한다.
+
+## 문제와 유도 해설 보강
+
+1. CRD create 성공인데 외부 DB가 없다. 왜? **Schema 저장만 됐고 controller가 없거나 reconcile 실패했을 수 있다.**
+2. Deprecated API warning은 즉시 제거됐다는 뜻인가? **아니다.** Removal 전 migration 신호이며 target release 문서를 확인한다.
+3. DRA가 1.34 GA이고 1.35 gate locked라면 최초 GA는? **1.34**다. 현재 badge와 역사를 구분한다.
+4. Control plane upgrade 성공이면 완료인가? **아니다.** Addon, node, webhook, workload SLO를 검증한다.
+5. Vendor matrix 지원이면 연구 성능 재현 보장인가? **아니다.** Hardware·topology·workload·metric 조건이 필요하다.
 
 Kubernetes version을 올리는 일은 binary 하나를 교체하는 일이 아니다. Control-plane component, kubelet, kubectl, API version, admission webhook, CNI·CSI와 controller compatibility를 함께 본다. 이 장의 날짜 기준은 **2026-10-09**다.
 

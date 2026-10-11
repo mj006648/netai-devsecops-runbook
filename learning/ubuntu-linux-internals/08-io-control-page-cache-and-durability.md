@@ -2,249 +2,233 @@
 
 [이 책 목차](README.md) · [이전: memory, PID와 OOM](07-memory-pids-and-oom.md) · [다음: io_uring SQ·CQ와 lifetime](09-io-uring-sq-cq-and-lifetimes.md)
 
-Application의 `write()`가 성공했다고 storage device에 byte가 영구 기록된 것은 아니다. Linux buffered I/O는 page cache를 거치며, writeback은 나중에 별도 context에서 일어날 수 있다. cgroup v2 I/O controller는 이 경로의 속도를 device 단위로 제어하지만 filesystem durability 계약을 대신하지 않는다.
+이 장은 application이 4KiB를 저장하는 한 사건을 따라간다. 먼저 **I/O(Input/Output)**는 CPU register와 memory 밖의 file, storage device, network 같은 대상과 data를 주고받는 일이다. 이 장에서는 주로 block storage에 대한 file 읽기·쓰기를 뜻한다.
 
-이 장의 경로, 숫자, 설정 text는 교육용이다. 현재 host의 cgroup이나 block device 설정을 변경하지 않았다.
+## 0. file offset과 byte가 놓이는 위치
 
-## 1. 세 층을 먼저 분리한다
+열린 file에는 다음 read/write byte 위치를 나타내는 **file offset**이 있다. 같은 open file description을 공유하는 fd들은 offset도 공유할 수 있다. write가 offset 8192에서 4096byte를 쓰면 8192..12287 범위를 바꾸고 다음 offset은 12288이 될 수 있다. pwrite처럼 offset을 argument로 받는 API는 shared current offset을 바꾸지 않고 특정 위치에 쓴다.
 
-```mermaid
-flowchart LR
-    A["application write(fd, buf, 64KiB)"] --> V["VFS와 filesystem"]
-    V --> P["page cache: dirty pages"]
-    P --> W["writeback worker"]
-    W --> B["block layer와 device queue"]
-    B --> D["SSD/NVMe volatile cache 또는 media"]
-    F["fsync/fdatasync"] --> V
-    C["cgroup io.max"] --> B
+Linux의 일반 **buffered I/O**는 application byte를 먼저 RAM의 file page에 복사한다. file 내용을 RAM에 보관하는 이 cache를 **page cache**라고 한다. 다시 읽을 때 storage를 기다리지 않고 RAM에서 줄 수 있으며 여러 process가 같은 file page를 공유할 수 있다.
+
+application이 page cache 내용을 바꾸어 storage의 기존 내용과 달라진 page를 **dirty page**라고 부른다. dirty는 손상됐다는 뜻이 아니라 아직 backing storage와 동기화되지 않은 변경분이 있다는 상태다. dirty page 내용을 storage 쪽으로 보내는 과정을 **writeback**이라고 한다. application thread가 일부 수행하거나 별도 kernel worker가 수행할 수 있다.
+
+## 1. 4KiB buffered write의 상태 전이
+
+| 순서 | 주체와 위치 | object 상태 | 아직 보장하지 않는 것 |
+|---:|---|---|---|
+| 1 | application user buffer | 새 4096byte | kernel이 받았다는 보장 없음 |
+| 2 | write syscall, VFS/filesystem | fd·offset·permission 검사 | storage 기록 아님 |
+| 3 | page cache | file page 수정, dirty 표시 | power-loss durability 아님 |
+| 4 | write가 4096 반환 | process가 새 byte를 읽을 수 있음 | device cache 도착 아님 |
+| 5 | writeback | block request를 device queue에 제출 | filesystem ordering 완료 아님 |
+| 6 | device completion | request 완료 보고 | volatile cache 조건에 따라 내구성 다름 |
+| 7 | fsync 계약 완료 | file data와 필요한 metadata 동기화 | 새 directory entry는 별도 sync 가능 |
+
+write 성공 뒤 같은 process가 page cache의 새 byte를 보는 **visibility(보임)**와 crash 뒤에도 남는 **durability(내구성)**는 다르다.
+
+## 2. BPS와 IOPS는 서로 다른 병목이다
+
+**BPS(Bytes Per Second)**는 초당 전송 byte 수, **IOPS(I/O Operations Per Second)**는 초당 I/O 요청 수다. cgroup v2 io.max는 device별 rbps, wbps, riops, wiops 같은 상한을 표현할 수 있다.
+
+```text
+4KiB random write 500 IOPS
+= 500 × 4096 byte/s
+= 2,048,000 byte/s
+≈ 1.95 MiB/s
 ```
 
-- **VFS(Virtual File System)**: 여러 filesystem에 공통 file API를 제공하는 kernel layer
-- **Page cache**: file data page를 RAM에 cache하는 영역
-- **Dirty page**: memory의 내용이 backing storage보다 새롭고 writeback이 필요한 page
-- **Writeback**: dirty page를 filesystem과 block layer를 통해 device로 내보내는 과정
-- **Durability**: crash나 전원 손실 뒤에도 요구한 data·metadata가 남는 성질
+wbps가 100MiB/s여도 wiops가 500이면 작은 요청 workload는 IOPS가 먼저 제한한다. 1MiB request 200 IOPS는 약 200MiB/s라서 wbps 100MiB/s가 먼저 제한한다. filesystem과 block layer에서 merge/split이 생길 수 있으므로 syscall 수와 device IOPS는 항상 같지 않다.
 
-## 2. Buffered write의 실제 상태 전이
+## 3. writeback의 소유권과 cgroup 귀속
+
+buffered write를 한 task가 return한 뒤 다른 kernel worker가 writeback할 수 있다. 현재 writeback thread의 cgroup만으로 원 application I/O를 제어할 수 없다. Linux는 page와 backing writeback context의 귀속 정보를 이용해 dirtying cgroup에 I/O를 account하려 한다. filesystem과 device가 writeback accounting을 지원하는 조건을 확인한다.
+
+**accounting(회계)**은 I/O byte와 operation을 어느 cgroup 사용량으로 셀지 정하는 것이다. **charge(귀속)**는 memory page 같은 resource 비용을 특정 cgroup에 기록하는 것이다. 둘 다 source-code 줄과 일대일로 단순 연결되지 않는다.
+
+writeback이 느려 dirty page가 쌓이면 memory controller와 I/O controller가 만난다. dirty limit이나 reclaim 때문에 application thread가 writeback 진행을 기다리면 write 또는 allocation latency가 증가할 수 있다. memory PSI와 io.pressure를 함께 보는 이유다.
+
+## 4. device 번호와 mount path는 다르다
+
+io.max는 보통 block device의 major:minor identity를 대상으로 한다. /data라는 mount path는 device identity가 아니다. logical volume, device mapper, encryption, RAID, network filesystem을 거치면 어느 block device로 내려가는지 여러 층이다.
+
+```text
+/data/app.db
+→ filesystem mount
+→ logical volume dm-3 (major:minor 예 253:3)
+→ physical NVMe namespace 둘에 stripe
+```
+
+dm-3 limit이 아래 physical device 각각에서 같은 모양으로 보장된다고 단정할 수 없다. controller 지원, stacked-device propagation과 scheduler를 확인한다. tmpfs는 RAM 기반이고 NFS는 network/server 경로가 지배할 수 있다.
+
+## 5. PSI는 utilization이 아니라 stall이다
+
+**io.pressure**는 I/O 때문에 task가 진전하지 못한 시간을 보여 준다. some은 일부 task의 stall, full은 모든 non-idle task의 동시 stall이다. device utilization 100%와 같은 지표가 아니다. device가 busy해도 application이 async work로 진전하면 PSI 모양이 다를 수 있다.
+
+10초 동안 io some total이 2,000,000µs 늘었다는 값은 aggregate stall이 2초 늘었다는 뜻이다. request p99가 정확히 20% 증가했다는 뜻은 아니다. cgroup 범위, task 수, writeback과 memory pressure를 함께 본다.
+
+## 6. file fsync와 directory fsync
+
+새 file을 안전하게 교체하는 전형적 순서다.
+
+```text
+1. 같은 directory에 temp file 생성
+2. temp에 전체 content write
+3. temp file fsync
+4. temp를 target 이름으로 rename
+5. parent directory fd를 fsync
+```
+
+3단계는 temp content와 필요한 metadata의 durability를 요청한다. 4단계는 namespace의 이름을 바꾼다. 5단계는 directory entry 변경의 durability를 요청한다. filesystem, mount option, storage hardware와 오류 처리에 따라 계약 세부가 달라 portable database는 검증된 library와 filesystem 문서를 따른다.
+
+fsync 성공이 remote replica 둘에도 data가 있다는 뜻은 아니다. local filesystem/device 완료와 distributed replication quorum은 다른 경계다.
+
+## 7. direct I/O도 자동 durability가 아니다
+
+**direct I/O**는 일반 page cache data 경로를 우회하려는 방식이다. alignment, filesystem, device 조건이 있고 metadata나 다른 cache가 완전히 사라진다는 뜻은 아니다. page cache를 우회해도 device volatile write cache에 data가 남을 수 있고 filesystem metadata ordering도 필요하다.
+
+따라서 O_DIRECT write 성공을 fsync와 같은 durability 계약으로 일반화하지 않는다. database는 double caching 감소와 buffer 관리 목적으로 direct I/O를 쓰면서 flush/FUA/fsync 계약을 별도로 다룬다.
+
+## 8. Kubernetes에서 Linux 경로로 번역한다
+
+Pod volume이 emptyDir, hostPath, local persistent volume, CSI network storage 중 무엇인지에 따라 경로가 다르다. container의 /data만 보고 block device와 durability를 결정할 수 없다.
+
+모든 storage class가 동일한 io.max 설정을 자동 제공하는 것도 아니다. runtime, cgroup version, CSI driver, node topology를 확인한다. node-level dirty writeback이 여러 Pod latency를 연결할 수 있고 remote storage latency는 local io controller 밖에서 발생할 수 있다.
+
+## 9. 추가 해설 문제
+
+1. 8KiB write가 성공했다. crash 뒤 남는가?
+   - page cache에만 있을 수 있어 성공만으로 보장하지 않는다.
+2. 4KiB 1,000 IOPS의 처리량은?
+   - 약 3.91MiB/s다.
+3. wbps 20MiB/s와 wiops 10,000에서 1MiB request가 오면?
+   - BPS가 약 20 request/s 수준으로 먼저 제한한다.
+4. /data가 dm-crypt 위 volume이다. mount path를 io.max 대상에 쓰는가?
+   - major:minor device stack과 controller 지원을 찾는다.
+5. file fsync 뒤 새 이름으로 rename했다. 이름까지 durable한가?
+   - parent directory fsync가 추가로 필요할 수 있다.
+6. O_DIRECT write 성공은 power-loss durability인가?
+   - 아니다. device cache, metadata와 flush 계약을 따져야 한다.
+
+application의 `write()` 성공은 kernel이 byte를 받아들였다는 완료일 수 있으며 전원 손실 뒤 저장장치에 남는 durability 완료와 다르다. buffered I/O는 page cache와 나중 writeback을 거친다. cgroup I/O controller는 block device별 전송률을 조절하지만 filesystem의 crash consistency 계약을 대신하지 않는다.
+
+## 1. 4KiB write를 끝까지 추적하기
+
+**file descriptor(fd)**는 process가 열린 file을 찾는 작은 정수 handle이다. kernel 안에는 open file description, offset, inode와 mount가 연결된다. **VFS**는 여러 filesystem에 공통 file API를 제공한다. **page cache**는 file 내용을 RAM page로 보관한다. storage보다 RAM 내용이 새로우면 **dirty page**다.
 
 ```mermaid
 sequenceDiagram
-    participant A as "application"
-    participant P as "page cache"
-    participant F as "filesystem"
-    participant W as "writeback"
-    participant D as "block device"
-    A->>P: "write 64KiB"
-    P-->>A: "64KiB accepted"
-    Note over P: "pages dirty, 아직 device 완료 아님"
-    W->>F: "dirty extent writeback"
-    F->>D: "bio/request 제출"
-    D-->>W: "device completion"
-    A->>F: "fsync(fd)"
-    F->>D: "필요 data와 metadata flush"
-    D-->>A: "durability 계약 범위에서 완료"
+    participant A as application
+    participant V as VFS·filesystem
+    participant P as page cache
+    participant W as writeback
+    participant B as block layer·device
+    A->>V: write(fd, buffer, 4096)
+    V->>P: file offset page 갱신·dirty
+    P-->>A: 4096 반환 가능
+    W->>P: dirty extent 선택
+    W->>B: block request 제출
+    B-->>W: device completion
+    A->>V: fsync(fd)
+    V->>B: 필요한 data·metadata·flush
+    B-->>A: 계약 범위 완료
 ```
 
-첫 `write()`의 return value는 user buffer에서 kernel이 몇 byte를 받아들였는지다. 성공 뒤에도 dirty page가 RAM에만 있을 수 있다. Process가 정상 종료해도 kernel은 살아 있으므로 writeback이 계속될 수 있지만, 갑작스러운 host 전원 손실에는 약하다.
+write return 전에 user buffer의 byte는 page cache에 반영되지만 device 완료를 기다리지 않을 수 있다. kernel writeback worker가 나중에 dirty extent를 block request로 바꾼다. `fsync()`는 file data와 관련 metadata를 filesystem·device 계약에 따라 동기화한다. remote replica와 backup 완료까지 뜻하지 않는다.
 
-## 3. Page cache의 장점과 반례
+## 2. burst가 storage 속도를 숨기는 시간표
 
-Page cache는 작은 write를 합치고, 반복 read를 RAM에서 처리하며, application과 느린 device의 속도 차이를 흡수한다. 이 때문에 `write()` latency가 낮을 수 있다.
+application이 10초간 600MiB/s로 쓰고 device가 200MiB/s를 지속한다고 단순화하면 dirty 증가량은 `(600-200)×10=4000MiB`다. 처음 benchmark의 write latency는 RAM copy 속도를 보고 빠를 수 있다.
 
-반례는 burst 뒤에 나타난다.
+| 시각 | write rate | device rate | dirty 상태 | application 관찰 |
+| ---: | ---: | ---: | ---: | --- |
+| 0~3s | 600MiB/s | 200MiB/s | +1200MiB | write p50 낮음 |
+| 3~8s | 600 | 200 | +3200MiB | memory pressure 시작 가능 |
+| 8~10s | throttle 영향 | 200 | 약 +4000MiB | write p99 상승 |
+| 10~30s | 새 write 0 | 200 | drain | process 끝나도 writeback 지속 |
 
-```text
-application write rate = 600MiB/s
-device sustained rate  = 200MiB/s
-10초 동안 dirty 증가  = (600 - 200) × 10 = 4000MiB
-```
+dirty threshold와 memory.high가 겹치면 application task가 balance dirty page나 reclaim에서 I/O를 기다릴 수 있다. CPU 문제처럼 보이는 tail latency를 memory.events, dirty/writeback, io.pressure와 연결한다.
 
-Memory와 dirty threshold가 충분하지 않으면 application thread가 balance dirty pages나 reclaim 경로에서 멈출 수 있다. 처음 5초 benchmark만 보고 storage가 600MiB/s라고 결론 내리면 page cache를 측정한 것이다.
-
-## 4. `io.max`는 `MAJOR:MINOR` device를 고른다
-
-cgroup v2의 `io.max`는 block device마다 read/write BPS(Bytes Per Second)와 IOPS(I/O Operations Per Second) 상한을 표현한다.
+## 3. `io.max`의 device 식별과 단위
 
 ```text
 8:16 rbps=2097152 wbps=max riops=max wiops=120
 ```
 
-이 text는 교육용 설정 형식이며 현재 system에 쓰지 않았다.
+`8:16`은 block device의 major:minor 번호다. `/data` 같은 pathname이나 mount 이름이 아니다. `rbps`·`wbps`는 byte/s, `riops`·`wiops`는 operation/s 제한이다. limit 초과 I/O는 오류보다 delay될 수 있고 temporary burst가 가능해 정확한 1초 firewall처럼 읽지 않는다.
 
-| 항목 | 뜻 |
-| --- | --- |
-| `8:16` | kernel block device의 major 8, minor 16 |
-| `rbps=2097152` | read를 초당 약 2MiB로 제한 |
-| `wbps=max` | write byte/s 제한 없음 |
-| `riops=max` | read operation/s 제한 없음 |
-| `wiops=120` | write operation을 초당 120회로 제한 |
+4KiB random write에 `wbps=100MiB/s`, `wiops=1000`이면 IOPS가 허용하는 약 3.9MiB/s가 지배한다. 1MiB write라면 BPS가 허용하는 100 IOPS가 지배한다. filesystem과 block layer가 application write를 merge·split하므로 syscall 수와 device IOPS는 같지 않다.
 
-Limit을 넘은 I/O는 실패시키기보다 delay될 수 있고 temporary burst가 허용될 수 있다. 정확한 1초 bucket firewall처럼 해석하지 않는다. 공식 형식과 caveat는 kernel [cgroup v2 I/O controller](https://docs.kernel.org/admin-guide/cgroup-v2.html#io)에서 확인한다.
+`/data → ext4 → dm-crypt 253:2 → NVMe partition 259:3`처럼 여러 device layer가 있을 수 있다. 어느 major:minor를 제한할지 실제 mount와 device mapper stack을 추적한다. network filesystem은 local block controller만으로 remote disk와 network를 모두 제한하지 못한다.
 
-## 5. BPS와 IOPS를 함께 계산한다
+## 4. writeback 귀속
 
-`wbps=100MiB/s`, `wiops=1000`인 device limit에서 workload가 4KiB random write를 한다고 하자.
-
-```text
-IOPS가 허용하는 byte/s = 1000 × 4KiB = 4000KiB/s ≈ 3.9MiB/s
-BPS limit = 100MiB/s
-실제 상한의 지배 조건 ≈ 3.9MiB/s인 IOPS limit
-```
-
-반대로 1MiB sequential write면 다음과 같다.
-
-```text
-BPS가 허용하는 IOPS = 100MiB/s ÷ 1MiB = 100 IOPS
-IOPS limit = 1000
-지배 조건 = 100MiB/s인 BPS limit
-```
-
-Filesystem이 request를 merge하거나 split하면 application의 `write()` 호출 수와 block IOPS는 같지 않다. 1000번의 4KiB write가 device request 1000개라는 보장은 없다.
-
-## 6. Buffered I/O를 어느 cgroup에 charge하는가
-
-Application이 page cache를 dirty하게 만든 시각과 writeback worker가 device I/O를 제출하는 시각은 다르다. Modern cgroup v2는 writeback attribution을 이용해 dirty page를 만든 cgroup에 I/O를 charge하려고 한다.
+dirty하게 만든 task와 나중 block request를 제출한 kernel worker가 다르다. cgroup v2 writeback attribution은 dirty page를 만든 cgroup에 I/O를 귀속하려고 한다. filesystem 지원과 같은 inode를 여러 cgroup이 쓰는 ownership 전환 조건이 있다. “worker가 root라 모두 무제한”도, “항상 원래 write syscall에 완벽히 귀속”도 단정하지 않는다.
 
 ```mermaid
 flowchart TD
-    A["cgroup A process"] -->|"file page dirty"| I["inode와 page ownership"]
-    B["cgroup B process"] -->|"같은 file dirty"| I
-    I --> W["writeback worker"]
-    W --> ATTR{"writeback attribution"}
-    ATTR --> CA["대부분 A에 charge"]
-    ATTR --> CB["ownership 전환 시 B에 charge"]
+    A[cgroup A task가 page dirty] --> I[inode·page writeback ownership]
+    C[cgroup B도 같은 inode dirty] --> I
+    I --> W[kernel writeback worker]
+    W --> Q{filesystem cgroup writeback 지원·ownership}
+    Q -->|귀속 가능| L[대상 cgroup io.max budget]
+    Q -->|제약·공유| O[관측과 isolation 차이 가능]
 ```
 
-이 기능은 filesystem이 cgroup writeback을 지원해야 한다. 지원하지 않거나 여러 writer가 같은 inode를 심하게 공유하면 기대한 isolation과 다를 수 있다. “Worker thread가 root cgroup이므로 모든 writeback이 무제한”이라고 단정하는 것도, “항상 정확히 원래 process에 charge된다”고 단정하는 것도 틀릴 수 있다.
+## 5. 이름과 data의 durability
 
-## 7. Device identity와 mount path는 다르다
+새 file을 원자적으로 공개하는 일반적 패턴은 temp file write, temp file `fsync`, `rename`, parent directory `fsync` 순서다. file sync는 내용과 관련 metadata, directory sync는 새 이름과 rename 관계의 durability에 필요할 수 있다. filesystem별 crash consistency와 모든 오류를 검증해야 한다.
 
-`/data`라는 path는 filesystem namespace의 mount point다. `io.max`는 `MAJOR:MINOR` block device를 지정한다.
+`O_DIRECT`는 page cache를 우회하려는 I/O mode이며 alignment와 filesystem 조건이 있다. 자동 durability가 아니다. `O_DSYNC`, `O_SYNC`, `RWF_DSYNC`, fsync의 의미와 device flush/FUA 지원을 별도로 확인한다.
+
+두 번째 예로 DB가 WAL record를 write한 직후 client에 commit을 답하면 crash 때 record가 사라질 수 있다. WAL file에 필요한 sync가 성공한 뒤 commit을 publish해야 한다. data page와 WAL, directory 이름, replica ack는 서로 다른 완료 경계다.
+
+## 6. 관측·연구 연결
 
 ```text
-/data → ext4 filesystem → dm-crypt device 253:2 → NVMe partition 259:3
+14:00:00 ingest 500MiB/s
+14:00:05 write p50 0.3ms, dirty 2GiB
+14:00:08 io.max delay, io.pressure some 상승
+14:00:11 memory.high 초과, reclaim이 writeback 대기
+14:00:15 write p99 900ms, device 200MiB/s
+14:00:40 fsync 성공 뒤 durable checkpoint 공개
 ```
 
-어느 layer의 device를 제한할지는 device mapper, logical volume, filesystem, container mount 구조를 알아야 한다. Overlay filesystem의 upper layer가 어느 backing device에 있는지도 확인한다.
+`io.stat`, `io.pressure`, memory.stat/events, filesystem error, device latency와 fsync latency를 같은 clock으로 수집한다. PSI는 utilization이 아니라 task stall이다.
 
-Network filesystem은 local block I/O controller만으로 remote server disk와 network throughput을 모두 제어할 수 없다. Local socket memory, network queue, remote storage controller가 별도다.
+[I/O Passthru(FAST 2024)](https://www.usenix.org/conference/fast24/presentation/joshi)는 NVMe character device와 io_uring command로 전통 block path의 일부 비용을 줄이는 특정 FIO 구성 결과를 다룬다. 모든 application이 자동으로 빠르다는 근거가 아니다. 이 장의 VFS·page cache·block layer 중 어떤 층을 우회하고 어떤 durability·isolation 책임이 이동하는지, workload size·queue depth·hardware를 독립 변수로 재현해야 한다.
 
-## 8. `write()` 성공과 `fsync()` 성공
+## 7. 문제와 해설
 
-`fsync(fd)`는 file data와 관련 metadata를 storage device로 flush하도록 요청한다. `fdatasync(fd)`는 이후 data retrieval에 불필요한 일부 metadata flush를 줄일 수 있다. 실제 보장은 filesystem과 device가 flush/FUA를 올바르게 구현한다는 전제에 의존한다.
+### 문제 1
+`write()`가 64KiB를 반환하면 전원 손실 뒤 반드시 남는가?
 
-```text
-t=0ms   write(fd, 64KiB) → 64KiB
-t=1ms   application은 새 record를 memory에서 봄
-t=8ms   writeback 시작
-t=12ms  fsync(fd) 호출
-t=19ms  fsync(fd) → 0
-t=20ms  application이 durable commit으로 간주
-```
+**해설:** 아니다. buffered data가 dirty page에만 있을 수 있다. filesystem과 device까지의 sync 계약이 필요하다.
 
-`fsync()`가 성공하기 전 crash가 나면 마지막 write가 사라질 수 있다. `fsync()` 성공도 remote replica나 backup 완료를 뜻하지 않는다.
+### 문제 2
+4KiB write, wiops 500, wbps 100MiB/s의 지배 limit은?
 
-공식 syscall 계약은 [fsync(2)](https://man7.org/linux/man-pages/man2/fsync.2.html)을 본다.
+**해설:** IOPS다. 약 `500×4KiB=1.95MiB/s`로 BPS limit보다 낮다.
 
-## 9. 새 file 이름에는 directory sync가 필요하다
+### 문제 3
+`/data` path를 `io.max`에 쓸 수 있는가?
 
-File data를 쓰고 file 자체를 `fsync()`해도 새 directory entry가 crash 뒤 존재한다는 보장이 별도일 수 있다.
+**해설:** 아니다. io.max는 major:minor block device를 사용한다. mount와 device mapper stack을 추적한다.
 
-```text
-1. temp file 생성
-2. temp file data write
-3. fsync(temp fd)
-4. rename(temp, final)
-5. fsync(parent directory fd)
-```
+### 문제 4
+file data를 fsync하고 rename했으면 새 이름도 확실히 durable한가?
 
-이 pattern은 교육용 순서다. Filesystem별 crash consistency와 error handling을 검증해야 한다. Directory `fsync()`는 이름과 rename 같은 directory entry 변경의 durability를 위한 단계다.
+**해설:** parent directory sync가 별도로 필요할 수 있다. filesystem 계약과 오류 처리를 확인한다.
 
-반례로 file만 sync하고 directory를 sync하지 않으면 crash 뒤 data block은 있지만 새 이름이 사라질 수 있다. 반대로 directory만 sync해도 file content가 모두 durable하다는 뜻은 아니다.
+### 문제 5
+O_DIRECT completion은 fsync와 같은가?
 
-## 10. Direct I/O도 자동 durability가 아니다
+**해설:** 아니다. page cache 우회와 전원 손실 durability는 다른 속성이다. sync flag와 device flush 계약을 본다.
 
-`O_DIRECT`는 page cache를 우회하려는 I/O mode이며 alignment와 filesystem 제약이 있다. Cache coherency 비용을 줄일 수 있지만 `fsync()`와 같은 durability flag가 아니다.
+## 공식 자료
 
-`O_DSYNC`, `O_SYNC`, `RWF_DSYNC` 같은 semantics와 filesystem/device 지원을 별도로 봐야 한다. Direct I/O read/write가 완료됐다는 사실과 NVMe media에 power-loss-safe하게 기록됐다는 사실도 구분한다.
+- [Linux cgroup v2 I/O controller](https://docs.kernel.org/admin-guide/cgroup-v2.html#io)
+- [fsync(2)](https://man7.org/linux/man-pages/man2/fsync.2.html)
+- [open(2)](https://man7.org/linux/man-pages/man2/open.2.html)
+- [I/O Passthru, FAST 2024](https://www.usenix.org/conference/fast24/presentation/joshi)
 
-Linux의 자세한 flag 의미는 [open(2)](https://man7.org/linux/man-pages/man2/open.2.html)를 참고한다.
-
-## 11. `io.pressure`는 utilization이 아니다
-
-PSI의 `io.pressure`는 task가 I/O 때문에 진행하지 못한 stall 시간을 나타낸다.
-
-- `some`: 적어도 일부 task가 I/O에 막힘
-- `full`: 모든 non-idle task가 동시에 I/O에 막힘
-
-Device utilization 90%와 PSI 90%는 같은 값이 아니다. Async pipeline이 queue를 깊게 유지해 device는 바쁘지만 application task는 다른 계산을 하면 PSI가 낮을 수 있다. 반대로 latency-sensitive task 하나가 자주 막히면 낮은 throughput에서도 pressure가 중요할 수 있다.
-
-공식 정의는 [PSI documentation](https://docs.kernel.org/accounting/psi.html)을 따른다.
-
-## 12. 완전한 진단 시간표
-
-```text
-14:00:00 ingest workload 500MiB/s 시작
-14:00:05 write() p50 0.3ms, dirty page 2GiB
-14:00:08 io.max write delay 증가, io.pressure some 상승
-14:00:11 memory.high 초과, reclaim이 dirty writeback을 기다림
-14:00:15 write() p99 900ms, device 200MiB/s 유지
-14:00:20 application batch 종료
-14:00:38 dirty page writeback 완료
-14:00:40 fsync 완료 뒤 durable checkpoint 기록
-```
-
-이 사건을 CPU 문제로만 보면 reclaim과 writeback을 놓친다. `memory.events`, `memory.stat`, `io.stat`, `io.pressure`, filesystem error, device latency와 application fsync latency를 같은 시각에 맞춘다.
-
-## 13. Kubernetes와 연결되는 지점
-
-Container memory usage에는 page cache가 포함될 수 있고 memory limit pressure가 writeback을 촉진할 수 있다. Ephemeral storage request/limit, PVC backend QoS, node filesystem과 cgroup `io.max`는 서로 다른 정책 층이다.
-
-Kubernetes YAML에 storage limit을 적었다고 block device `io.max`가 모든 runtime에서 같은 방식으로 설정된다고 가정하지 않는다. Runtime, kubelet, CSI driver, storage class와 Linux node 설정을 확인한다.
-
-## 14. 처음 보는 단어로 4KiB write를 끝까지 따라가기
-
-**File descriptor(fd)**는 process가 open한 file을 가리키는 작은 정수 handle이다. Kernel 안에는 실제 file object, inode, filesystem과 mount 정보가 연결된다.
-
-**Page**는 kernel이 memory를 관리하는 기본 크기 단위 중 하나이며 흔히 4KiB다. **Page cache**는 file 내용을 RAM의 page에 보관한다. Cache는 별도 복사본 database가 아니라 filesystem I/O 경로의 일부다.
-
-Application이 buffered `write(fd, buffer, 4096)`를 호출하면 kernel은 user buffer의 byte를 해당 file offset의 page cache page에 반영한다. Storage보다 RAM 내용이 새로워진 page를 **dirty page**라고 한다.
-
-**Inode**는 filesystem 안에서 file의 metadata와 data block mapping을 표현하는 object다. Filename은 directory entry가 inode를 가리키는 관계다. 그래서 file data sync와 directory name sync가 다른 단계다.
-
-**Writeback**은 dirty page를 backing storage 쪽으로 내보내 clean하게 만드는 과정이다. Kernel worker가 나중에 수행할 수 있어 원래 `write()` thread와 device request를 제출하는 thread가 다를 수 있다.
-
-**Block layer**는 filesystem I/O를 storage device request로 정리·merge·schedule하는 kernel layer다. `MAJOR:MINOR`는 이 block device를 kernel에서 식별하는 번호 쌍이다. Path `/data/a.bin` 자체는 device ID가 아니다.
-
-한 write의 시간순서는 다음과 같다.
-
-```text
-1. Application이 fd, userspace address, length=4096으로 write syscall
-2. VFS가 fd를 file object와 filesystem operation에 연결
-3. Filesystem이 file offset에 대응하는 page cache page를 찾거나 생성
-4. 4096 bytes를 page에 반영하고 dirty 표시
-5. write는 device completion 전에도 4096을 반환할 수 있음
-6. Writeback이 dirty extent를 block request로 변환
-7. io.max가 해당 MAJOR:MINOR의 BPS/IOPS budget을 검사하고 필요하면 delay
-8. Driver가 request를 device queue에 제출
-9. Device completion 뒤 page가 clean 후보가 됨
-10. fsync가 요구됐다면 filesystem metadata와 flush 조건까지 기다린 뒤 완료
-```
-
-**BPS**는 초당 byte 수, **IOPS**는 초당 I/O operation 수다. 큰 sequential request는 BPS에, 작은 random request는 IOPS에 먼저 제한될 수 있다.
-
-**Durability**는 process가 지금 값을 읽을 수 있다는 뜻보다 강하다. Crash 또는 power loss 뒤에도 약속한 data와 이름이 남아야 한다. Device completion, file fsync, directory fsync, remote replication은 서로 다른 완료 경계다.
-
-## 15. 문제
-
-1. 4KiB write, `wiops=500`, `wbps=100MiB/s`에서 어느 limit이 지배적인가?
-2. `write()`가 64KiB를 반환했다. 전원 손실 뒤 data가 반드시 남는가?
-3. File을 새 이름으로 rename한 뒤 file만 `fsync()`했다. 어떤 durability 단계가 빠졌을 수 있는가?
-
-## 16. 해설
-
-1. IOPS limit이다. 약 `500×4KiB≈1.95MiB/s`가 되어 100MiB/s보다 훨씬 낮다.
-2. 아니다. Buffered data가 page cache에만 있을 수 있으며 filesystem과 device까지 sync하는 계약이 필요하다.
-3. Parent directory의 `fsync()`다. File content와 directory entry durability는 구분한다.
-
-다음 장에서는 syscall마다 기다리는 대신 SQ(Submission Queue)와 CQ(Completion Queue)를 공유하는 io_uring의 index와 request lifetime을 추적한다.
+[← 이전: memory, PID와 OOM](07-memory-pids-and-oom.md) · [다음: io_uring SQ·CQ와 lifetime](09-io-uring-sq-cq-and-lifetimes.md)

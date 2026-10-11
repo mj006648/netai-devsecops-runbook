@@ -1,5 +1,22 @@
 # 09. Spark와 Iceberg를 함께 읽는 법
 
+## SQL에서 snapshot commit까지
+
+Spark는 SQL을 계획하고 task를 실행하는 엔진이고 Iceberg는 파일 집합·schema·history를 metadata로 관리하는 table format이다. catalog는 이름을 metadata JSON에 연결하고 snapshot은 manifest list, manifest, data/delete file을 잇는다. Spark plan은 driver memory, task batch는 executor memory, Iceberg metadata와 Parquet는 저장소에 있다.
+
+snapshot 50의 data-A=(KR10,US20,KR30), data-B=(JP40,KR50,US60)을 읽으면 Spark 집계는 KR90,US80,JP40이다. manifest 통계로 다른 18파일을 제외했다 해도 A와 B 내부 행 filter는 남는다.
+
+DELETE amount=20을 COW로 실행하면 A를 읽어 KR10,KR30인 새 C를 쓰고 snapshot 51이 C와 B를 가리킨다. MOR라면 A를 유지하고 position/equality delete 또는 지원 DV를 게시해 reader가 병합한다. SQL equality 조건이 equality-delete 파일을 보장하지 않으며 engine·property·format version이 전략을 고른다.
+
+task upload와 catalog pointer commit은 다른 사건이다. 동시 writer가 먼저 commit하면 append는 충돌 검사 뒤 rebase할 수 있지만 겹친 overwrite는 실패할 수 있다. timeout은 성공 여부 불확실이므로 snapshot을 확인한다.
+
+### 완전 풀이 문제 5개
+1. 초기 KR 합은? **해설:** 10+30+50=90이다.
+2. COW 뒤 A는 현재인가? **해설:** C로 교체됐다면 아니다.
+3. MOR reader 책임은? **해설:** data와 적용 delete를 병합한다.
+4. upload 성공이 commit인가? **해설:** catalog 게시가 남았다.
+5. v3면 과거 position delete를 무시하는가? **해설:** 혼재 reader가 기존 파일도 읽어야 한다.
+
 [이 책 목차](README.md) · [이전: Structured Streaming](08-structured-streaming.md) · [다음: 배포와 Spark Connect](10-deployment-and-connect.md)
 
 Spark와 Iceberg를 처음 함께 쓰면 이름이 모두 “데이터 시스템”처럼 보여 역할이 섞이기 쉽다. 이 장의 목표는 SQL 한 줄이 어느 계층을 지나 어떤 파일과 메타데이터를 바꾸는지 설명하는 것이다. Iceberg 내부 형식의 자세한 설명은 [별도 Iceberg 교재](../apache-iceberg/README.md)에 맡기고, 여기서는 Spark가 그 형식을 어떻게 사용하는지에 집중한다.

@@ -277,131 +277,45 @@ Probe 실패 event가 있어도 원인은 endpoint 구현, port, bind address, t
 
 공식 동작과 최신 field의 기준은 [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)에서 확인한다.
 
-## 2. 실행 가능한 probe 예시
+## 네 Pod rollout의 완전한 숫자 추적
 
-아래 manifest는 실행 가능한 교육 예시지만 이 문서에서는 적용하지 않는다. `lab13` context의 `health-lab` namespace처럼 외부 운영과 분리된 실습 환경에서 image와 endpoint를 검증한 뒤 사용한다.
+Deployment replicas=4, maxSurge=1, maxUnavailable=1이라고 하자. V1 네 Pod가 Ready인 상태에서 V2로 바꾼다.
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: research-api
-  namespace: health-lab
-  labels:
-    app.kubernetes.io/name: research-api
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: research-api
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: research-api
-    spec:
-      terminationGracePeriodSeconds: 45
-      containers:
-        - name: api
-          image: registry.example/research-api:1.4.0
-          ports:
-            - name: http
-              containerPort: 8080
-          startupProbe:
-            httpGet:
-              path: /health/startup
-              port: http
-            periodSeconds: 5
-            failureThreshold: 24
-          readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: http
-            periodSeconds: 5
-            failureThreshold: 2
-          livenessProbe:
-            httpGet:
-              path: /health/live
-              port: http
-            periodSeconds: 10
-            failureThreshold: 3
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 5"]
-```
+| 시각 | V1 desired/Ready | V2 desired/Ready | 전체 Pod | Available | 판단 |
+|---:|---:|---:|---:|---:|---|
+| 0초 | 4/4 | 0/0 | 4 | 4 | 시작 |
+| 1초 | 4/4 | 1/0 | 5 | 4 | surge 한 개 생성 |
+| 20초 | 4/4 | 1/1 | 5 | 5 | startup와 readiness 성공 |
+| 21초 | 3/3 | 1/1 | 4 | 4 | old 한 개 축소 |
+| 22초 | 3/3 | 2/1 | 5 | 4 | 두 번째 V2 초기화 |
+| 42초 | 3/3 | 2/2 | 5 | 5 | 다음 축소 가능 |
+| 80초 | 0/0 | 4/4 | 4 | 4 | rollout 완료 |
 
-Startup의 최대 실패 시간은 이 예시에서 대략 `5초 × 24회 = 120초`다. HTTP timeout 기본값을 그대로 의존하지 말고 실제 지연과 실패 유형에 맞춰 `timeoutSeconds`도 검토한다. Liveness endpoint가 database 같은 외부 dependency 하나의 짧은 장애 때문에 실패하면 정상 process를 반복 재시작할 수 있다.
+V2 하나가 Running이지만 readiness 실패라면 Available에 포함되지 않는다. `maxUnavailable=1`은 available을 최소 3으로 허용하지만 controller가 무조건 즉시 하나를 제거한다는 뜻은 아니다. Progress deadline과 condition을 함께 본다.
 
-## 3. Readiness와 EndpointSlice
+## 종료 순서와 기존 연결
 
-Service controller는 selector에 맞는 Pod를 찾아 EndpointSlice를 관리한다. Pod readiness 결과는 endpoint의 `conditions.ready` 같은 상태에 반영되어 traffic 후보를 정하는 데 사용된다.
+Pod 종료 요청 뒤 readiness가 false가 되어 새 endpoint 선택에서 빠지고, preStop hook과 SIGTERM, terminationGracePeriodSeconds 안의 종료가 이어질 수 있다. 실제 세부 순서는 version과 hook 동작을 공식 문서로 확인한다. Readiness false가 기존 keep-alive 연결을 즉시 끊는 것은 아니다. Proxy drain과 application graceful shutdown이 필요하다.
 
-```mermaid
-sequenceDiagram
-    participant K as "kubelet"
-    participant P as "Pod status"
-    participant E as "EndpointSlice controller"
-    participant S as "Service data plane"
-    K->>P: "readiness 실패, Ready=false"
-    P-->>E: "Pod condition 변경 관찰"
-    E->>E: "endpoint conditions 갱신"
-    E-->>S: "새 traffic 후보에서 제외"
-```
+Liveness 실패는 같은 Pod UID 안 해당 container restart다. Deployment가 Pod 객체를 삭제해 새 Pod UID를 만드는 rollout과 다르다. `restartCount`와 Pod UID를 함께 본다.
 
-Ready false가 기존 TCP connection을 강제로 즉시 끊는다는 뜻은 아니다. Endpoint 변경 전파에도 시간이 걸릴 수 있다. Application과 proxy가 connection draining, keep-alive, retry를 어떻게 다루는지 함께 설계한다. EndpointSlice 조건은 [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)에서 확인한다.
+## Probe 종류의 한계
 
-## 4. Probe 설계 원칙
+HTTP probe는 kubelet이 Pod IP와 port로 GET을 보내며 200~399 status를 성공으로 본다. Body의 `{\"ready\":false}`를 HTTP 200으로 보내면 성공이다. Endpoint는 application이 구현해야 하며 Kubernetes가 자동 생성하지 않는다.
 
-- Startup은 느린 초기화의 정상 범위를 liveness와 분리한다.
-- Readiness는 새 요청 처리 가능성을 답하고, 일시적 dependency 장애를 traffic 제어에 반영한다.
-- Liveness는 재시작해야만 회복되는 deadlock 같은 상태를 좁게 감지한다.
-- Probe endpoint는 인증 우회나 내부 정보 노출 경로가 되지 않게 한다.
-- 너무 짧은 timeout과 낮은 threshold는 부하 순간에 restart storm을 만들 수 있다.
+TCP probe는 connect 성공만 본다. Accept 뒤 업무 처리가 막혀도 성공할 수 있다. Exec probe는 container 안 명령 exit code를 보며 fork 비용과 shell 의존성을 만든다. gRPC probe는 gRPC health checking protocol을 사용하며 named port 같은 세부 지원 제약을 공식 문서에서 확인한다.
 
-“모든 dependency가 완벽해야 live”로 만들지 않는다. Database가 10초 느리다는 이유로 API container 수십 개를 동시에 재시작하면 장애를 확대할 수 있다.
+## 공유 dependency를 liveness에 넣는 반례
 
-## 5. RollingUpdate의 두 숫자
+네 Pod가 같은 database를 쓴다. DB가 2분 중단됐을 때 `/livez`가 DB 실패를 500으로 반환하면 모든 kubelet이 container를 재시작한다. 새 process는 image·config·connection pool을 다시 준비하며 DB 복구 순간 부하를 더한다. Process 자체 event loop가 살아 있다면 readiness만 false로 하여 새 traffic을 제외하고 liveness는 성공시키는 편이 일반적으로 안전하다.
 
-Deployment의 기본 전략인 RollingUpdate는 새 ReplicaSet을 늘리면서 옛 ReplicaSet을 줄인다.
+반대로 process가 deadlock되어 HTTP server 자체가 응답하지 않지만 OS process는 살아 있다면 exit 감지만으로 복구되지 않는다. Liveness는 이런 local unrecoverable 상태를 검출해 같은 container를 재시작하는 데 필요하다.
 
-- `maxSurge`: desired replica보다 추가로 만들 수 있는 Pod 수
-- `maxUnavailable`: rollout 중 unavailable이어도 되는 Pod 수
+## Rollout 이후의 운영: 복구, disruption, 자동 확장의 관계
 
-```yaml
-strategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxSurge: 1
-    maxUnavailable: 0
-```
+Probe는 현재 컨테이너와 Pod의 상태를 알리는 계약이고, rollout·PDB·autoscaler는 그 상태를 서로 다른 목적으로 사용한다. 하나가 설정되었다고 나머지의 가용성이나 복구가 자동으로 완성되지는 않는다. 다음 절은 이 구분을 실제 시간표와 객체로 연결한다.
 
-이 조각은 Deployment `spec` 안에 넣는 실행 가능한 설정 예시이며 단독 manifest는 아니다. 이 문서에서는 적용하지 않는다.
-
-Replica가 4개이고 `maxSurge: 1`, `maxUnavailable: 0`이면 종료 중인 Pod를 제외한 기본 계산은 5개이며, controller는 available Pod를 4개 아래로 내리지 않으려 한다. 종료 유예 중인 옛 Pod까지 세면 전체 Pod 수와 자원 사용은 5개분을 넘을 수 있다. 새 Pod가 Ready가 되지 않으면 rollout이 진행되지 않을 수 있으므로 quota와 추가 CPU·memory 여유도 필요하다.
-
-Percentage는 정수 변환 규칙이 다르다. `maxSurge` percentage는 올림하고 `maxUnavailable` percentage는 내림한다. 둘을 동시에 0으로 둘 수 없다. 자세한 계산은 [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)를 확인한다.
-
-```mermaid
-flowchart LR
-    O4["Old Ready 4"] --> N1["New 1 생성: 총 5"]
-    N1 --> R1{"New Ready?"}
-    R1 -->|"예"| D1["Old 1 감소"]
-    R1 -->|"아니오"| H["진행 대기 또는 progress 실패"]
-    D1 --> N2["다음 New 생성"]
-```
-
-## 6. Graceful termination
-
-Pod 종료가 시작되면 endpoint 제외, `preStop` hook, `SIGTERM`, grace period, 강제 종료가 관련된다. 여러 component가 비동기로 움직이므로 모든 network 경로의 정확한 순서를 하나로 가정하지 않는다.
-
-1. Application은 `SIGTERM`을 받아 새 요청 수락을 멈춘다.
-2. 이미 처리 중인 요청과 background 작업을 제한 시간 안에 마친다.
-3. `preStop`이 필요하다면 종료 준비에 사용하되 전체 grace time을 소비한다는 점을 고려한다.
-4. `terminationGracePeriodSeconds`가 지나면 남은 process는 강제 종료될 수 있다.
-
-`preStop: sleep`은 교육용 완충 예시일 뿐 보편 해법이 아니다. Load balancer와 Service 전파 시간, application connection draining, message consumer lease, Spark executor 종료 규칙을 실제로 측정한다. 세부 종료 흐름은 [Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)을 따른다.
-
-## 7. Rollout 관찰과 undo
+### Rollout 관찰과 undo
 
 다음은 `lab13` context와 `health-lab` namespace만을 전제로 한 예시 절차다. 이 문서에서는 실행하지 않았고 외부 운영 cluster에 적용하지 않는다.
 
@@ -416,7 +330,7 @@ Pod 종료가 시작되면 endpoint 제외, `preStop` hook, `SIGTERM`, grace per
 
 `rollout undo`는 Deployment의 이전 Pod template revision으로 되돌린다. Database migration, 외부 API 변경, 이미 발행한 message, 삭제된 데이터까지 되돌리지 않는다. Image rollback과 schema rollback을 한 작업으로 오해하지 않는다. Expand/contract schema, backward compatibility, backup·restore를 별도로 설계한다.
 
-## 8. PodDisruptionBudget의 범위
+### PodDisruptionBudget의 범위
 
 **PDB(PodDisruptionBudget)**는 node drain 같은 자발적 disruption에서 동시에 줄어들 수 있는 healthy Pod 수를 제한한다.
 
@@ -435,7 +349,7 @@ spec:
 
 이 manifest도 격리된 `lab13/health-lab` 실습용 예시이며 여기서는 적용하지 않는다. PDB는 node crash, kernel panic, network partition, application bug 같은 모든 비자발적 장애를 막지 않는다. Replica 자체를 만드는 controller도 아니다. 공식 범위는 [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)에서 확인한다.
 
-## 9. HPA와 VPA
+### HPA와 VPA
 
 **HPA(HorizontalPodAutoscaler)**는 metric을 보고 replica 수를 가로로 늘리거나 줄이는 Kubernetes API와 controller다. CPU utilization target을 사용하면 container resource request가 계산 기준에 필요하다. Metrics Server 같은 resource metrics pipeline 또는 custom/external metrics adapter도 필요할 수 있다.
 
@@ -448,7 +362,7 @@ spec:
 
 HPA가 늘어도 database connection 한도와 queue partition 수가 그대로면 처리량이 늘지 않을 수 있다. Autoscaling은 application dependency capacity와 함께 검증한다. 공식 [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)을 참고한다.
 
-## 10. HPA 계산을 숫자로 읽기
+### HPA 계산을 숫자로 읽기
 
 HPA의 기본 비율 계산은 개념적으로 다음과 같다.
 
@@ -504,7 +418,7 @@ spec:
       stabilizationWindowSeconds: 300
 ```
 
-## 11. Missing metrics와 request 부재의 한계
+### Missing metrics와 request 부재의 한계
 
 새 Pod가 시작 중이거나 metrics adapter가 일부 Pod를 수집하지 못하면 HPA는 완전한 평균을 갖지 못한다. Controller는 scale 방향에 따라 보수적으로 누락 Pod를 가정해 결정을 완화할 수 있다. 따라서 “현재 Pod 4개 중 두 개가 90%이니 평균 90%”라고 단순 계산하지 않는다.
 
@@ -519,7 +433,7 @@ CPU utilization target인데 container에 CPU request가 없으면 그 container
 
 여러 metric을 지정하면 HPA는 각 metric이 제안한 replica 수 가운데 큰 값을 택하는 방향으로 동작한다. 일부 metric을 가져오지 못하고 다른 metric이 scale-down을 제안하면 안전을 위해 scale-down을 건너뛸 수 있다. Autoscaler가 보수적으로 멈춘 것을 controller 장애와 구분한다.
 
-## 12. Startup과 HPA가 만나는 지점
+### Startup과 HPA가 만나는 지점
 
 Java·Spark gateway처럼 시작 직후 CPU가 높고 아직 요청을 처리하지 못하는 Pod를 일반 평균에 바로 넣으면 불필요한 scale-up이 생길 수 있다. Startup probe와 readiness를 올바르게 두고 HPA controller의 CPU initialization 동작을 이해한다. 그렇다고 startup 시간을 감추려고 readiness를 영원히 false로 두면 rollout과 endpoint가 멈춘다.
 
@@ -536,18 +450,38 @@ Java·Spark gateway처럼 시작 직후 CPU가 높고 아직 요청을 처리하
 
 이 흐름에서 Pod가 Ready가 되기 전에 평균이 높다는 이유만으로 maxReplicas를 계속 올리면 image pull, startup, dependency가 진짜 병목인지 놓친다. HPA condition, Deployment available replicas, Pending event, application queue를 같은 시간축에서 본다.
 
-## 13. 확인 문제
+## 확인 문제와 완전 해설
 
-1. Readiness 실패와 liveness 실패는 각각 무엇을 바꾸는가?
-2. Replica 4, `maxSurge=1`, `maxUnavailable=0`인 rollout에서 기본 Pod 수를 어떻게 계산하며, 종료 중인 Pod까지 세면 무엇이 달라지는가?
-3. Deployment undo가 database migration도 되돌리는가?
-4. PDB가 node의 갑작스러운 전원 장애를 막는가?
+### 문제 1
+`/readyz`가 HTTP 200 body `ready:false`를 반환했다. Probe 결과는?
 
-## 14. 해설
+**해설:** HTTP status 200은 성공 범위라 readiness 성공이다. Body 의미를 kubelet이 해석하지 않는다. 준비되지 않았으면 500 계열 등 실패 status를 반환하도록 app endpoint를 구현한다.
 
-1. Readiness 실패는 Ready condition과 Service endpoint 후보에 영향을 준다. Liveness 실패는 kubelet이 해당 container를 재시작하게 한다.
-2. 종료 중인 Pod를 제외한 rollout의 기본 계산은 `4+1=5`다. 새 Pod가 available이 된 뒤 옛 Pod를 줄이는 방향으로 진행한다. 종료 유예 시간 동안 옛 Pod가 남아 있으면 관측되는 전체 Pod 수와 자원 사용량은 5개분을 넘을 수 있다. [Deployment의 terminating Pod 설명](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#terminating-pods)처럼 surge 계산과 종료 대기를 구별한다.
-3. 아니다. 이전 Pod template과 image로 되돌릴 뿐 외부 데이터 변경에는 별도 migration·복구 전략이 필요하다.
-4. 아니다. PDB는 eviction API를 통한 자발적 disruption을 제한하며 모든 outage를 예방하지 않는다.
+### 문제 2
+Startup probe가 아직 성공하지 않았다. Readiness와 liveness는 실행되는가?
 
-다음 장에서는 누가 API에 로그인하고 어떤 동작을 허가받으며 admission이 object를 어떻게 검사하는지 살펴본다.
+**해설:** Startup probe가 구성된 경우 성공할 때까지 liveness와 readiness 시작을 미룬다. 느린 정상 boot가 liveness에 의해 반복 재시작되는 것을 막는다.
+
+### 문제 3
+Readiness 실패가 기존 TCP 연결을 즉시 끊는가?
+
+**해설:** 아니다. Ready false와 EndpointSlice 갱신은 보통 새 traffic 선택을 막는다. 기존 keep-alive와 proxy pool은 drain·종료 설계가 필요하다.
+
+### 문제 4
+Liveness 실패 후 Pod UID가 바뀌는가?
+
+**해설:** 일반적으로 kubelet이 같은 Pod 안 container를 재시작하므로 UID는 같고 restartCount가 오른다. Controller replacement나 eviction이면 새 Pod UID다.
+
+### 문제 5
+`periodSeconds=5`, `failureThreshold=3`이면 정확히 10초에 실패 처리되는가?
+
+**해설:** 연속 세 실패가 필요하므로 관찰 예는 t=0,5,10일 수 있지만 최초 scheduling, timeout, kubelet 지연 때문에 정확한 wall-clock 보장은 아니다. `timeoutSeconds`가 각 시도 완료 시각에도 영향을 준다.
+
+## 공식 자료
+
+- [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+- [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Pod Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
+
+[이 책 목차](README.md) · [이전: 자원과 스케줄링](08-resources-scheduling.md) · [다음: 보안과 RBAC](10-security-rbac.md)

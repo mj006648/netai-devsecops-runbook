@@ -1,5 +1,24 @@
 # 11. 로컬 실습: 표가 실행 계획과 파일로 바뀌는 과정
 
+## 실행 요청이 계획과 파일이 되는 전체 추적
+
+local[2]는 한 컴퓨터의 한 Spark application에서 최대 두 task thread를 쓰는 설정이다. cluster manager와 독립 서버 두 대를 만들지 않는다. driver는 계획·job·stage 상태를 가진 process이고 task thread는 입력 partition을 처리한다. Python worker가 필요한 사용자 함수가 없다면 내장 DataFrame 연산은 주로 JVM 경로에서 실행된다.
+
+여섯 입력에서 e4=99와 e6=NULL을 필터하면 e1,e2,e3,e5 네 행이다. 두 입력 partition이라고 가정하면 P0=(S1 20,S1 22,S2 19), P1=(S2 99,S3 23,S3 NULL)이다. P0 부분 상태는 S1(42,2),S2(19,1), P1은 필터 뒤 S3(23,1)이다. 같은 sensor key를 모으는 Exchange 뒤 최종 평균은 S1=21,S2=19,S3=23이다.
+
+위치 표 S1=north,S2=south,S3=west를 join하면 세 결과다. writer task가 Parquet 파일을 만들고 job commit 뒤 재읽기 행 수 3을 확인한다. raw_rows=6, valid_rows=4, parquet_roundtrip_rows=3이라는 기존 예상값은 이 흐름에서 나온다.
+
+계획의 Filter는 품질 조건, HashAggregate는 부분·최종 상태, Exchange는 shuffle 경계, Join은 위치 결합이다. AdaptiveSparkPlan 표시는 AQE가 켜진 wrapper일 수 있으며 실제 stage 수는 실행 시 확인한다. 교육 문서의 예상 출력은 이번 작성 과정의 실측이 아니다.
+
+실패 시 P1 task만 재시도할 수 있지만 임시 파일과 commit protocol을 구분한다. driver collect를 큰 데이터로 확대하지 않는다. local 성공은 executor network loss나 Kubernetes 권한을 검증하지 않는다.
+
+### 완전 풀이 문제 5개
+1. 유효 행은? **해설:** e4,e6을 제외한 4행이다.
+2. S1 부분 상태는? **해설:** sum42,count2다.
+3. S3 평균은? **해설:** 23/1=23이다.
+4. roundtrip 행은? **해설:** 센서별 세 결과를 써서 3행이다.
+5. local[2]는 서버 두 대인가? **해설:** 한 machine의 두 task thread다.
+
 이 장은 한 컴퓨터에서 `local[2]`로 Spark를 실행한다. 숫자 2는 로컬 task 실행 스레드 수다. 서버 두 대나 executor 두 개를 뜻하지 않는다. 입력은 여섯 행뿐이지만, 분산 실행에 쓰이는 DataFrame·집계·shuffle·join·파일 쓰기 원리를 관찰할 수 있다.
 
 **이 장의 새 예제는 교육용 프로그램이며 이번 문서 작성 과정에서 실행하지 않았다. 아래 출력은 코드와 입력에서 계산한 예상 결과다.** 앞서 실제 실행한 Iceberg 실습은 [Iceberg 실습 장](../apache-iceberg/README.md)의 별도 실행 기록을 따른다.

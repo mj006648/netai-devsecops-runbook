@@ -6,6 +6,32 @@ Planner는 SQL 결과가 같은 여러 physical plan을 열거하고 통계와 c
 
 이 장의 숫자와 출력은 교육용이며 실제 PostgreSQL 실행 결과가 아니다.
 
+## 논리 계획에서 물리 계획으로
+
+**논리 계획**은 관계 대수 관점에서 무엇을 계산할지 나타낸다. filter, projection, join 같은 노드가 있지만 scan 방식이나 join 알고리즘은 아직 정하지 않을 수 있다. **물리 계획**은 순차 스캔·인덱스 스캔·hash join처럼 실행기가 수행할 구현을 고른 트리다. 플래너는 카탈로그 통계를 읽어 후보별 **cardinality**, 즉 출력 행 수를 추정한다. **selectivity**는 입력 중 통과 비율이며 `출력 행/입력 행`이다.
+
+100만 행에서 `country='KR'` 선택도 0.1, `status='paid'` 선택도 0.2라고 하자. 독립이라고 가정하면 둘 다 만족할 선택도는 `0.1×0.2=0.02`, 예상 20,000행이다. 실제로 KR 주문의 90%가 paid라면 실제는 90,000행으로 4.5배 과소 추정한다. 두 열 상관관계를 단일 열 통계가 놓친 결과다. 이 오차가 join 앞에 있으면 nested loop 반복, hash build 크기, spill 여부를 함께 틀릴 수 있다.
+
+cost 단위는 ms가 아니다. 설명용으로 순차 페이지 1, 임의 페이지 4, 행 CPU 0.01이라고 하자. 순차 스캔 10,000페이지와 100만 행 필터는 `10000×1 + 1000000×0.01 = 20,000 cost`다. 인덱스 경로가 3페이지 탐색과 20,000개 임의 힙 페이지를 예상하면 `3×4 + 20000×4`만으로 80,012가 되어 인덱스가 있어도 더 비싸다. cache, correlation, covering 여부가 바뀌면 상대 순서도 달라진다.
+
+## 탐색 공간과 실행 관측
+
+세 테이블 A,B,C의 inner join은 `(A⋈B)⋈C`, `(A⋈C)⋈B`, `(B⋈C)⋈A` 등 순서와 각 scan/join 구현 조합을 가진다. 테이블 수가 늘면 후보가 폭발하므로 optimizer는 동적 계획법, pruning, 휴리스틱 또는 제한된 탐색을 쓴다. 최저 cost 선택은 탐색한 후보와 모형 안에서의 선택이지 모든 하드웨어 상태에서 절대 최적이라는 증명이 아니다.
+
+EXPLAIN은 추정 계획을 보이고 실행하지 않는 형태가 기본이다. EXPLAIN ANALYZE는 문장을 실제 수행하고 actual rows, loops, time을 붙인다. 노드의 actual rows가 loop당 값인지 총합인지 도구 형식을 확인한다. UPDATE·DELETE·함수 호출을 ANALYZE하면 실제 부작용이 생길 수 있으며 rollback되지 않는 외부 효과나 sequence도 고려한다.
+
+CIDR 2025의 QOaaS 연구는 Calcite/Cascades 계열 탐색을 여러 엔진에 서비스로 제공하는 방향을 탐구한 prototype이다. 기초 원리에서 바뀌는 비용은 “각 엔진이 계획 탐색과 규칙을 중복 구현하는 비용”과 “여러 실행 엔진의 통계·물리 능력을 하나의 최적화 인터페이스로 표현하는 비용”이다. 모든 Spark 질의에서 실측 우위를 보장한다는 뜻이 아니다. 비교 실험은 동일 SQL 의미, 엔진별 지원 연산자, 통계 신선도, cold/warm cache를 고정하고 planning time과 execution time을 분리해야 한다.
+
+2026 preprint의 filtered vector lakehouse 연구는 파일 pruning과 근사 최근접 이웃 탐색을 결합하는 문제를 다룬다. 전통 optimizer 관점에서는 filter selectivity가 어느 파일과 벡터 후보를 읽을지 바꾼다. 조건을 먼저 강하게 적용하면 탐색 공간은 줄지만 recall을 잃지 않는 조건부 정확성 계약이 필요하다. 아직 preprint이므로 특정 제품의 일반 보장으로 쓰지 않고, cold run의 파일 I/O와 warm run의 cache 효과, filter 정확성과 ANN recall을 별도 축으로 측정한다.
+
+### 문제 5개
+
+1. 100만행, 선택도 0.03의 예상 행 수는? **해설:** 30,000행이다.
+2. estimate 1,000, actual 100,000의 오차는? **해설:** actual/estimate 100배 과소 추정이다.
+3. cost 200이 200ms인가? **해설:** 아니다. 설정된 I/O·CPU 상대 단위의 합이며 실시간과 직접 같지 않다.
+4. LIMIT 1은 무엇을 바꾸는가? **해설:** 모든 행의 total cost보다 첫 행까지 startup cost가 낮은 경로를 선호하게 할 수 있다.
+5. EXPLAIN ANALYZE DELETE를 운영 데이터에서 관찰용으로 실행해도 되는가? **해설:** 실제 DELETE를 실행한다. 격리된 복제 데이터와 트랜잭션 경계, 외부 효과를 먼저 설계해야 한다.
+
 ![05. Query planning과 cost 흐름](assets/query-plan-tree.svg)
 
 ## 1. 단어와 실제 위치

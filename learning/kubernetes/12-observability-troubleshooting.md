@@ -1,6 +1,89 @@
 # 12. 관찰성과 문제 해결
 
 [이 책 목차](README.md) · [이전: Helm, Kustomize와 GitOps](11-delivery-helm-gitops.md) · [다음: 로컬 실습](13-local-labs.md)
+## 한 장애를 네 신호로 연결한다
+
+이 장의 수치와 출력은 교육용 예상 관찰이며 실제 클러스터 측정 결과가 아니다. 월요일 10:00에 API p99 latency가 200ms에서 2.4s로 올랐고 error rate가 0.2%에서 8%가 됐다고 하자.
+
+**Metric**은 시간에 따른 숫자 표본이다. Counter는 요청 총수처럼 증가하고, gauge는 현재 queue 길이처럼 오르내리며, histogram은 latency를 bucket별 누적 count와 sum으로 집계한다. **Log**는 process가 사건과 문맥을 기록한 record다. **Trace**는 한 요청을 여러 service·database span으로 연결한다. **Kubernetes status/event**는 control plane과 kubelet이 본 객체 상태다.
+
+```mermaid
+flowchart LR
+    U["사용자 GET /orders<br/>trace_id=t9"] --> G["Gateway span 40ms"]
+    G --> A["API Pod span 2100ms"]
+    A --> D["DB query span 1900ms"]
+    M["Histogram p99=2.4s<br/>error=8%"] --> I["Incident 시작"]
+    E["Event: OOMKilled<br/>restartCount 증가"] --> I
+    L["Log trace_id=t9<br/>pool timeout"] --> A
+    T["Trace t9"] --> D
+```
+
+Metric→incident는 이상을 넓게 발견한다. Event는 container 수명 변화를 설명한다. Log와 trace ID는 특정 요청의 application·DB 시간을 연결한다. 어느 하나만으로 모든 원인을 증명하지 않는다.
+
+## Cardinality는 왜 비용과 신뢰성을 해치는가
+
+Metric label 조합 하나가 time series를 만든다. `method` 5개 × `route` 40개 × `status` 6개 × `pod` 100개면 최대 120,000 series다. 여기에 `user_id` 백만 개를 label로 넣으면 폭증한다. User·request ID는 log/trace field에 두고 metric label은 제한된 집합을 사용한다.
+
+Pod name label은 rollout마다 새 값이 생겨 series churn을 만든다. Service-level SLO에는 stable workload·route label로 집계하고, Pod별 진단 metric은 보존 기간과 목적을 분리한다.
+
+## Histogram과 p99 손계산의 한계
+
+10,000개 요청 중 latency bucket 누적 count가 다음과 같다고 하자.
+
+| le bucket | 누적 count |
+|---:|---:|
+| 0.1s | 8,000 |
+| 0.25s | 9,500 |
+| 0.5s | 9,850 |
+| 1s | 9,930 |
+| 2.5s | 9,995 |
+| +Inf | 10,000 |
+
+p99 위치는 9,900번째다. 0.5s bucket에는 9,850개뿐이고 1s bucket에 9,930개이므로 p99는 0.5~1s 구간으로 추정된다. Histogram query는 bucket 안 분포를 보간할 수 있지만 실제 9,900번째 raw latency를 저장한 것은 아니다. Bucket 경계를 SLO 근처에 두는 이유다.
+
+Instance별 quantile summary를 평균내는 것은 전체 p99가 아니다. Histogram bucket은 여러 replica를 합산할 수 있지만 scrape 누락, reset, rate window를 고려한다.
+
+## SLI, SLO, error budget, alert
+
+SLI(Service Level Indicator)는 성공률·latency처럼 측정한 지표다. SLO는 “28일 동안 유효 요청 99.9% 성공” 같은 목표다. 99.9%이면 error budget은 0.1%다. 1,000,000 요청 기간이면 허용 실패는 1,000개다.
+
+5분에 100,000 요청 중 2,000개가 실패하면 실패율 2%이고 budget 소비 속도는 목표 허용률 0.1%의 20배다. 짧은 window만 alert하면 순간 noise가 많고 긴 window만 쓰면 늦다. 빠른 burn과 지속 burn을 함께 보는 multi-window alert를 설계한다.
+
+SLO alert는 원인 진단이 아니다. Alert annotation에 dashboard, log query, runbook을 연결하고 실제 traffic·maintenance 조건을 기록한다.
+
+## 완전 수치 시간표
+
+| 시각 | 사용자/SLI | Kubernetes 상태 | App/DB 증거 | 판단 |
+|---:|---|---|---|---|
+| 09:55 | p99 0.2s, error 0.2% | Ready 4/4 | DB pool 40% | 정상 기준 |
+| 10:00 | p99 1.2s | Ready 4/4 | DB query p99 0.9s | Process는 Ready지만 느림 |
+| 10:02 | p99 2.4s, error 8% | Pod p2 OOMKilled | pool wait·cache 증가 | Memory spike와 DB 지연 병존 |
+| 10:03 | Ready 3/4 | Endpoint p2 제외 | 기존 keep-alive 일부 error | Readiness 전파 |
+| 10:05 | 새 Pod Pending | FailedScheduling memory | available 3 | Request/allocatable 확인 |
+| 10:10 | DB p99 정상 | 새 Pod Ready | app p99 0.3s | 회복 후보 |
+| 10:20 | error budget burn 하락 | Ready 4/4 | trace 정상 | Incident 종료 조건 검토 |
+
+OOMKilled 하나를 root cause로 즉시 확정하지 않는다. DB 지연이 queue와 memory를 키웠을 수도 있고 memory leak가 DB connection을 고갈시켰을 수도 있다. Timeline과 trace, heap/profile 등 후속 증거로 인과 방향을 검증한다.
+
+## 로그와 이전 container
+
+Kubelet이 같은 Pod 안 container를 재시작하면 현재 log와 이전 instance log가 다르다. `--previous` 개념으로 이전 종료 직전 stack trace를 찾는다. Pod가 삭제되면 node-local log가 사라질 수 있어 중앙 수집과 retention이 필요하다.
+
+Log에는 timestamp, severity, service, operation, trace ID를 구조화해 남긴다. Password·token·개인정보를 넣지 않는다. Sampling은 volume을 줄이지만 rare error를 잃을 수 있어 error log 정책을 분리한다.
+
+## Trace sampling과 인과관계
+
+Head sampling은 요청 시작 때 보존 여부를 고르고, tail sampling은 완료 후 latency/error를 보고 결정할 수 있다. Sampling되지 않은 요청이 없었다는 뜻은 아니다. Trace context propagation이 끊기면 gateway와 DB span이 다른 trace로 보인다.
+
+Trace의 긴 DB span은 그 요청에서 시간이 소비된 위치를 보여 주지만 DB가 최초 원인임을 단독 증명하지 않는다. App가 잘못된 query를 생성했거나 lock holder가 다른 workload일 수 있다. Query fingerprint, lock wait, database metric으로 이어간다.
+
+## 문제와 유도 해설 보강
+
+1. Running Pod면 SLO 정상인가? **아니다.** Phase는 process 수명 요약이고 latency/error SLI는 별도다.
+2. User ID를 metric label로 넣으면 왜 위험한가? **Series cardinality가 사용자 수만큼 늘어 memory·query 비용과 수집 안정성을 해친다.**
+3. Histogram p99가 0.8s이면 정확한 raw 99번째 값인가? **Bucket 누적값에서 보간한 추정일 수 있다.** Bucket 설계를 본다.
+4. 99.9% SLO에서 1,000,000 요청의 budget은? **실패 1,000개**다.
+5. OOMKilled event 하나로 root cause를 확정할 수 있는가? **아니다.** 원인 또는 결과일 수 있어 timeline·resource·trace·application 증거를 연결한다.
 
 문제 해결은 명령을 많이 실행하는 일이 아니라 증상을 어느 계층에서 관찰했는지 구분하는 일이다. Kubernetes object status, event, container log, metric, application trace를 같은 시간축으로 연결한다.
 

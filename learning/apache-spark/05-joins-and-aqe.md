@@ -1,5 +1,27 @@
 # 05. Join과 AQE
 
+## 중복, 물리 전략, AQE를 한 추적으로 분리한다
+
+Events P0=(S1,10),(S2,20),(S1,30), P1=(S3,40),(S1,50)이고 Devices=(S1,A),(S1,B),(S2,C)라고 하자. 논리 inner join에서 S1 event 3행과 device 2행은 3×2=6행, S2는 1행, S3는 0행이므로 결과 7행이다. join 전략은 이 cardinality 의미를 바꾸면 안 된다.
+
+broadcast hash join이면 driver 쪽 broadcast 준비 stage가 Devices 세 행을 수집·직렬화하고 executor마다 hash relation을 만든다. P0 task는 S1 두 행에서 4결과, S2에서 1결과로 5행을 내고 P1은 S1 한 행에서 2행을 낸다. 작은 쪽이 300바이트라는 모형이어도 executor 20개면 복사 payload 총 6,000바이트이며 hash overhead는 추가다.
+
+sort-merge join이면 양쪽을 device_id로 shuffle하고 정렬한다. S1 reduce partition은 Events 3행과 Devices 2행을 fetch해 6조합을 만든다. map-side 데이터가 memory를 넘으면 sort spill이 생긴다. 결과 7행은 같아야 하며 checksum과 key별 count로 먼저 검증한다.
+
+통계가 Devices 8MiB라 SMJ를 골랐지만 필터 후 materialized query stage가 80KiB라면 AQE가 지원 조건에서 broadcast로 바꿀 수 있다. 초기 plan과 final adaptive plan을 둘 다 기록한다. join type 미지원, hint, threshold, memory 조건 때문에 바뀌지 않을 수도 있다.
+
+S1이 전체 Events의 90%면 sort-merge의 S1 reduce task가 straggler가 된다. AQE skew 처리가 큰 partition을 쪼갤 수 있어도 모든 join과 복잡한 key를 자동 해결하지 않는다. 업무상 중복 오류를 AQE로 가릴 수도 없다.
+
+### 완전 풀이 문제 5개
+
+1. S1 join 결과는? **해설:** 3×2=6행이다.
+2. 전체 inner join 결과는? **해설:** S1 6+S2 1=7행이다.
+3. broadcast가 결과 중복을 없애는가? **해설:** 전략만 바꾸므로 아니다.
+4. AQE 전환 판단 시점은? **해설:** query stage 실제 통계가 materialize된 뒤 가능하다.
+5. 한 reduce만 오래 걸리면? **해설:** key skew, partition byte, spill과 GC를 우선 본다.
+
+[CIDR 2025 QOaaS](https://www.vldb.org/cidrdb/2025/towards-query-optimizer-as-a-service-qoaas-in-a-unified-lakehouse-ecosystem-can-one-qo-rule.html)는 multi-engine prototype 연구이고 [Spark 최신 SQL 튜닝](https://spark.apache.org/docs/latest/sql-performance-tuning.html)은 제품 기능 조건이다.
+
 [이 책 목차](README.md) · [이전](04-partitions-and-shuffle.md) · [다음](06-memory-and-performance.md)
 
 Join의 결과 의미를 먼저 정하고, 그 결과를 어떤 실행 전략으로 만들지 살핀다. 빠른 물리 계획이 잘못된 join 조건을 올바르게 고쳐 주지는 않는다.

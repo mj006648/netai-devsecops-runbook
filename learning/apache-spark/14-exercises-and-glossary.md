@@ -1,5 +1,23 @@
 # 14. 문제·해설·용어사전
 
+## 실행 전체를 묻는 종합 사례
+
+source file 세 개가 Spark input partition P0~P2로 계획되고 각 주문이 P0=(KR10,US20,KR30), P1=(JP40,KR50,US60), P2=(KR70,JP80,US90)이라고 하자. amount>=20, region별 sum, 결과 write를 수행한다.
+
+Stage 0은 P0에서 KR30·US20, P1에서 JP40·KR50·US60, P2에서 KR70·JP80·US90을 만든다. key shuffle 뒤 Stage 1은 KR150,US170,JP120을 만든다. writer가 세 결과를 F0,F1 두 파일로 쓸 수 있으며 파일 수와 executor 수는 다르다. commit 전 파일 존재만으로 독자에게 공개하지 않는다.
+
+P2 shuffle block이 executor 유실로 사라지면 lineage로 P2를 다시 계산한다. task가 외부 API를 호출했다면 중복될 수 있다. 결과 세 행 collect는 작지만 원본 전체 collect는 driver OOM 위험이 있다. 이 한 사례에서 source file, input partition, stage, task, shuffle, output file, commit과 recovery가 서로 다른 객체임을 확인한다.
+
+### 추가 완전 풀이 문제 5개
+
+1. 필터 뒤 P0 상태는? **해설:** KR30,US20이다.
+2. shuffle 전 상태 수는? **해설:** P0 2+P1 3+P2 3=8개다.
+3. KR 최종 합은? **해설:** 30+50+70=150이다.
+4. P2 block 유실 복구는? **해설:** source가 남아 있으면 P2 map task를 재실행한다.
+5. F0,F1 존재가 commit 증거인가? **해설:** sink의 job/table commit 상태를 확인해야 한다.
+
+용어를 읽을 때 영어 이름만 외우지 않는다. partition은 task가 처리하는 실행 조각, stage는 shuffle 같은 경계 사이의 task 집합, DAG는 계산 의존 관계, lineage는 잃은 조각을 다시 만드는 경로다. shuffle은 같은 key를 모으도록 데이터를 재분배하는 과정이고 checkpoint는 streaming 진행·state를 복구할 지속 기록이다. watermark는 event-time 정리 경계이며 processing-time TTL과 다르다.
+
 [이 책의 목차](README.md) · [이전 장](13-versions-and-migration.md)
 
 코드의 줄 수 대신 실제 행·파일·task·상태를 계산한다. 먼저 답을 가리고 손으로 표와 화살표를 그려 본다. 숫자는 교육용이다.

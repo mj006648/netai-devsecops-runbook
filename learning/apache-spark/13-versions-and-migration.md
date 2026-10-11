@@ -1,5 +1,24 @@
 # 13. 버전과 마이그레이션
 
+## 버전은 하나가 아니라 호환성 행렬이다
+
+Spark engine, Python client, Java runtime, Scala binary ABI, connector artifact, catalog와 table format version은 서로 다른 객체다. ABI는 이미 컴파일한 library가 호출 규칙과 type 표현을 맞출 수 있는 약속이다. iceberg-spark-runtime-4.0_2.13 이름은 Spark integration 4.0과 Scala binary 2.13을 뜻하며 Spark 4.2에서 자동 호환된다는 뜻이 아니다.
+
+현재 4.0.4+Java21+Scala2.13+Iceberg1.12.0 기준선을 4.2로 옮긴다고 하자. 먼저 dependency resolution만 보지 말고 동일 입력 snapshot에서 schema, NULL·ANSI cast, 결과 checksum과 오류 행 수를 비교한다. 다음으로 logical/physical plan, join 전략, partition 수, shuffle·spill을 비교한다. 마지막으로 task failure와 streaming checkpoint 재시작을 격리 환경에서 확인한다.
+
+원문 세 값 12,12.5,unknown을 정수 cast할 때 이전 환경이 NULL 두 개를 만들고 새 ANSI 설정이 첫 실패에서 예외를 내면 성공/실패 자체가 달라진다. try_cast로 NULL을 선택했다면 failure count=2를 별도 기록한다.
+
+streaming migration은 code가 compile되는지만 보는 일이 아니다. checkpoint의 query metadata, source offset, state schema, partition 수와 sink commit 계약이 새 runtime에서 호환되어야 한다. 호환되지 않으면 새 checkpoint로 시작할 때 과거 입력 재독과 중복 정책을 설계한다.
+
+rollback도 package 번호만 내리는 일이 아니다. 새 writer가 만든 table format feature, schema type, checkpoint state를 이전 reader가 이해하지 못할 수 있다. reader 호환을 확인하기 전에 쓰기 기능을 활성화하지 않는다.
+
+### 완전 풀이 문제 5개
+1. Spark 최신과 Iceberg 최신이면 호환인가? **해설:** runtime artifact 지원표를 확인한다.
+2. Scala 2.13 suffix 의미는? **해설:** binary ABI 계열이다.
+3. 결과 행 수만 같으면 migration 성공인가? **해설:** 값·오류·plan·복구도 비교한다.
+4. checkpoint를 새로 만들면 같은 실행인가? **해설:** offset·state 연속성이 달라질 수 있다.
+5. rollback 전 무엇을 확인하는가? **해설:** 새 format·schema·state를 이전 reader가 이해하는지 본다.
+
 [이 책 목차](README.md) · [이전](12-research-workflows.md) · [다음](14-exercises-and-glossary.md)
 
 기준일은 **2026-10-09**다. Spark 버전, Python·Java·Scala 버전, connector와 테이블 포맷을 각각 기록한다. 최신 버전이라는 사실은 배포 조합의 호환성을 자동 보장하지 않는다.

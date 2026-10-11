@@ -253,7 +253,114 @@ B의 매핑: 가상 page 1 → 물리 frame 12
 
 **가상 머신(VM, Virtual Machine)**은 가상 하드웨어 위에서 guest 커널을 실행하는 방식이다. 컨테이너마다 일반적으로 새 커널이 생기는 것은 아니다. 컨테이너에서 보이는 메모리·CPU 값과 사용 가능한 자원 한도도 다를 수 있다. 호스트 RAM이 남아 있어도 cgroup 메모리 제한에 걸릴 수 있다. Mount/PID/network namespace는 프로세스가 보는 관점을 나누고, user namespace는 UID·capability의 의미를 바꿀 수 있으며, cgroup은 계층적으로 자원을 계정·제한한다. 이들은 파일 permission, ACL, SELinux/AppArmor 같은 접근 제어를 자동으로 대체하지 않는다. [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html), [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
 
-## 14. 안전한 첫 관찰: 출력의 어느 부분을 읽을까?
+## 14. 셸이 외부 명령 하나를 실행할 때 생기는 객체를 끝까지 추적한다
+
+터미널에서 `grep error app.log`를 입력했다고 하자. 셸이 문자열을 그대로 커널에 보내는 것은 아니다. 셸은 먼저 **token(토큰, 문법상 한 단위)**으로 나누고 quoting, variable expansion, redirection 같은 자기 문법을 처리한다. 그다음 외부 프로그램을 실행할 자식 프로세스를 만든다.
+
+전형적인 흐름을 단순화하면 다음과 같다.
+
+```text
+1. shell PID 100이 terminal에서 한 줄을 읽는다.
+2. shell이 argv = ["grep", "error", "app.log"]를 만든다.
+3. fork 계열 동작으로 child PID 101을 만든다.
+4. child는 처음에는 parent의 주소 공간 내용을 COW로 공유하고 fd table을 물려받는다.
+5. child가 execve 계열로 grep 실행 파일을 현재 process image에 적재한다.
+6. PID 101은 유지되지만 code, data, stack, argv, environment가 새 프로그램 기준으로 바뀐다.
+7. grep이 app.log를 open/read하고 결과를 fd 1에 쓴다.
+8. grep이 exit status와 함께 종료한다.
+9. shell이 wait 계열로 child 상태를 회수하고 다음 prompt를 보여 준다.
+```
+
+**fork**는 실행 중인 process를 바탕으로 child를 만드는 계열의 동작이다. Linux 구현과 라이브러리 wrapper 세부는 다를 수 있지만, 학습의 핵심은 parent와 child라는 두 실행 흐름이 생긴다는 것이다. 두 process는 서로 다른 virtual address space를 가지며, 초기 page는 copy-on-write로 물리적으로 공유될 수 있다. **exec**는 새 process를 만드는 이름이 아니다. 성공한 `execve()`는 현재 process의 프로그램 image를 바꾸므로 PID 101은 그대로다. 성공하면 이전 프로그램의 다음 줄로 돌아오지 않는다.
+
+parent와 child는 fork 뒤 어느 쪽이 먼저 실행될지 보장되지 않는다. 따라서 “fork 다음 줄에서 parent가 먼저 값을 바꿨으니 child가 반드시 본다” 같은 코드는 잘못됐다. 두 주소 공간의 일반 heap 변수도 서로 독립적으로 바뀐다. 공유하려면 pipe, shared memory, socket 같은 명시적 IPC(Inter-Process Communication, 프로세스 간 통신)가 필요하다.
+
+`execve()`는 실행 파일만 바꾸고 모든 process 속성을 초기화하는 것도 아니다. PID, 현재 작업 디렉터리, 일부 자격과 열린 fd는 규칙에 따라 이어질 수 있다. fd에 `FD_CLOEXEC`이 설정되어 있으면 성공한 exec에서 닫힌다. signal disposition, memory mapping 등은 각각 별도 규칙을 가진다. 보안 분석에서는 “무엇이 보존되고 무엇이 재설정되는가”를 man page와 프로그램 설정에서 확인한다.
+
+## 15. fd는 파일 자체가 아니라 process의 번호표다
+
+`open()`의 반환값 3은 disk의 세 번째 파일이라는 뜻이 아니다. 현재 process의 **file descriptor table(fd 표)**에서 3번 칸이 kernel의 열린 파일 상태를 가리킨다는 뜻이다. Linux 문서에서 구분해야 할 세 층은 다음과 같다.
+
+| 층 | 예 | 누가 소유·관리하나 | 대표 수명 |
+|---|---|---|---|
+| fd 번호 | process A의 3 | process의 fd table | `close(3)` 또는 exec의 close-on-exec까지 |
+| open file description | 현재 offset, status flag, file object 연결 | kernel | 이를 가리키는 fd reference가 모두 사라질 때까지 |
+| filesystem object | inode와 pathname으로 찾은 대상 | filesystem/kernel | fd 하나보다 길 수 있고 unlink와도 별도 규칙 |
+
+`dup2(oldfd, newfd)`는 newfd 번호가 oldfd와 같은 open file description을 가리키게 한다. 번호 두 개가 생겨도 file offset을 공유할 수 있다. fork로 물려받은 fd도 같은 open file description을 참조할 수 있다. 반대로 같은 pathname을 두 번 독립적으로 `open()`하면 보통 서로 다른 open file description이 생겨 offset도 독립적이다.
+
+숫자로 보자.
+
+```text
+process P: fd 3 ─┐
+                 ├─ open file description X(offset=0) ─ inode I
+dup(3) → fd 7 ───┘
+
+read(fd 3, 100) 뒤 X.offset=100
+read(fd 7, 20)은 같은 X를 보므로 byte 100부터 읽고 X.offset=120
+```
+
+파일을 `unlink()`해 pathname이 directory에서 사라져도 이미 열린 fd가 참조하는 object는 즉시 무효가 되지 않을 수 있다. 마지막 reference가 닫힐 때 storage block이 회수될 수 있다. “파일 이름이 없다”와 “열린 파일 내용에 접근할 수 없다”는 같은 문장이 아니다.
+
+## 16. `cmd1 | cmd2 > out`에서 pipe와 redirection이 만들어지는 순서
+
+**pipe(파이프)**는 한쪽 끝에 쓴 byte stream을 다른 끝에서 읽게 하는 kernel IPC object다. 보통 `pipe()`는 read end와 write end라는 fd 두 개를 돌려준다. `cmd1 | cmd2 > out`을 실행할 때 셸은 명령 둘을 단순히 차례로 끝낸 뒤 연결하지 않는다. 둘을 실행할 process와 fd 연결을 먼저 준비한다.
+
+```text
+초기 shell: fd 0=terminal input, 1=terminal output, 2=terminal error
+pipe 생성: r=3, w=4
+out open: o=5
+
+child A(cmd1): dup2(w, 1)  → stdout이 pipe write end
+               불필요한 r,w,o를 close
+child B(cmd2): dup2(r, 0)  → stdin이 pipe read end
+               dup2(o, 1)  → stdout이 out file
+               불필요한 r,w,o를 close
+parent shell:  r,w,o를 close하고 두 child를 기다림
+```
+
+불필요한 pipe end를 닫는 이유는 자원 절약만이 아니다. reader가 EOF(더 읽을 byte가 없다는 상태)를 보려면 모든 write-end reference가 닫혀야 한다. parent shell이 w를 실수로 계속 들고 있으면 cmd1이 끝났어도 cmd2의 read가 EOF를 기다리며 멈출 수 있다.
+
+`>`는 shell 문법이다. 프로그램은 대개 “내 출력이 터미널인지 파일인지”를 직접 open하지 않고 fd 1에 쓴다. shell이 exec 전에 fd 1의 연결을 바꿔 둔다. `2>&1`의 순서가 중요한 이유도 fd table을 그 시점에 복제하기 때문이다.
+
+```text
+cmd >out 2>&1   : 먼저 fd1→out, 다음 fd2→현재 fd1(out), 둘 다 out
+cmd 2>&1 >out   : 먼저 fd2→현재 fd1(terminal), 다음 fd1→out, stderr는 terminal
+```
+
+## 17. terminal, session, process group과 job control
+
+**terminal(터미널)**은 입력 byte, 출력 byte, foreground job과 제어 문자를 다루는 장치 인터페이스다. 그래픽 terminal emulator도 보통 pseudo-terminal의 한쪽을 통해 shell과 연결된다. **session(세션)**은 login이나 terminal job-control 범위를 묶는 process 집합이고, **process group(프로세스 그룹)**은 pipeline처럼 한 job으로 제어할 process들을 묶는다.
+
+interactive shell은 foreground pipeline을 하나의 process group으로 만들고 terminal의 foreground process group으로 지정할 수 있다. 사용자가 `Ctrl-C`를 누르면 terminal driver가 문자 `C`를 단순히 foreground process의 stdin으로 넘기는 것이 아니라, 설정에 따라 foreground process group에 `SIGINT`를 보낸다. pipeline의 모든 command가 함께 중단될 수 있는 이유다. `Ctrl-Z`는 보통 `SIGTSTP`를 보내 job을 멈추고, shell의 `fg`/`bg`는 process group 단위로 계속 실행시키고 foreground 소유권을 조절한다.
+
+background job이 controlling terminal에서 읽으려 하면 `SIGTTIN` 같은 job-control signal로 멈출 수 있다. `&`를 붙였다고 stdin이 자동으로 `/dev/null`이 되는 보편 법칙은 아니다. shell 종류와 job-control 설정을 확인해야 한다.
+
+## 18. signal은 함수 호출도 queue message도 아니다
+
+**signal(시그널)**은 kernel이 process 또는 thread에 비동기 사건을 알리는 메커니즘이다. 기본 동작은 종료, 정지, 무시 등 signal마다 다르고, program이 handler를 등록할 수 있는 signal도 있다. 그러나 signal handler는 평범한 함수 호출과 다르다. 원래 실행 흐름 사이에 끼어들 수 있으므로 handler 안에서 호출해도 안전한 함수가 제한된다.
+
+signal을 보냈다는 사실과 handler가 바로 실행됐다는 사실도 구분한다. target thread의 mask로 block되어 pending 상태일 수 있다. 일반 signal은 같은 종류가 여러 번 도착해도 각 횟수가 독립 queue처럼 보존된다고 가정하면 안 된다. real-time signal은 queueing 규칙이 다르다. `SIGKILL`과 `SIGSTOP`은 catch하거나 ignore할 수 없다.
+
+종료 signal을 받은 process가 바로 사라지는 것도 아니다. handler가 정리 작업을 할 수 있고, `SIGTERM`을 무시할 수 있으며, uninterruptible kernel wait 상태에서는 관측상 종료가 늦을 수 있다. `SIGKILL`도 hardware를 순간이동시키는 명령이 아니라 kernel이 task를 종료하도록 표시하는 메커니즘이다.
+
+## 19. exit, zombie, wait: process가 끝난 뒤 남는 최소 상태
+
+child가 종료하면 address space와 열린 fd 같은 대부분의 자원은 정리되지만, parent가 종료 status와 자원 사용 정보를 받을 수 있도록 작은 process 상태가 남는다. 이를 **zombie(좀비)**라고 한다. zombie는 CPU를 계속 쓰는 실행 중 process가 아니다. 다만 PID table entry가 쌓이므로 parent는 `wait()`/`waitpid()` 계열로 회수해야 한다.
+
+시간표를 보자.
+
+| 시각 | child PID 201 | parent PID 200 |
+|---:|---|---|
+| t0 | running | running 또는 sleeping |
+| t1 | `_exit(7)`로 종료 시작 | 아직 상태 미회수 |
+| t2 | zombie, status 7 보존 | `SIGCHLD`를 받을 수 있음 |
+| t3 | `waitpid(201, ...)` 결과로 회수됨 | status가 정상 종료인지 signal 종료인지 해석 |
+| t4 | process table에서 201 제거 가능 | 다음 작업 진행 |
+
+parent가 먼저 종료한 orphan child는 system의 reaper 역할을 맡은 process에 reparent될 수 있다. container의 PID namespace에서는 namespace의 PID 1이 child reaping과 signal 처리 책임을 제대로 수행해야 한다. “container는 process 하나뿐”이라는 가정으로 PID 1 역할을 무시하면 zombie 누적이나 종료 전달 문제가 생길 수 있다.
+
+## 20. 안전한 첫 관찰: 출력의 어느 부분을 읽을까?
 
 다음 명령은 Linux에서 현재 환경을 짧게 조회한다. 패키지가 없으면 설치하지 말고 해당 관찰을 미실행으로 적는다. 실제 호스트명·사용자명·경로가 포함된 결과를 공개 저장소에 그대로 붙이지 않는다.
 
@@ -289,7 +396,7 @@ PY
 
 예상 결과의 핵심은 주소 `0x7234`, `0xc234`, 그리고 `3` code points와 `5` bytes다. 여기서는 주소 변환을 **계산으로 모형화**했다. Python이 실제 메모리의 물리 주소를 조회한 결과가 아니다.
 
-## 15. 해설을 보기 전에 풀어 볼 문제
+## 21. 해설을 보기 전에 풀어 볼 문제
 
 **문제 1. 두 Python 프로세스에서 같은 가상 주소가 나오면 같은 데이터를 공유하는가?**
 
@@ -314,5 +421,32 @@ PY
 **문제 6. 프로그램이 5초 걸렸고 CPU는 0.2초 썼다. 느린 CPU가 원인인가?**
 
 그 수치만으로는 아니다. I/O, 네트워크, 잠금, 스케줄링 대기 등 나머지 시간을 설명해야 한다. 더 빠른 CPU를 사는 가설보다 대기 구간을 관측하는 것이 먼저다.
+
+**문제 7. parent가 `open("x")`한 fd 3을 가진 채 fork했고 child가 fd 3에서 10 byte를 읽었다. parent의 다음 read offset은 언제 10이 될 수 있는가?**
+
+fork로 상속한 두 fd가 같은 open file description을 참조하면 file offset도 공유할 수 있다. child read가 offset을 10으로 진행시킨 뒤 parent가 읽으면 그 위치에서 시작할 수 있다. parent와 child가 같은 fd 번호를 가졌다는 숫자만이 아니라 어느 open file description을 참조하는지 봐야 한다.
+
+**문제 8. pipeline reader가 입력을 모두 처리했는데 종료하지 않는다. 어떤 fd 수명을 먼저 검사하는가?**
+
+pipe의 write end를 아직 누가 들고 있는지 본다. shell parent나 다른 child가 불필요한 write fd를 닫지 않았다면 reader는 writer가 남아 있다고 보고 EOF를 기다릴 수 있다.
+
+**문제 9. `cmd >out 2>&1`과 `cmd 2>&1 >out`의 결과가 왜 다른가?**
+
+redirection을 왼쪽에서 오른쪽으로 적용한다고 보면 된다. 첫 명령은 fd 2를 이미 out을 가리키는 fd 1에 복제한다. 둘째는 fd 2를 아직 terminal을 가리키는 fd 1에 복제한 뒤 fd 1만 out으로 바꾼다.
+
+**문제 10. child가 종료됐는데 `ps`에 zombie로 남아 있다. `SIGKILL`을 zombie에게 다시 보내면 해결되는가?**
+
+zombie는 이미 실행을 끝냈으므로 죽일 실행 흐름이 없다. parent 또는 reaper가 wait 계열로 종료 상태를 회수해야 한다. 원인은 child보다 parent의 lifecycle 처리에 있다.
+
+**문제 11. `Ctrl-C`가 pipeline의 마지막 command에만 전달된다고 가정해도 되는가?**
+
+대개 interactive job control에서는 foreground process group 전체에 `SIGINT`가 전달된다. process group과 terminal foreground 설정을 확인한다. shell 구현과 signal disposition에 따라 각 process의 실제 반응은 달라질 수 있다.
+
+## 22. 1차 참고 자료
+
+- Linux man-pages: [fork(2)](https://man7.org/linux/man-pages/man2/fork.2.html), [execve(2)](https://man7.org/linux/man-pages/man2/execve.2.html), [waitpid(2)](https://man7.org/linux/man-pages/man2/wait.2.html)
+- Linux man-pages: [open(2)](https://man7.org/linux/man-pages/man2/open.2.html), [dup(2)](https://man7.org/linux/man-pages/man2/dup.2.html), [pipe(7)](https://man7.org/linux/man-pages/man7/pipe.7.html)
+- Linux man-pages: [credentials(7)](https://man7.org/linux/man-pages/man7/credentials.7.html), [signal(7)](https://man7.org/linux/man-pages/man7/signal.7.html), [termios(3)](https://man7.org/linux/man-pages/man3/termios.3.html)
+- GNU C Library Manual: [Job Control](https://www.gnu.org/software/libc/manual/html_node/Job-Control.html)
 
 이제 [01장](../../../kubernetes/storage/data-systems-foundations/01-linux-read-write.md)의 `프로세스 → fd → page cache → 저장장치` 경로를 읽는다. 새 용어가 나오면 **무엇을 가리키는가, 누가 관리하는가, 어떤 문제 때문에 필요한가** 세 문장으로 풀어 적는다.

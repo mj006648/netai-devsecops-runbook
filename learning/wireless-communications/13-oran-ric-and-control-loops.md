@@ -1,5 +1,65 @@
 # 13. O-RAN, RIC, 제어 루프
 
+## 먼저 해결하려는 문제: 너무 빠른 무선과 너무 느린 운영 사이
+
+기지국 안의 slot scheduler는 수백 μs~ms 규모로 UE의 전송 자원을 정한다. 운영자는 수분·시간 규모로 cell 혼잡과 장애를 본다. 이 사이에는 “최근 여러 측정을 보고 수십 ms~1초 안에 parameter를 조정하고 싶다”는 빈 공간이 있다.
+
+RAN 측정값을 받아 허용된 제어를 계산하는 실행 환경을 **RIC(RAN Intelligent Controller)** 라고 한다. 10 ms~1 s 정도의 제어 시간 규모를 다루는 환경은 **near-RT RIC**, 1초보다 긴 분석·정책·모델 수명 관리를 맡는 환경은 **Non-RT RIC**다. 이 범위는 O-RAN 기능 구분이며 모든 요청의 보장 지연 숫자는 아니다.
+
+near-RT RIC 안에서 실행되는 앱을 **xApp**, Non-RT 영역에서 긴 기간 분석·정책을 수행하는 앱을 **rApp**이라 부른다. xApp이 매 OFDM symbol을 직접 scheduling하는 것이 아니다. DU 내부 scheduler가 빠른 결정을 계속 맡고 xApp은 더 긴 관측 창의 control knob를 조정한다.
+
+## 네 interface를 “누가 누구에게 무엇을”로 읽는다
+
+정책과 모델 지침을 Non-RT 쪽에서 near-RT 쪽으로 보내는 길이 필요하다. 이것이 **A1 interface**다. near-RT RIC가 CU·DU 같은 RAN node에서 측정을 받고 허용된 제어를 보내는 길은 **E2 interface**다. 운영·구성·성능·장애 관리는 **O1 interface**, cloud infrastructure 자원 관리는 SMO와 O-Cloud 사이의 **O2 interface**가 맡는다.
+
+| interface | 출발→도착 | 주로 운반하는 객체 | 수명 |
+|---|---|---|---|
+| A1 | Non-RT RIC→near-RT RIC | policy·AI guidance | 초~시간 |
+| E2 | near-RT RIC↔RAN node | report·subscription·control | 10 ms~1 s loop |
+| O1 | SMO↔관리 대상 기능 | 구성·성능·장애 관리 | 운영 수명 |
+| O2 | SMO↔O-Cloud | 인프라 배치·자원 관리 | 배포 수명 |
+
+interface 이름만 같다고 원하는 control이 자동 가능하지 않다. E2 service model이 측정 항목, 보고 trigger, control action과 parameter 의미를 정의하고 node가 그 기능을 구현해야 한다.
+
+## 한 UE에서 closed loop 전체 추적
+
+UE A의 downlink 처리량이 떨어졌다고 하자. DU는 CQI, PRB 사용량, HARQ 실패를 내부 counter로 모은다. E2 agent가 service model 형식의 report로 바꿔 near-RT RIC에 보낸다. xApp은 최근 500 ms feature를 만들고 혼잡 cell offset 조정 후보를 계산한다.
+
+| 시각 | 주체 | 상태 |
+|---:|---|---|
+| 0~500 ms | DU | UE A CQI·HARQ·buffer 측정 |
+| 520 ms | E2 agent | service-model report |
+| 540 ms | xApp | feature·추론 결과 |
+| 550 ms | near-RT RIC | policy·guard 검사 |
+| 570 ms | E2 node | control 지원·범위 검사 |
+| 600~1100 ms | DU | 새 parameter 아래 scheduling |
+| 1120 ms | xApp | 결과 report와 전후 비교 |
+
+모델 출력이 “offset +5”라도 A1 policy 허용 범위가 ±3이면 +3으로 제한하거나 거부한다. node가 control action을 지원하지 않으면 관측만 하고 O1 운영 절차로 넘긴다.
+
+## stale measurement와 안전 fallback
+
+UE가 고속 이동해 channel 상태가 50 ms 안에 바뀌는데 report·queue·inference에 200 ms가 걸리면 xApp은 과거 상황을 제어한다. report timestamp와 age를 검사하고 너무 오래되면 적용하지 않는다.
+
+모델 service가 timeout이면 마지막 AI action을 무기한 유지하지 않는다. 검증된 rule-based baseline, 이전 안전 parameter, no-op 중 하나로 fallback한다. rollback 조건과 action rate limit가 없으면 두 controller가 서로 반대 조정을 반복해 oscillation을 만들 수 있다.
+
+## 추가 문제와 완전 해설
+
+### 1. xApp이 slot scheduler인가?
+아니다. near-RT 시간 규모에서 보고를 모아 허용 knob를 조정하며 빠른 slot 결정은 DU가 맡는다.
+
+### 2. A1 policy가 직접 안테나 전력을 바꾸는가?
+아니다. near-RT 앱이 policy와 측정을 결합해 지원 control을 선택하고 node가 검증·적용한다.
+
+### 3. E2 연결이 살아 있으면 모든 제어가 가능한가?
+아니다. service model과 node 구현·권한이 해당 action을 지원해야 한다.
+
+### 4. 100 ms 유효 측정을 250 ms 뒤 적용하면?
+stale data이므로 거부·fallback하는 조건이 필요하다.
+
+### 5. 연구 prototype 정확도 95%가 표준 보장인가?
+아니다. dataset·metric·simulation 조건의 연구 결과와 interface 규격·제품 지원은 별도다.
+
 ## 용어를 실제 실행 위치와 데이터 흐름에 연결하기
 
 `RIC(RAN Intelligent Controller, RAN 지능형 제어기)`는 단순한 분석 화면 이름이 아니다. RAN에서 측정값을 받아 상태를 만들고, 허용된 제어 명령을 다시 RAN 노드에 전달하는 소프트웨어 실행 환경이다. `near-RT(near-Real-Time, 준실시간)`와 `Non-RT(Non-Real-Time, 비실시간)`의 구분은 컴퓨터가 빠르냐 느리냐가 아니라 **어떤 시간 규모의 판단을 맡는가**에 관한 경계다.
