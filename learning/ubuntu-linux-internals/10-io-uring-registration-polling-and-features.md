@@ -2,29 +2,59 @@
 
 [이 책 목차](README.md) · [이전: io_uring SQ·CQ와 lifetime](09-io-uring-sq-cq-and-lifetimes.md) · [다음: io_uring ordering, error와 fsync](11-io-uring-ordering-errors-and-fsync.md)
 
-io_uring에는 fixed file, fixed buffer, SQPOLL, IOPOLL처럼 성능을 높일 수 있는 mode가 많다. 이름만 켜면 빨라지는 switch가 아니며 kernel, device, filesystem, privilege, memory budget 조건이 맞아야 한다. Registration은 lookup·pinning 비용을 바꾸지만 자동 zero-copy 보장은 아니다.
+앞 장의 일반 프로그램은 열린 파일을 작은 정수 번호로 가리킨다. 이 번호를 파일 식별 번호, 영어로 file descriptor 또는 fd라고 했다. 프로그램이 읽기 요청을 보낼 때마다 커널은 현재 프로세스의 번호표에서 fd를 찾아 실제 열린 파일 객체를 확인하고, 그 객체를 요청이 끝날 때까지 참조한다. 이 찾기 작업을 **조회(lookup)**라고 부른다. 한두 번에는 작지만 같은 파일로 초당 수십만 요청을 보내면 반복 비용이 된다.
 
-이 장은 교육용 설계 설명이다. Kernel sysctl, seccomp, cgroup, NIC queue 또는 io_uring mode를 실제로 변경하지 않았다.
+읽은 byte를 놓을 프로그램 메모리 구간은 **버퍼(buffer)**다. 버퍼의 가상 주소만으로 장치가 영원히 같은 물리 page를 사용할 수 있는 것은 아니다. 요청 동안 커널은 해당 page에 접근할 권한과 현재 연결을 확인하고, 필요한 경로에서는 page가 이동하거나 회수되어 주소 의미가 사라지지 않도록 참조를 유지한다. page를 이런 식으로 붙잡아 두는 성격의 동작을 **고정(pinning)**이라고 한다. 너무 많은 page를 오래 고정하면 다른 프로그램이 회수해 쓸 RAM이 줄어든다.
+
+반복 조회와 page 준비를 줄이기 위해 io_uring은 파일과 버퍼를 ring에 미리 알려 주는 기능을 제공한다. 이 절차를 **미리 등록(registration)**이라고 한다. 등록 상태는 ring 내부의 표와 kernel reference로 존재하며, 등록 해제 또는 ring 종료까지 수명이 이어질 수 있다.
+
+- 미리 등록한 파일 표를 **fixed file table**이라고 한다. 요청은 일반 fd 대신 이 표의 index를 쓸 수 있다.
+- 미리 등록한 메모리 구간을 **fixed buffer**라고 한다. 요청은 등록 표의 buffer index와 범위를 쓸 수 있다.
+- 수신 작업에서 커널이 준비된 여러 buffer 중 하나를 고르게 하는 별도 pool은 **provided buffer**라고 한다.
+
+fixed라는 말은 file 내용이나 virtual address 숫자가 영원히 변하지 않는다는 뜻이 아니다. ring이 reference와 table entry를 관리한다는 뜻이다. 등록만으로 file data 복사가 모두 없어지거나 storage 장치가 반드시 application memory에 직접 쓰는 것도 아니다.
+
+또 다른 반복 비용은 “새 제출이 왔는가” 또는 “장치 작업이 끝났는가”를 알기 위해 thread가 잠들고 깨어나는 과정이다. 상태를 반복 확인하는 방식을 **polling(폴링)**이라고 한다. 잠들어 알림을 기다리는 대신 CPU를 사용해 확인하므로 지연을 줄일 수 있지만 CPU 시간과 전력을 낸다.
+
+- **SQPOLL(Submission Queue Polling)**은 커널 thread가 제출 큐인 SQ를 반복 확인해 새 SQE를 가져가는 mode다.
+- **IOPOLL(I/O Polling)**은 지원 storage 작업의 완료 상태를 적극적으로 확인하는 mode다.
+
+둘은 이름이 비슷하지만 확인 대상과 실행 주체가 다르다. SQPOLL을 켠다고 storage 완료까지 자동 polling하는 것이 아니고, IOPOLL을 켠다고 모든 file·socket이 지원되는 것도 아니다.
+
+마지막 문제는 실행 환경의 차이다. 개발할 때 사용한 header에 기능 이름이 있어도 실제 실행 중인 kernel, filesystem, device와 보안 정책이 지원하지 않을 수 있다. 프로그램이 실행 시점에 기능 제공 여부를 질문하고 확인하는 일을 **기능 탐지(feature probing)**라고 한다. 탐지가 실패하면 검증된 일반 경로로 돌아가는 **대체 경로(fallback)**가 필요하다.
+
+이 장은 설정을 실제 host에 적용하지 않는 설계 설명이다. kernel 설정, 보안 filter, cgroup, NIC queue를 변경하지 않았다.
 
 ![io_uring mode와 전제 조건](assets/io-uring-modes.svg)
 
-## 1. Registration이 필요한 이유
+## 1. 등록이 필요한 문제를 한 요청으로 추적한다
 
-일반 request마다 kernel은 fd를 file object로 lookup하고 userspace buffer page를 pin하거나 copy할 준비를 한다. 반복 workload에서는 file과 buffer를 ring에 미리 등록하여 hot path 비용을 줄일 수 있다.
+등록하지 않은 일반 read 요청의 단순 경로는 다음과 같다.
+
+```text
+1. application이 fd 12와 buffer 주소 A를 SQE에 기록
+2. kernel이 fd table에서 12를 찾아 file object F의 reference 확보
+3. buffer A의 page와 permission을 확인하고 I/O에 필요한 상태 준비
+4. filesystem·device 경로가 작업
+5. CQE를 공개하고 file/page reference 정리
+6. 다음 요청에서 같은 조회와 준비를 다시 수행할 수 있음
+```
+
+등록 경로에서는 초기화 때 file object F를 fixed-file slot 5에, memory range A를 fixed-buffer slot 3에 넣는다. 반복 request는 slot index를 사용한다. 비용 일부를 request마다 내는 대신 startup, table memory, page 고정과 update 동기화 비용을 낸다.
 
 ```mermaid
 flowchart TD
-    U["userspace"] --> N{"일반 request"}
-    N --> FD["매번 fd lookup"]
-    N --> BP["buffer mapping/pinning 준비"]
-    U --> R{"registered request"}
-    R --> FT["fixed file table index"]
-    R --> BT["fixed buffer table index"]
-    FT --> K["kernel I/O path"]
-    BT --> K
-    FD --> K
-    BP --> K
+    A["일반 요청"] --> L["매번 fd 번호표에서 파일 객체 조회"]
+    A --> M["버퍼 page와 권한 준비"]
+    R["미리 등록한 요청"] --> F["fixed-file 표의 index"]
+    R --> B["fixed-buffer 표의 index"]
+    L --> K["커널 I/O 경로"]
+    M --> K
+    F --> K
+    B --> K
 ```
+
+registration은 성능 보장이 아니라 비용 위치를 바꾸는 선택이다. 짧게 한 번 쓰는 file과 buffer라면 초기 등록 비용이 더 클 수 있다. 장기 pinning은 RAM 회수와 container memory budget에 영향을 준다. 파일 또는 buffer table을 바꿀 때는 진행 중인 request가 어느 entry를 참조하는지 수명을 관리해야 한다.
 
 ## 2. Fixed file table
 
@@ -212,51 +242,185 @@ Registration이 절반 성공한 뒤 후속 단계가 실패할 수 있으므로
 
 Throughput만 높고 polling CPU가 한 core를 독점하면 shared node에서는 전체 효율이 나빠질 수 있다.
 
-## 14. 처음 보는 단어로 registration과 polling을 끝까지 따라가기
+## 15. fixed file과 fixed buffer의 실제 table과 수명
 
-**Registration**은 application이 file이나 memory region을 ring에 미리 알려 kernel table에 reference를 유지하게 하는 작업이다. Request마다 같은 object를 다시 찾아 준비하는 비용을 줄이려는 이유가 있다.
+**registration(등록)**은 application이 반복해서 사용할 resource를 ring에 미리 알려 kernel 내부 table 또는 pinned-memory 상태를 준비하는 절차다. table은 ring context에 연결되어 존재하고 unregister 또는 ring 종료까지 수명이 이어진다. request마다 fd lookup이나 page 준비를 줄이는 데 필요하지만 data copy 전체가 없어졌다는 뜻은 아니다.
 
-**Pinning**은 memory page가 I/O 도중 이동·회수되어 주소 의미가 사라지지 않도록 kernel이 page reference를 유지하는 것이다. Pin된 page가 많으면 reclaim 가능한 RAM이 줄어 system 전체에 비용을 준다.
-
-**memlock**은 user가 lock/pin할 수 있는 memory 양과 관련된 resource limit·accounting을 가리킨다. Fixed buffer registration이 실패하면 application heap 여유만 보지 말고 memlock, cgroup, privilege와 kernel 정책을 함께 본다.
-
-**Polling**은 event notification을 기다려 sleep하는 대신 CPU가 상태를 반복 확인하는 방식이다. Wake-up latency를 줄일 수 있지만 확인하는 동안 CPU cycle과 power를 소비한다.
-
-SQPOLL의 실제 흐름은 다음과 같다.
+fixed file table의 slot 5에 file object F를 등록했다고 하자.
 
 ```text
-1. Ring setup 때 kernel SQ polling thread 생성 요청
-2. Application은 SQE와 tail을 shared memory에 공개
-3. Polling thread가 tail 변화를 CPU에서 반복 확인
-4. 새 entry를 발견하면 file table과 opcode를 읽어 request issue
-5. 일정 idle 조건 뒤 polling thread가 sleep할 수 있음
-6. Application은 NEED_WAKEUP 상태를 확인하고 필요하면 enter syscall로 깨움
-7. I/O completion은 별도 CQ path로 돌아옴
+application fd 12 ──register──> ring fixed-file slot 5 ──reference──> file object F
+request SQE: fixed-file flag + index 5
 ```
 
-IOPOLL의 실제 대상은 SQ가 아니라 device completion이다. Application이 completion을 기다리며 driver/device의 poll method를 호출하는 쪽이므로 지원 storage와 direct-I/O 조건이 중요하다.
+등록 뒤 application이 fd 12를 close해도 registration이 F reference를 유지하는 계약에서는 slot 5 request가 동작할 수 있다. 그러나 slot update/unregister와 in-flight request가 경쟁하지 않도록 library/kernel API 규칙을 지킨다. 숫자 5는 일반 fd가 아니라 ring-local table index다.
 
-**Probe**는 여기서 monitoring metric이 아니라 kernel이 feature를 제공하는지 runtime에 질문하는 동작이다. Setup result의 feature bit와 register probe의 opcode bit를 확인한다. Version string 비교보다 실제 booted kernel ABI를 묻는다.
+fixed buffer는 user VA range의 page를 ring에 등록해 반복 I/O에 사용한다. **pinning(고정)**은 kernel/device가 접근하는 동안 page가 회수·이동되지 않도록 reference를 유지하는 성격이다. 등록된 memory를 application allocator에 free하거나 다른 용도로 재사용하면 안 된다. unregister 성공과 모든 in-flight request 종료 전에 mapping을 없애면 수명 오류다.
+
+| 상태 | file slot | buffer slot | 가능한 작업 |
+|---|---|---|---|
+| REGISTERED | F reference 보유 | B page range 준비 | 신규 request 제출 가능 |
+| IN_FLIGHT | request가 slot 사용 | kernel/device가 B 참조 가능 | update/free 금지 |
+| DRAINING | 신규 제출 중단 | completion 대기 | 기존 request 회수 |
+| UNREGISTERED | table reference 제거 | pin/reference 제거 | application close/free 가능 |
+
+## 16. fixed buffer와 provided buffer는 목적이 다르다
+
+fixed buffer는 request가 “등록 table의 몇 번째 range를 사용한다”고 지정해 매번 memory 준비 비용을 줄이려는 기능이다. **provided buffer**는 receive처럼 결과 크기와 도착 시점을 모를 때 application이 buffer pool을 kernel에 제공하고 kernel이 하나를 골라 CQE에 buffer ID를 돌려주는 기능이다.
 
 ```text
-1. 최소 flag로 ring setup 시도
-2. params.features를 bit 단위로 기록
-3. 필요한 opcode를 register probe에서 확인
-4. Fixed file/buffer 같은 registration을 작은 크기로 시도
-5. EPERM, EINVAL, EOPNOTSUPP, ENOMEM을 서로 다른 원인으로 분류
-6. 조건이 하나라도 맞지 않으면 검증된 fallback mode 선택
+fixed buffer:
+SQE가 buffer index 3을 지정
+→ 특정 address/length가 request와 연결
+
+provided-buffer pool:
+application이 group 9에 buffer ID 100..163 제공
+→ recv request가 group 9를 지정
+→ kernel이 available buffer 하나 선택
+→ CQE flags에서 선택된 buffer ID 확인
+→ payload 처리 뒤 application이 다시 pool에 반환
 ```
 
-**Seccomp**는 process가 사용할 syscall을 filter하는 Linux 보안 mechanism이다. **LSM**은 SELinux, AppArmor 같은 Linux Security Module hook으로 security decision을 내린다. Rootless container 안의 root UID도 host의 seccomp·LSM·sysctl을 자동 우회하지 않는다.
+provided buffer를 CQE 처리 전에 pool에 돌려주면 kernel이 같은 memory를 새 packet으로 덮을 수 있다. buffer ID에도 generation이나 state table을 두어 FREE→KERNEL_OWNED→APP_OWNED→RETURNABLE 전이를 확인한다.
 
-## 15. 문제
+## 17. SQPOLL과 IOPOLL의 실행 주체
+
+**polling**은 event 알림을 기다려 sleep하는 대신 상태를 반복 확인하는 방식이다. wakeup latency와 syscall을 줄일 수 있지만 CPU time과 power를 사용한다.
+
+**SQPOLL**은 kernel polling thread가 SQ tail을 살펴 새 submission을 가져가는 mode다. application이 매 batch마다 enter syscall로 kernel을 깨우는 비용을 줄일 수 있다. polling thread는 실제 kernel thread이며 idle timeout 뒤 잠들 수 있고, 다시 깨우는 절차가 필요할 수 있다. SQPOLL이 device completion까지 계속 poll한다는 뜻은 아니다.
+
+**IOPOLL**은 지원하는 storage I/O의 completion을 interrupt 대신 적극적으로 확인하는 mode다. filesystem, file type, block device와 direct-I/O 조건이 맞아야 할 수 있다. network socket completion을 일반적으로 IOPOLL로 해결한다고 생각하면 안 된다.
+
+둘을 동시에 사용해도 역할은 분리된다.
+
+```text
+application → SQ에 request publish
+SQPOLL thread → SQE를 가져와 I/O 제출
+device → 작업 진행
+IOPOLL completion path → 완료 상태 확인
+kernel → CQE publish
+application → CQE 회수
+```
+
+## 18. polling break-even을 숫자로 판단한다
+
+interrupt/wakeup path가 request당 평균 8µs를 더하고 polling 전용 CPU 한 개 비용을 초당 1 CPU-second라고 단순화하자. 초당 100,000 completion이면 절약 후보는 `100000×8µs=0.8 CPU-second/s`다. 이 이상적 계산에서도 polling CPU 1개보다 작으므로 다른 이득과 batch 효과가 없으면 순 CPU 비용은 손해일 수 있다.
+
+초당 1,000 completion이면 절약 후보는 0.008 CPU-second/s에 불과하다. polling thread가 대부분 빈 queue를 확인한다. 반대로 매우 높은 IOPS와 엄격한 tail latency에서 dedicated core와 power를 지불할 가치가 있을 수 있다.
+
+8µs는 예시이며 실제 syscall, interrupt coalescing, CPU frequency, NUMA와 device queue에 따라 다르다. p50만 보지 말고 p99, CPU utilization, energy, throughput, idle workload까지 비교한다.
+
+## 19. runtime feature 탐지와 fallback
+
+새 kernel header로 compile됐다는 사실은 실행 host가 opcode와 flag를 지원한다는 보장이 아니다. application은 setup 결과, probe API, feature bit와 실제 operation error를 확인한다. library version과 kernel feature도 분리한다.
+
+안전한 흐름은 다음과 같다.
+
+1. 기본 ring setup을 시도한다.
+2. 필요한 opcode/feature를 runtime probe한다.
+3. filesystem, file type, device와 privilege 조건을 검사한다.
+4. optional fast path를 작은 request로 검증한다.
+5. unsupported, invalid, permission failure를 분류한다.
+6. buffered read/write, epoll 또는 non-polling io_uring 같은 fallback으로 전환한다.
+7. fallback 사용 여부를 metric/log로 남긴다.
+
+fallback은 “조용히 느려져도 된다”가 아니다. 기능이 필수면 명확히 startup failure를 내고, 성능 최적화면 SLA가 허용하는 fallback을 둔다.
+
+## 20. EPERM을 원인 이름으로 착각하지 않는다
+
+`EPERM`은 operation이 허용되지 않았다는 errno 결과지만 원인은 하나가 아니다. io_uring setup 또는 operation이 seccomp profile에 막히거나, container sandbox가 syscall/flag를 제한하거나, kernel security policy와 privilege 조건을 만족하지 못할 수 있다. SQPOLL의 privilege 규칙도 kernel version에 따라 변해 왔다.
+
+진단은 kernel version 하나만 보는 것이 아니라 다음을 나눈다.
+
+| 층 | 질문 |
+|---|---|
+| syscall policy | seccomp가 io_uring_setup/enter/register를 허용하는가? |
+| process credential | 필요한 capability나 resource limit 조건이 있는가? |
+| cgroup/sandbox | runtime policy가 기능을 막는가? |
+| kernel build/config | 기능이 compile되고 활성화됐는가? |
+| device/filesystem | mode가 해당 path에서 지원되는가? |
+
+권한을 무작정 높이는 대신 최소한의 정책 변경 또는 fallback을 선택한다.
+
+## 21. ZCRX full trace와 하드웨어 조건
+
+**ZCRX(zero-copy receive)**는 network receive payload를 application에 전달할 때 전통적 copy를 줄이려는 io_uring 경로다. “최신 kernel이면 모든 NIC에서 자동 zero-copy”가 아니다. kernel 문서는 hardware header/data split, queue steering과 RSS, memory area와 refill ring 같은 조건을 설명한다.
+
+개념 상태를 추적한다.
+
+```text
+1. application이 receive memory area와 refill ring을 준비·등록
+2. buffer token을 refill ring에 publish
+3. NIC/driver가 지원 queue로 packet payload를 해당 memory에 배치
+4. kernel이 CQE에 offset/length와 buffer 정보를 publish
+5. application이 payload를 읽는 동안 buffer는 APP_OWNED
+6. 처리가 끝난 뒤 token을 refill ring에 반환
+7. 반환 publish 뒤에야 kernel/NIC가 같은 영역을 재사용
+```
+
+5단계 전에 반환하면 payload를 읽는 중 새 packet이 덮을 수 있다. 반환하지 않으면 available buffer가 고갈되어 receive가 멈추거나 fallback/error가 날 수 있다. queue와 CPU affinity가 바뀌면 hardware steering 전제가 깨질 수 있다.
+
+ZCRX availability는 runtime feature, NIC/driver support, configuration과 권한을 모두 확인한다. 성능 평가는 copy 감소뿐 아니라 buffer memory, refill overhead, packet size, cache locality와 drop을 포함한다.
+
+## 22. 전체 초기화와 종료 순서
+
+```text
+startup:
+  ring setup
+  runtime feature probe
+  file table 등록
+  fixed/provided buffer memory 할당·등록
+  optional SQPOLL/IOPOLL/ZCRX 조건 검증
+  fast path 또는 fallback 선택
+
+steady state:
+  request slot+generation 확보
+  buffer ownership 전환
+  SQE publish
+  CQE와 terminal condition 회수
+  buffer를 올바른 pool에 반환
+  feature별 error를 metric에 기록
+
+shutdown:
+  신규 제출 중단
+  multishot/cancel outstanding 정리
+  모든 terminal CQE 회수
+  provided/ZCRX buffer 회수
+  fixed buffer unregister
+  fixed file unregister
+  application fd close와 memory free
+  ring close
+```
+
+unregister가 busy/error를 반환하면 무시하고 memory를 free하지 않는다. 어느 request가 reference를 유지하는지 찾아 terminal completion을 회수한다.
+
+## 23. 추가 완전 해설 문제
+
+1. fixed file slot 5를 쓰는 request가 진행 중일 때 slot을 다른 file로 교체해도 되는가?
+   - update API의 atomicity와 in-flight reference 규칙을 따라야 한다. 임의 table memory 변경은 안 된다.
+2. fixed buffer 등록 직후 malloc memory를 free해도 되는가?
+   - unregister와 in-flight 종료 전에는 안 된다.
+3. provided buffer CQE를 받자마자 payload 처리 전에 반환하면?
+   - 같은 memory가 새 receive로 덮일 수 있다.
+4. SQPOLL을 켜면 NVMe completion도 자동 busy-poll인가?
+   - 아니다. submission polling이며 IOPOLL과 구분한다.
+5. header가 opcode를 정의하면 runtime host에서 지원되는가?
+   - probe와 실제 setup/operation 결과를 확인해야 한다.
+6. EPERM이면 root로 실행하는 것이 첫 해법인가?
+   - 아니다. seccomp, sandbox, capability와 mode 조건을 구분하고 최소 변경이나 fallback을 쓴다.
+7. ZCRX buffer는 언제 refill ring에 돌려주는가?
+   - application이 payload 사용을 완전히 끝낸 뒤다.
+8. polling workload가 초당 1,000건뿐이면 왜 손해일 수 있는가?
+   - 절약할 wakeup 비용보다 빈 polling CPU와 power 비용이 훨씬 클 수 있다.
+
+## 24. 문제
 
 1. Fixed buffer를 등록하면 buffered file read의 data copy가 항상 사라지는가?
 2. SQPOLL과 IOPOLL은 각각 무엇을 poll하는가?
 3. Kernel version이 충분히 새롭다. Opcode를 바로 사용해도 되는가?
 4. ZCRX CQE를 처리한 buffer를 언제 refill ring에 돌려주는가?
 
-## 16. 해설
+## 25. 해설
 
 1. 아니다. Registration은 page 준비 비용을 줄일 수 있지만 filesystem/page cache/device path의 copy 의미는 별도다.
 2. SQPOLL은 submission queue, IOPOLL은 지원 storage의 completion을 poll한다.

@@ -242,6 +242,29 @@ Compaction 전후 snapshot ID는 달라질 수 있지만 행 값은 같아야 �
 
 평균만 기록하지 말고 실제 목적에 맞는 지연 분포와 반복 수를 기록한다. 초소형 로컬 실습의 실행 시간을 테라바이트 운영 테이블 성능으로 외삽하지 않는다.
 
+### 조회에서 물리 정리까지: 8행 예제를 끝까지 계산한다
+
+**계획(planning)**은 SQL 조건을 실제로 열 파일과 적용할 삭제 정보로 바꾸는 과정이다. 계획 결과는 행 자체가 아니라 읽기 작업 목록이다. Catalog는 이름 `sales.orders`를 metadata M20에 연결하고, M20의 현재 snapshot S20은 manifest list L20을 가리킨다고 하자. L20에는 manifest 두 개가 있다. 첫 manifest는 서울 partition의 A.parquet와 B.parquet, 둘째 manifest는 부산 partition의 C.parquet를 기록한다. 각 파일에는 네 행이 있어 전체 12행이다. `region='서울'` 조건은 manifest의 partition 요약으로 C를 제외한다. 이것이 pruning이며, 아직 A와 B 안의 행을 읽은 것은 아니다.
+
+A의 행은 `(101,정상)`, `(102,취소)`, `(103,정상)`, `(104,정상)`, B의 행은 `(105,정상)`, `(106,취소)`, `(107,정상)`, `(108,정상)`이라고 하자. Position delete P는 A의 position 1과 B의 position 1을 가리킨다. Reader가 A와 B의 8행을 읽고 P를 적용하면 102와 106이 사라져 6행이 보인다. SQL이 `status='정상'`까지 요구하므로 결과도 이 6행이다. “서울 파일 두 개를 골랐다”와 “최종 여섯 행을 반환했다” 사이에는 data file decode와 delete merge라는 별도 단계가 있다.
+
+Maintenance writer는 A 40 MiB, B 35 MiB, P 1 MiB를 읽어 삭제가 반영된 C2.parquet 60 MiB를 쓴다. 이 작업을 **rewrite**라 부른다. Rewrite는 행의 논리 의미를 유지하면서 파일 배치를 바꾸는 새 commit이다. Writer는 C2와 새 manifest, snapshot S21을 준비하고 catalog에 “현재가 여전히 S20이면 S21을 공개하라”고 요청한다. 성공 뒤 현재 reader는 C2 한 파일에서 6행을 읽고 P를 적용하지 않는다. 파일 열기 세 번이 한 번으로 줄었지만 60 MiB decode가 남기 때문에 실행 시간이 정확히 3분의 1이 된다는 결론은 나오지 않는다.
+
+History는 과거 snapshot으로 다시 갈 수 있게 하는 계보다. S20이 보존되는 동안 A·B·P 76 MiB와 C2 60 MiB가 함께 남아 저장소는 136 MiB를 사용할 수 있다. 현재 상태의 data bytes 60 MiB와 실제 저장 bytes 136 MiB를 혼동하면 안 된다. `expire_snapshots`가 보존 기간·최소 snapshot 수·branch/tag 참조를 검사해 S20을 제거하면 A·B·P가 더는 어느 유효 snapshot에서도 참조되지 않는지 계산할 수 있다. 지원되는 expiration 절차가 그 파일을 삭제했다면 76 MiB가 회수된다.
+
+**Orphan file**은 어떤 유효한 테이블 참조에도 속하지 않은 파일이다. 실패한 writer가 만든 X.parquet 12 MiB가 commit되지 않았다면 orphan 후보지만, 생성된 지 5분밖에 안 되었고 정상 writer가 30분 작업 중일 수 있다. Cleaner가 “현재 manifest에 없다”만 보고 X를 삭제하면 진행 중 commit을 깨뜨린다. 최대 작업 시간 2시간, 재시도 30분, 시계 오차 10분을 허용한다면 3시간 유예 같은 보수적 기준을 세우고 실제 환경의 상한을 근거로 조정해야 한다. Expiration은 알려진 snapshot의 수명을 줄이고, orphan cleanup은 참조 계보 밖 파일을 찾는다는 점도 다르다.
+
+이 trace의 관측값은 단계별로 나뉜다.
+
+| 단계 | 현재 snapshot | 현재 읽기 파일 | 보이는 행 | 저장소 후보 bytes |
+| --- | --- | --- | ---: | ---: |
+| rewrite 전 | S20 | A+B+P | 6 | 76 MiB |
+| C2 작성, commit 전 | S20 | A+B+P | 6 | 136 MiB |
+| S21 commit 후 | S21 | C2 | 6 | 136 MiB |
+| S20 expiration·삭제 후 | S21 | C2 | 6 | 60 MiB |
+
+Commit 전 C2는 reader에게 보이지 않는다. Commit 후에도 옛 파일은 history 때문에 남는다. Expiration 후에도 객체 저장소 versioning이나 백업이 별도 사본을 유지할 수 있으므로 표의 마지막 수치는 그 기능을 제외한 교육 모델이다.
+
 ## 10. 확인 질문과 해설
 
 **질문.** Compaction 뒤 현재 파일이 줄었는데 저장소 용량은 늘었다. 실패인가?
@@ -255,6 +278,18 @@ Compaction 전후 snapshot ID는 달라질 수 있지만 행 값은 같아야 �
 **질문.** 작은 파일이 1000개에서 10개가 되었는데 모든 쿼리가 100배 빨라지는가?
 
 **해설.** 파일 열기 비용이 일부 줄어도 데이터 읽기·삭제 적용·집계·shuffle 등 다른 비용이 남는다.
+
+**질문.** S20을 tag `audit`가 가리키고 있다. 기본 branch에서 S20보다 오래된 snapshot을 만료하도록 실행하면 A·B·P를 지워도 되는가?
+
+**해설.** 안 된다. Tag는 이름 있는 유효 참조이고 S20의 파일 집합을 계속 필요로 한다. 기본 branch의 현재점만 보고 파일 도달 가능성을 계산하면 과거 감사 조회가 깨진다. 모든 branch와 tag의 보존 정책을 포함해 reachability를 계산해야 한다.
+
+**질문.** Rewrite가 C2를 쓴 직후 catalog commit 응답이 timeout났다. C2를 바로 orphan으로 삭제해도 되는가?
+
+**해설.** 안 된다. 서버에서 commit이 성공했지만 응답만 유실되었을 수 있다. 먼저 catalog의 현재 snapshot과 작업 식별 정보로 성공 여부를 확인한다. 실패가 확정되어도 재시도에서 C2를 재사용할 수 있고 동시 reader나 metadata가 참조할 가능성을 검사한 뒤 유예 정책에 맡긴다.
+
+**질문.** Manifest rewrite가 manifest 200개를 20개로 줄였다. Data file도 10분의 1로 줄었는가?
+
+**해설.** 아니다. Manifest는 data/delete file을 설명하는 metadata 목록이다. Manifest rewrite는 그 목록의 배치를 바꾸지만 Parquet data file의 행 배치를 자동으로 합치지 않는다. Data compaction과 별도 효과를 측정해야 한다.
 
 ## 근거와 더 읽기
 

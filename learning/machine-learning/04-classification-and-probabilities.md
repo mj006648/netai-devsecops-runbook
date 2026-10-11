@@ -1,4 +1,116 @@
 # 04. 분류와 확률
+## 문제부터 시작한다: 점수 2는 왜 확률 2가 아닌가
+
+![04. 분류와 확률 도식](assets/classification-split.svg)
+
+**분류(classification)**는 입력을 미리 정한 범주 가운데 하나 이상에 배정하는 문제다. **범주(class)**는 가능한 답의 종류다. Spam 분류에서는 `spam`과 `정상`이 두 범주이고, 맞히려는 범주를 숫자로 기록한 것이 **정답 표지(label)**다. **특징(feature)**은 모델이 예측에 사용하는 입력 속성이다. 메일 한 통에서 링크 수 3과 특정 단어 수 2를 특징으로 쓰면 입력은 `x=[3,2]`다. 이렇게 숫자를 순서대로 묶은 것이 **벡터(vector)**다.
+
+**가중치(weight)**는 각 특징이 점수에 미치는 크기와 방향을 담은 모델 내부 숫자다. 가중치가 `w=[0.8,0.5]`이면 링크 수에는 0.8, 단어 수에는 0.5를 곱한다. **내적(dot product)**은 두 벡터에서 같은 위치의 숫자끼리 곱한 뒤 모두 더하는 연산이다. 따라서 `w·x=0.8×3+0.5×2=2.4+1=3.4`다. **편향(bias)**은 입력 특징이 모두 0일 때도 점수를 옮길 수 있는 절편 매개변수다. 편향 `b=-2`를 더하면 `z=3.4-2=1.4`다.
+
+이 `z`가 **로짓(logit)**이다. 로짓은 확률로 제한되기 전의 실수 점수라 음수, 0, 큰 양수가 모두 가능하다. binary classification에서는 로짓이 두 class의 log-odds를 나타내도록 학습한다. **Odds**는 사건 확률 `p`와 실패 확률 `1-p`의 비 `p/(1-p)`이고, log-odds는 그 비의 자연로그다. 로짓 0은 odds 1, 즉 확률 0.5에 해당한다.
+
+가중치와 편향은 학습이 바꾸는 **매개변수(parameter)**다. 이 문맥의 편향은 사회적 편향이 아니라 수식의 절편이다. 학습은 정답과 예측의 차이에서 매개변수별 변화 방향을 계산하고, 그 숫자를 이용해 가중치와 편향을 갱신한다.
+
+## Sigmoid를 한 숫자로 계산한다
+
+**Sigmoid**는 임의의 로짓 `z`를 0과 1 사이로 바꾸는 함수다.
+
+`p=1/(1+e^{-z})`
+
+여기서 `e`는 약 2.71828인 자연상수다. 자연스러운 연속 증가와 감소를 표현하는 지수함수의 밑으로 쓰며, `e^{-1.4}`는 `e`의 -1.4제곱이다. `z=1.4`이면 `e^{-1.4}≈0.2466`, 따라서 `p≈1/1.2466≈0.8022`다. 모델은 이 메일이 양성 class, 여기서는 spam일 확률을 약 0.802로 표현한다. 이 값은 학습 자료와 모델 가정 아래의 출력이지 현실의 보장된 빈도가 아니다.
+
+**Threshold**는 확률을 class 결정으로 바꾸는 문턱이다. threshold 0.5면 0.802는 spam, threshold 0.9면 정상으로 분류한다. 모델 parameter를 바꾸지 않고 문턱값만 바꾸면 **정밀도(precision)**와 **재현율(recall)** 사이의 균형이 달라진다. 정밀도는 양성이라고 예측한 사례 중 실제 양성의 비율, 재현율은 실제 양성 중 찾아낸 비율이다. 문턱을 높이면 엄격히 골라 양성 예측 수가 줄지만 놓치는 양성이 늘 수 있다. 뒤에서 실제 건수로 두 비율을 계산한다.
+
+```mermaid
+flowchart LR
+    X["feature x=[3,2]"] --> Z["logit z=w·x+b=1.4"]
+    Z --> P["sigmoid p=0.802"]
+    P --> T{"threshold 0.5"}
+    T -- 이상 --> C1["spam 예측"]
+    T -- 미만 --> C0["정상 예측"]
+    C1 --> M["정답과 비교해 loss·metric"]
+```
+
+## Softmax는 여러 class를 어떻게 비교하는가
+
+**Multiclass classification**은 서로 배타적인 class 중 하나를 고르는 문제다. 모델이 고양이·개·새 로짓 `[2,1,0]`을 냈다고 하자. **Softmax**는 각 지수값을 전체 합으로 나눠 합이 1인 확률 vector를 만든다.
+
+수치 overflow를 막기 위해 최대 로짓 2를 모두에서 빼 `[0,-1,-2]`로 만든다. 지수는 `[1,0.3679,0.1353]`, 합은 1.5032, 확률은 `[0.6652,0.2447,0.0900]`이다. 모든 로짓에 100을 더해도 차이는 같아 확률은 변하지 않는다.
+
+**Multilabel classification**은 label 여러 개가 동시에 참일 수 있는 문제다. 사진에 사람과 자동차가 모두 있을 수 있다. 각 label에 sigmoid를 따로 적용하므로 확률 합이 1일 필요가 없다. 이 문제에 softmax를 쓰면 서로 배타적이라는 잘못된 제약을 넣는다.
+
+## Cross-entropy가 틀린 자신감을 크게 벌주는 이유
+
+정답 class 확률 `p_y`에 대해 **cross-entropy loss**는 `-log(p_y)`다. 자연로그 `log`는 지수함수의 역함수다. 정답 확률이 0.8이면 loss는 약 0.223, 0.1이면 약 2.303, 0.001이면 약 6.908이다. 틀린데 매우 자신 있는 예측을 크게 벌한다.
+
+Binary에서 label `y∈{0,1}`이면 `L=-[y log p +(1-y)log(1-p)]`다. `y=1,p=0.8`이면 `-log(0.8)=0.223`이다. `y=0,p=0.8`이면 `-log(0.2)=1.609`다. 같은 확률이라도 정답에 따라 loss가 달라진다.
+
+실제 구현은 `log(0)`와 overflow를 피하려고 로짓에서 직접 안정적인 loss를 계산한다. sigmoid나 softmax를 먼저 계산한 뒤 log를 취하는 순진한 코드는 큰 로짓에서 0이나 1로 반올림되어 무한대 loss를 만들 수 있다.
+
+## Gradient가 로짓과 parameter를 바꾸는 과정
+
+**편미분(partial derivative)**은 여러 매개변수 중 하나만 바꾸고 나머지는 고정했을 때 손실이 변하는 비율이다. **기울기(gradient)**는 모든 매개변수의 편미분을 같은 순서로 묶은 벡터다. 벡터는 순서가 있는 숫자 묶음이다. Binary cross-entropy와 sigmoid를 함께 쓰면 로짓에 대한 손실의 미분이 `∂L/∂z=p-y`로 단순해진다. `p=0.802,y=1`이면 그 값은 -0.198이다. 입력 `x=[3,2]`이므로 가중치 기울기는 `(p-y)x=[-0.594,-0.396]`, 편향 기울기는 -0.198이다.
+
+Learning rate 0.1인 gradient descent는 `w←w-ηg`를 적용한다. 첫 weight는 `0.8-0.1×(-0.594)=0.8594`, 둘째는 0.5396, bias는 -1.9802가 된다. 같은 positive sample에 대한 새 로짓은 올라가고 sigmoid 확률도 1에 가까워진다.
+
+**표본(sample)**은 입력 특징과 정답 label 한 쌍이다. **배치(batch)**는 한 번에 기울기를 계산하는 표본 묶음이다. Spam 표본 하나만 반복하면 정상 메일을 잘못 분류할 수 있으므로 여러 label과 특징 분포를 포함한 배치 평균 기울기를 쓴다. **최적화 알고리즘(optimizer)**은 이 기울기를 읽어 가중치와 편향을 실제로 갱신하는 절차다. **학습률(learning rate)**은 기울기 중 얼마만큼을 한 번의 갱신에 반영할지 정하는 비율이다.
+
+## Confusion matrix를 실제 count로 읽는다
+
+Test sample 100개 중 실제 positive 20개, negative 80개라고 하자. 모델이 positive 25개를 예측했고 그중 15개가 실제 positive다.
+
+- **TP, True Positive**: 실제 positive를 positive로 맞춘 15개
+- **FP, False Positive**: 실제 negative를 positive로 잘못 분류한 10개
+- **FN, False Negative**: 실제 positive를 놓친 5개
+- **TN, True Negative**: 실제 negative를 맞춘 70개
+
+Accuracy는 `(TP+TN)/100=85%`다. Precision은 `TP/(TP+FP)=15/25=60%`, recall은 `TP/(TP+FN)=15/20=75%`다. **F1 score**는 precision과 recall의 조화평균으로 `2PR/(P+R)≈66.7%`다.
+
+불균형 data에서 accuracy는 속일 수 있다. Positive가 1%인데 모두 negative라고 예측하면 accuracy 99%지만 recall은 0이다. 질병 screening처럼 놓치면 위험한 문제와 spam filter처럼 정상 메일 차단 비용이 큰 문제는 threshold 선택이 다르다.
+
+## ROC, PR curve와 calibration
+
+**ROC curve**는 threshold를 바꾸며 false positive rate와 true positive rate를 그린다. **PR curve**는 precision과 recall을 그린다. Positive가 매우 드문 문제에서는 PR curve가 positive 성능을 더 직접 보여 줄 수 있다. AUC는 curve 아래 면적이지만 실제 운영 threshold의 비용을 대신 결정하지 않는다.
+
+**Calibration**은 “0.8이라고 예측한 사례들 중 실제로 약 80%가 positive인가”를 묻는다. 정확도와 calibration은 다르다. 순위를 잘 매겨 AUC가 높아도 확률이 과신될 수 있다. Temperature scaling 같은 보정은 validation data로 parameter를 고정한 뒤 독립 test에서 평가한다.
+
+## 실패와 반례
+
+Data leakage가 있으면 classification metric이 비현실적으로 높아진다. 예측 시점 뒤에 생긴 환불 여부를 feature로 쓰면 미래 정보를 사용한 것이다. Train과 test에 같은 사용자의 거의 같은 행이 섞이면 사용자 identity를 외울 수 있다.
+
+Class weight나 oversampling은 드문 class 학습을 돕지만 운영의 실제 prevalence를 바꾼 듯한 calibration 왜곡을 만들 수 있다. Training distribution의 50% positive와 운영의 1% positive는 threshold와 probability 해석이 다르다.
+
+Logit 크기가 큰 것을 설명 가능성이나 인과로 읽지 않는다. Weight는 feature scale과 상관관계에 의존한다. 모델이 특정 단어에 높은 weight를 줬어도 그 단어가 spam의 원인이라는 뜻은 아니다.
+
+## 연구 결과를 읽는 법
+
+새 분류법의 AUC가 높다는 논문을 볼 때 dataset split, class prevalence, 중복 제거, threshold, confidence interval을 확인한다. 같은 test를 반복 보며 model을 고르면 test에 overfit한다. Benchmark 숫자는 해당 dataset과 protocol의 근거이며 실제 population 성능 보장이 아니다.
+
+## 추가 완전 풀이 문제
+
+### 문제 4
+
+Logit 0의 sigmoid 확률은?
+
+**해설:** `e^0=1`이므로 `1/(1+1)=0.5`다. Threshold가 0.5 이상을 positive로 정했다면 positive가 되지만 tie 규칙을 명시해야 한다.
+
+### 문제 5
+
+정답 확률이 0.9와 0.1일 때 cross-entropy는 각각 얼마인가?
+
+**해설:** `-log(0.9)≈0.105`, `-log(0.1)≈2.303`이다. 틀린 자신감에 훨씬 큰 손실을 준다.
+
+### 문제 6
+
+TP=40, FP=10, FN=20이면 precision과 recall은?
+
+**해설:** Precision은 `40/(40+10)=0.8`, recall은 `40/(40+20)=2/3≈0.667`이다. 두 metric의 분모가 다르다.
+
+### 문제 7
+
+AUC가 올랐지만 운영 threshold에서 FP가 두 배가 됐다. 개선인가?
+
+**해설:** 자동으로 그렇지 않다. AUC는 전체 threshold 순위 요약이다. 운영 비용은 선택 threshold의 confusion matrix와 class prevalence로 판단한다.
 
 ## 점수에서 확률과 결정이 되는 길
 
@@ -44,49 +156,6 @@ Binary 예로 로짓 z=log(3)≈1.0986이면 sigmoid는 `3/(1+3)=0.75`다. 정�
 모델은 먼저 logit이라는 제한 없는 score를 만들 수 있다.
 
 Softmax나 sigmoid가 score를 확률 모양으로 바꾼다.
-
-## 이 장의 목표
-
-1. 새 용어와 수학 기호를 말로 설명한다.
-2. 입력이 중간 숫자를 거쳐 결과가 되는 과정을 계산한다.
-3. 계산 모형과 실제 성능 주장을 구분한다.
-
-![04. 분류와 확률 도식](assets/classification-split.svg)
-
-## 기본 단어와 기호
-
-**class**는 예측할 범주이다.
-
-**binary classification**는 두 class 분류이다.
-
-**multiclass**는 셋 이상 class 분류이다.
-
-**logit**는 확률 변환 전의 실수 score이다.
-
-**sigmoid**는 한 logit을 0~1로 변환이다.
-
-**softmax**는 여러 score를 합 1인 값으로 변환이다.
-
-**cross-entropy**는 정답 확률의 음의 log 손실이다.
-
-**threshold**는 class 결정을 가르는 기준이다.
-
-**precision**는 양성 예측 중 실제 양성 비율이다.
-
-**recall**는 실제 양성 중 찾아낸 비율이다.
-
-**confusion matrix**는 예측과 정답 조합 표이다.
-
-**calibration**는 예측 확률과 실제 빈도의 일치이다.
-
-기호를 읽을 때 이름, shape, 단위, 생성 주체를 함께 적는다.
-
-## 왜 필요한가
-
-- Logit은 음수나 1보다 큰 값도 가능하므로 확률이 아니다.
-- Softmax는 상대 score를 비교해 합이 1인 값을 만든다.
-- Log는 작은 정답 확률을 큰 손실로 벌준다.
-- Threshold는 false positive와 false negative의 비용에 맞춘다.
 
 ## 입력에서 결과까지
 
@@ -134,34 +203,6 @@ Logit 2 자체는 200% 확률이 아니다.
 | 실제 양성·예측 음성 | FN |
 | 실제 음성·예측 음성 | TN |
 
-## 계산을 거꾸로 점검하기
-
-결과가 이상하면 마지막 값만 보지 않는다.
-
-입력의 단위와 shape가 맞는지 먼저 확인한다.
-
-중간값을 손으로 다시 계산한다.
-
-Training 중 바뀌는 parameter와 고정된 data를 구별한다.
-
-평가 data가 선택 과정에 들어갔는지 확인한다.
-
-숫자의 분모와 평균 범위를 적는다.
-
-## 실제 시스템으로 확장할 때
-
-작은 예제는 원리를 고립시켜 보여 준다.
-
-실제 system은 noise, queue, concurrency, finite precision을 포함한다.
-
-Data 수집과 label 생성 지연도 성능에 포함한다.
-
-Version, seed, split, metric 정의를 기록한다.
-
-평균과 tail, subgroup 결과를 함께 본다.
-
-실패와 timeout을 결과에서 지우지 않는다.
-
 ## 흔한 오해와 반례
 
 - 가장 큰 logit은 확률값이 아니다.
@@ -188,15 +229,6 @@ Precision 식은?
 Recall을 높이면 어떤 trade-off가 가능한가?
 
 **해설:** Threshold를 낮추면 더 많이 찾지만 false positive가 늘 수 있다.
-
-## 학습 체크리스트
-
-- 모든 약어를 첫 등장에 풀어 썼는가?
-- 수학 기호가 가리키는 값과 단위가 명확한가?
-- 입력과 label의 시각 경계가 명확한가?
-- Parameter를 바꾸는 주체를 설명했는가?
-- Validation과 test의 책임을 나눴는가?
-- Baseline과 실패 조건을 기록했는가?
 
 ## 공식 자료
 

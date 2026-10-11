@@ -373,7 +373,19 @@ SET TBLPROPERTIES ('format-version'='3');
 
 이 명령은 기존 Parquet와 legacy v2 delete files를 전부 다시 쓰지 않는다. 기존 파일은 여전히 유효하고, 이후 v3 writer가 만드는 새 파일과 metadata에 v3 규칙을 적용한다. v3로 올린 table을 단순히 property 변경으로 v2로 되돌리는 절차로 생각하면 안 된다.
 
-확인일 기준 v1·v2·v3는 완성·채택된 format이고 v4는 개발 중이다. Iceberg 1.12.0에 v4 기반 작업이 포함되어도 v4 table read/write가 가능하다는 뜻은 아니다. 자세한 구분은 [최신 버전과 호환성](07-latest-and-compatibility.md)을 참고한다.
+확인일 기준 v1·v2·v3는 명세에 채택된 테이블 포맷이고 v4는 개발 중이다. 여기서 **테이블 포맷 버전**은 파일과 메타데이터가 따라야 하는 계약 번호다. 설치한 Iceberg 라이브러리의 릴리스 번호, Spark 같은 계산 엔진의 버전, catalog 서버의 버전과는 서로 다른 축이다. 따라서 “Iceberg 1.12.0을 설치했다”는 사실만으로 어떤 Spark 배포판이 v3 테이블을 읽고 쓰는지, REST catalog가 그 기능을 광고하는지, 독립 compaction 작업이 v3의 DV와 row lineage를 보존하는지는 결정되지 않는다.
+
+v1은 data file 중심의 기본 snapshot 테이블에 적합하지만 row-level delete file 계약이 없다. v2는 position delete와 equality delete, sequence number를 추가한다. v3는 deletion vector(DV), row lineage, 확장 타입과 기본값 계약을 더한다. 포맷을 v2에서 v3로 올리는 commit은 현재 metadata JSON의 format-version을 3으로 바꾸고 새 metadata 위치를 catalog에 게시하지만, 이미 존재하는 v2 Parquet data file과 legacy delete file의 바이트를 일괄 변환하지 않는다. 그러므로 업그레이드 직후 한 snapshot 안에는 과거 v2 파일과 이후 v3 writer가 만든 파일이 함께 존재할 수 있다. v3 reader는 이 혼재 상태를 읽을 수 있어야 한다. 반대로 새 v3 기능을 실제로 기록한 뒤 property 숫자만 2로 낮추는 것은 안전한 downgrade가 아니다.
+
+지원 여부는 다음 네 조건의 교집합으로 판정한다. 첫째, reader가 현재 snapshot의 모든 data/delete/DV 형식을 해석해야 한다. 둘째, writer가 새 commit을 만들 때 field ID, sequence, row lineage와 DV 제약을 지켜야 한다. 셋째, catalog가 현재 metadata pointer를 원자적으로 비교·교체해야 한다. 넷째, rewrite·expiration·orphan cleanup 같은 maintenance 도구가 새 형식을 보존해야 한다. 예를 들어 대화형 Spark reader만 v3를 읽고 야간 compactor가 v2만 안다면 전체 시스템은 v3 지원 상태가 아니다. v4 관련 코드나 “foundation”이 릴리스에 들어 있다는 설명도 v4 table read/write 지원을 뜻하지 않는다. v4가 개발 중인 동안에는 명세 채택, 라이브러리 구현, 엔진 통합, 운영 검증을 각각 구분한다.
+
+이 실습에서 필요한 검증은 구체적이다. 업그레이드 전에 v2 snapshot을 저장하고, 업그레이드 뒤에도 그 snapshot의 id 1·2·3을 읽는다. 현재 snapshot에서는 기존 v2 파일과 새 v3 파일을 함께 읽어 같은 행 결과를 얻는다. 새 id 8에는 non-null row ID가 생기고 UPDATE 뒤에도 그 row ID가 유지되는지 확인한다. id 4를 삭제한 뒤에는 현재 조회에서 사라지고, `all_delete_files`에서 referenced data file·offset·size를 가진 Puffin DV를 확인한다. 이 네 관측을 모두 통과해야 이 작은 조합에서의 기능 경로가 확인된다. 다른 엔진, catalog, 파일 저장소에서도 자동으로 성립한다고 일반화하지 않는다.
+
+### 실습의 읽기부터 정리 전까지 한 흐름으로 추적한다
+
+현재 snapshot을 S8이라 하고 data file F0에 id 1, 3, 4가 position 0, 1, 2로 저장되었다고 단순화하자. catalog는 테이블 이름을 metadata JSON M8에 연결한다. M8은 S8을 현재 snapshot으로 가리키고, S8의 manifest list는 manifest MA를, MA는 F0를 기록한다. Reader는 폴더를 훑지 않고 이 참조 사슬을 따라 F0가 현재 파일임을 결정한다. v3 DELETE가 id 4의 position 2를 지우면 writer는 Puffin 파일 P1 안에 F0용 DV `{2}`를 쓰고 새 manifest와 snapshot S9, metadata M9를 준비한다. Catalog가 M8을 예상한 상태에서 M9로 pointer를 바꿀 때만 S9가 공개된다.
+
+S9 reader는 F0의 세 행을 읽되 P1의 bitmap을 적용하여 position 2를 제외하므로 id 1과 3만 반환한다. 이후 compaction이 F0와 P1을 새 Parquet F1로 합치면 F1에는 두 행만 들어 있고 새 snapshot S10이 이를 참조한다. 이때 S9를 보존하는 동안 F0와 P1은 과거 읽기에 필요하므로 즉시 고아가 아니다. Snapshot expiration이 S9를 만료하고 다른 branch/tag도 F0·P1을 참조하지 않음을 확인한 뒤에야 관련 파일 삭제 후보가 된다. Orphan cleanup은 정상 writer가 아직 commit하지 않은 파일과 진짜 미참조 파일을 구분하도록 충분한 유예 시간을 사용한다. 이 순서가 reader planning → delete 적용 → rewrite → 새 snapshot → history → expiration → 파일 정리의 전체 수명이다.
 
 ## 14. v3 row lineage를 눈으로 본다
 

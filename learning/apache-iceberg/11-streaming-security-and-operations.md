@@ -167,6 +167,31 @@ SQL DELETE 성공
 
 날짜·장치 종류 등의 partition 후보를 실제 분포와 쿼리에 맞춰 평가한다. 측정 단위 변경은 타입만 같아도 의미가 달라지므로 단위·schema 계약·변환 코드를 버전 관리한다. 학습 데이터셋은 snapshot ID와 보존 기간을 함께 고정한다.
 
+### 스트림 한 묶음이 snapshot이 되고 장애에서 복구되는 전체 추적
+
+**입력 위치(source offset)**는 원천 로그에서 어디까지 읽었는지를 나타내는 번호다. **Checkpoint**는 이 위치와 처리 중인 상태를 재시작 뒤 복원하기 위해 지속 저장소에 기록한 자료다. **Sink commit**은 계산 결과를 목적지 테이블에 공개하는 확정 단계다. 세 객체는 위치도 수명도 다르다. Offset 100~103은 메시지 시스템에 있고, checkpoint C7은 스트리밍 엔진의 안정적인 경로에 있으며, Iceberg snapshot S31은 catalog와 metadata 계보에 있다.
+
+네 이벤트를 읽는 micro-batch B7을 계산하자. 입력은 `(100,A,insert)`, `(101,B,insert)`, `(102,A,update)`, `(103,C,delete)`다. B7은 A의 최종 값 12와 B의 값 20을 data file D7에 쓰고, 기존 C를 지우는 equality delete E7을 준비한다. 이때 파일 작성 성공은 아직 테이블 공개가 아니다. Writer는 D7·E7을 manifest에 넣고 새 snapshot S32를 준비한 뒤 catalog의 현재 pointer가 예상한 S31인지 비교한다. 비교가 맞아 S32가 게시되면 reader는 S32를 통해 D7과 E7을 본다.
+
+그 다음 엔진은 checkpoint에 “offset 103까지 B7로 처리했고 sink commit 식별자는 run-9/batch-7이다”를 기록한다. 정확히 한 번 효과를 내려면 장애 순서가 중요하다. S32 commit 전에 죽으면 offset 100~103을 다시 읽어 새 시도를 한다. D7·E7은 미커밋 파일일 수 있으므로 즉시 재사용하거나 삭제한다고 가정하지 않는다. S32 commit 후 checkpoint 기록 전에 죽으면 재시작이 B7을 다시 계산할 수 있다. 이때 sink가 batch 식별자로 이미 성공한 S32를 알아보고 중복 commit을 피하거나, 엔진과 connector가 동등한 원자적 프로토콜을 제공해야 한다. 단순 append를 새 작업으로 반복하면 A와 B가 중복될 수 있다.
+
+**Exactly-once**는 정의한 장애 범위에서 각 입력 효과가 목적지에 한 번만 나타나도록 만드는 처리 보장이다. 원천에 동일한 업무 이벤트가 두 번 들어온 경우를 자동으로 하나로 만드는 뜻은 아니다. Offset 100과 104가 같은 `event_id=e1`이라면 전송 관점에서는 서로 다른 두 레코드다. 업무 중복 제거는 event ID, source sequence, 허용 지연과 상태 보존 정책을 별도로 설계한다. 외부 이메일 전송처럼 Iceberg commit 밖의 부작용도 snapshot 원자성에 포함되지 않는다.
+
+S32를 읽는 과정도 추적할 수 있다. Reader는 catalog에서 M32를 얻고 snapshot S32의 manifest list와 manifests를 읽어 D7, 이전 data file D6, delete E7을 계획한다. Partition과 통계로 후보 파일을 줄인 뒤 D6의 C 행에 E7을 적용해 숨기고 D7의 A·B를 포함한다. 결과는 A=12, B=20이며 C는 보이지 않는다. Append 전용 incremental reader는 새 snapshot에 추가된 data file을 전달할 수 있지만, E7의 삭제 의미를 완전한 CDC 이벤트로 재구성한다고 보장할 수 없다. UPDATE/DELETE가 필요한 소비자는 해당 엔진의 changelog 지원과 제한을 검증한다.
+
+이제 maintenance가 D6·D7·E7을 R8로 합쳐 snapshot S40을 만든다고 하자. S32를 사용하는 느린 reader와 감사 tag가 있으면 D6·D7·E7은 여전히 살아 있다. Retention 기간이 지난 뒤 S32가 만료되고 어떤 참조도 옛 파일을 가리키지 않을 때 지원되는 삭제 절차가 이를 제거할 수 있다. Checkpoint C7이 여전히 S32나 offset 범위의 재처리를 필요로 하는데 snapshot을 먼저 만료하면 복구가 실패할 수 있다. 따라서 source retention, checkpoint retention, table snapshot retention, maintenance 주기를 하나의 시간선으로 설계한다.
+
+| 시점 | Source | Checkpoint | Iceberg 현재점 | Reader 결과 |
+| --- | --- | --- | --- | --- |
+| T0 | 100~103 준비 | C6: 99까지 | S31 | 이전 A·C |
+| T1 | B7 계산 | C6 | S31, D7/E7 미공개 | 이전 A·C |
+| T2 | commit 성공 | C6 | S32 | A=12, B=20 |
+| T3 | 진행 기록 | C7: 103까지 | S32 | A=12, B=20 |
+| T4 | rewrite | C7 | S40 | 같은 논리 결과 |
+| T5 | 안전한 만료 뒤 | C7 또는 더 최신 | S40 | 같은 논리 결과 |
+
+권한도 이 경로마다 다르다. Stream processor는 source read, checkpoint read/write, catalog commit, warehouse file write 권한이 필요하다. Query reader는 catalog와 선택된 data/delete 파일 read 권한만 필요할 수 있다. REST catalog가 제한된 임시 자격증명을 발급하는 credential vending을 쓰더라도 자격증명의 경로·작업·만료 범위를 검증한다. Catalog 인증 성공만으로 object store 접근이 보장되지 않고, 반대로 버킷 read 권한만으로 올바른 snapshot을 선택할 수도 없다.
+
 ## 13. 확인 질문과 해설
 
 **질문.** Exactly-once sink이면 원천의 중복 주문 두 개를 하나로 합쳐 주는가?
@@ -180,6 +205,18 @@ SQL DELETE 성공
 **질문.** 개인정보 DELETE 뒤 time travel에서 이전 값을 읽을 수 있다. DELETE가 실패했는가?
 
 **해설.** 현재 논리 삭제와 과거 보존은 별개다. 요구가 물리 제거라면 전체 수명주기 정책을 연결해야 한다.
+
+**질문.** S32 commit은 성공했지만 C7 checkpoint 쓰기가 실패했다. 재시작 때 가장 위험한 단순 대응은 무엇인가?
+
+**해설.** Offset 100~103을 새 append로 무조건 다시 쓰는 것이다. 먼저 batch 식별자와 snapshot summary로 기존 commit 성공을 확인해야 한다. Connector의 보장 범위가 이를 연결하지 못한다면 event ID 기반 중복 제거 또는 조정 절차가 필요하다.
+
+**질문.** 느린 consumer가 S32부터 변경을 읽는 중인데 운영자가 S40만 남기고 S32를 만료했다. 현재 batch query가 정상이라는 사실로 안전을 증명할 수 있는가?
+
+**해설.** 증명할 수 없다. 현재 query와 incremental consumer의 복구 시작점은 다르다. Consumer checkpoint가 요구하는 snapshot 계보와 source retention을 함께 확인해야 한다.
+
+**질문.** Writer에게 warehouse 전체 삭제 권한을 주면 commit 충돌 복구가 쉬워지는가?
+
+**해설.** 오히려 피해 범위가 커진다. Commit 충돌은 catalog의 예상 상태 비교와 재계획으로 해결한다. 파일 삭제는 retention과 reachability를 아는 maintenance 주체에 최소 권한으로 분리한다.
 
 ## 근거와 더 읽기
 

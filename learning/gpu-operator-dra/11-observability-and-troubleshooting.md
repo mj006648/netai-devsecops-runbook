@@ -1,6 +1,117 @@
 # 11. 관측과 문제 해결: 어느 층에서 실패했는가
 
 [← 이전 장](10-deployment-compatibility-and-gitops.md) · [다음 장 →](12-local-model-labs.md)
+## 0. 관측은 상태를 추측하는 일이 아니라 증거를 잇는 일이다
+
+**관측 가능성**, observability는 시스템 밖에서 얻은 신호로 내부 상태와 실패 위치를 설명할 수 있는 능력이다. **metric**은 시간에 따라 수집하는 숫자이고, **log**는 한 구성요소가 발생시킨 사건 기록이며, **event**는 Kubernetes 객체와 관련된 짧은 상태 변화 기록이다. **trace**는 한 요청이 여러 구성요소를 통과한 구간을 공통 식별자로 잇는 자료다. GPU 제어 경로는 모든 단계에 자동 분산 trace가 있는 것이 아니므로 Pod UID, Claim UID, node, device ID, timestamp를 수동 상관 키로 사용한다.
+
+**DCGM**, Data Center GPU Manager는 NVIDIA GPU 상태와 telemetry를 수집하는 관리 도구다. **DCGM Exporter**는 이 값을 Prometheus 형식 metric으로 노출한다. metric이 있다는 것은 해당 수집 경로가 작동한다는 뜻이며 애플리케이션 결과의 정확성을 증명하지 않는다. kernel log의 NVIDIA Xid는 GPU/driver 오류 분류에 도움을 주지만 Xid 번호 하나만으로 원인을 확정하지 않고 공급자 문서와 주변 사건을 함께 본다.
+
+## 0.1 각 증거가 증명하는 정확한 범위
+
+| 증거 | 작성 주체·위치 | 증명하는 것 | 증명하지 않는 것 |
+| --- | --- | --- | --- |
+| DeviceClass | 관리자/API | 허용된 장치 정책 이름 | device 존재 |
+| ResourceSlice | DRA driver/API | 광고한 inventory와 속성 | 실제 CUDA 계산 |
+| Claim allocation | scheduler/API | 선택된 device·node | node prepare 성공 |
+| 노드 준비 RPC 결과 | kubelet·DRA 드라이버 로그 | NodePrepareResources 호출 성공·실패 | runtime injection·컨테이너 기동 |
+| CDI spec | 공급자 도구/node file | 장치 edit 정의 존재 | runtime이 실제 적용 |
+| runtime log | containerd/CRI-O node process | CDI resolve·container create | app 수치 정확성 |
+| `/dev/nvidia*` | container namespace | device file이 보임 | library 호환·성능 |
+| app log | container process | 해당 입력의 CUDA 결과·오류 | 다른 tenant 영향 |
+| DCGM metric | node exporter | GPU 사용률·메모리·오류 관측 | Claim 소유 의미 자동 연결 |
+| kernel log | host kernel | driver/device 사건 | scheduler 판단 |
+
+표준 ResourceClaim API에는 `NodePrepared=True`라는 condition이 없다. ResourceClaimStatus의 표준 필드는 `allocation`, `devices`, `reservedFor`이며, `devices[].conditions`는 드라이버가 선택적으로 보고하는 장치별 상태다. 그 안의 `Ready`도 해당 드라이버와 기능이 실제로 게시할 때만 해석한다. NodePrepareResources RPC 성공은 kubelet과 DRA 드라이버 로그로 확인한다. 그 뒤 CDI runtime이 실패하면 container는 시작되지 않을 수 있고, container가 Running이어도 실제 CUDA kernel은 별도로 실패할 수 있다.
+
+## 0.2 한 physical GPU와 두 workload의 장애 trace
+
+node-a의 24 GiB GPU 한 장이 time-slicing replica 두 개로 광고됐다. Pod A와 B가 각각 Claim을 할당받고 prepare와 CDI 주입까지 성공했다. A는 14 GiB, B는 12 GiB를 peak에서 요구한다.
+
+| 시각 | 신호 | 관찰 | 해석 |
+| --- | --- | --- | --- |
+| t=0 | ResourceSlice | replica R0/R1 존재 | 논리 단위 2개 광고 |
+| t=1 | Claim status | A→R0, B→R1 | scheduler 할당 성공 |
+| t=2 | kubelet·driver log | NodePrepareResources A/B 성공 | node 장치 준비 RPC가 성공함 |
+| t=3 | runtime log | CDI resolve 성공 | 두 container 생성 |
+| t=4 | app A | CUDA init 성공, 14 GiB | 실제 GPU 사용 시작 |
+| t=5 | app B | CUDA OOM | 합계 peak 26 GiB 가능 |
+| t=5 | DCGM | framebuffer memory 23.5 GiB | 물리 memory pressure |
+| t=5.1 | Pod status | B container 종료/재시작 | process 결과, Claim은 유지 가능 |
+| t=6 | app A latency | 50→90 ms | B 재시도와 경합 가능 |
+
+```mermaid
+flowchart TD
+    P["Pod B 실패"] --> A{"Claim allocation?"}
+    A -- 없음 --> S["Slice·selector·scheduler 조사"]
+    A -- 있음 --> N{"준비 RPC가 성공했는가?"}
+    N -- 실패 --> D["kubelet·DRA driver 조사"]
+    N -- 성공 --> C{"CDI/runtime 성공?"}
+    C -- 실패 --> R["spec·runtime log 조사"]
+    C -- 성공 --> U{"CUDA init/계산?"}
+    U -- OOM --> M["VRAM peak와 공유 tenant 조사"]
+    U -- 느림 --> Q["queue·GPU·CPU·PCIe·network metric"]
+```
+
+Pod B의 OOM을 scheduler 부족으로 분류하면 잘못된 해결을 한다. scheduler는 두 논리 replica를 정상 할당했다. 문제는 time-slicing이 VRAM partition을 제공하지 않는다는 데 있다. B의 restartPolicy가 재시작을 유발하면 같은 memory peak가 반복되어 A의 latency까지 흔들 수 있다.
+
+## 0.3 Pending부터 계산 오류까지 진단 순서
+
+Pod가 Pending이면 먼저 event와 Claim status를 본다. DeviceClass가 없는지, ResourceSlice 후보가 0인지, selector가 capacity와 맞지 않는지, CPU·memory·taint·affinity 조건이 node를 막는지 구분한다. 이 단계에는 container log가 아직 없을 수 있다.
+
+Claim은 Allocated인데 container가 Waiting이면 표준 condition 이름을 찾는 대신 kubelet과 DRA driver log에서 NodePrepareResources RPC 요청·응답을 본다. prepare가 일시 gRPC timeout인지, 지원하지 않는 capability의 terminal failure인지 분류한다. 같은 입력 재시도가 회복 가능한가를 reason과 주변 상태로 판단한다.
+
+prepare는 성공했지만 CreateContainerError면 CDI 이름, node의 spec 파일, runtime 지원 version, mount source, device permission과 LSM audit를 본다. **LSM**은 SELinux나 AppArmor 같은 Linux 접근 정책 틀이다. 문제를 숨기기 위해 privileged로 바꾸기 전에 거부된 정확한 path와 권한을 확인한다.
+
+container가 Running인데 앱이 실패하면 image library, host driver, device visibility, CUDA error와 VRAM을 본다. 종료된 container가 재시작됐다면 현재 log와 `previous` log 개념을 구분한다. Kubernetes phase Running은 Pod 안에 실행 중 container가 있다는 뜻이지 학습 step 성공을 보장하지 않는다.
+
+## 0.4 metric을 소유자와 연결한다
+
+GPU utilization 95%는 device가 바쁘다는 숫자다. 어느 Claim과 tenant가 만들었는지는 process/device 매핑이 필요하다. time-slicing에서 여러 Pod가 같은 UUID를 쓰면 device-level metric만으로 tenant별 사용량을 정확히 나누기 어렵다. process metric과 Pod UID를 연결하는 exporter 지원 여부를 확인한다.
+
+**cardinality**는 metric label 조합의 개수다. Pod UID, Claim UID, device UUID, process ID를 모두 label로 무기한 남기면 시계열 수가 폭증한다. 예를 들어 node 100대×GPU 8개×Pod 20개×metric 30개면 단순 곱으로 480,000 series가 될 수 있다. 필요한 상관 키와 보존 기간을 정하고 process ID처럼 짧은 수명 label 사용을 조심한다.
+
+**histogram**은 latency를 구간별 count로 모으는 metric 유형이다. **p99**는 관측값 99%가 그 값 이하라는 percentile이다. 평균 50 ms여도 1% 요청이 500 ms면 interactive 서비스는 나쁠 수 있다. sharing 연구와 운영 SLO를 비교할 때 평균 throughput만 보지 않고 p50/p95/p99와 오류율을 함께 본다.
+
+## 0.5 alert는 증상과 원인을 분리한다
+
+SLO alert는 사용자 영향, 예를 들어 inference p99 초과나 Job failure 증가를 감지한다. 원인 alert는 GPU Xid, ECC 오류, DRA prepare 실패, ResourceSlice 감소 같은 내부 신호다. 원인 metric 하나를 곧바로 사용자 장애로 해석하지 않고 두 층을 dashboard와 runbook으로 연결한다.
+
+예를 들어 `Claim pending > 10 min` alert가 울리면 후보 0, node capacity, selector 오류를 조사한다. `GPU memory > 95%`는 time-slicing 환경에서 정상 peak일 수도 있으므로 OOM/latency와 함께 본다. Xid alert는 device 격리·node drain 판단을 위해 severity와 반복 횟수를 분류한다.
+
+## 0.6 정리와 재시도도 관측한다
+
+Pod 삭제 후 NodeUnprepareResources가 성공했는지, device가 다시 inventory에 사용 가능하게 나타나는지 확인한다. unprepare 실패가 누적되면 Claim이 사라져도 node-local 준비 상태나 partition이 남아 capacity 누수가 생길 수 있다. 반대로 공유 device를 다른 Pod가 쓰는 동안 공통 CDI spec이나 daemon을 삭제하면 새 container와 기존 client가 실패한다.
+
+driver 재시작 뒤 같은 prepare 요청이 들어오면 멱등 결과가 나와야 한다. 로그의 request UID와 Claim UID로 중복 호출이 실제 중복 resource 생성으로 이어지지 않았는지 본다.
+
+## 0.7 공식 지원과 연구 metric의 경계
+
+GPU Operator 26.7 platform matrix는 Kubernetes, OS, driver, runtime, GPU 조합의 지원 범위를 판단하는 근거다. DCGM 문서는 metric 의미와 지원 GPU를 판단하는 근거다. 지원됨은 특정 workload p99나 multi-tenant fairness 보장이 아니다.
+
+IWQoS GPU sharing 연구의 throughput과 QoS 결과는 논문의 GPU, 모델, tenant 수, arrival pattern, baseline에서 나온다. 운영 metric 이름이 같아도 측정 window와 percentile 계산이 다르면 비교할 수 없다. 조건을 표로 맞추고 동일 부하에서 전용 GPU, MIG, time-slicing, MPS baseline을 재측정한다.
+
+## 0.8 추가 완전 풀이 문제
+
+**문제 1.** Claim allocation이 기록됐고 노드 준비 RPC도 성공했는데 container가 없다. 다음 증거는?
+
+**해설.** CDI 이름과 node spec 파일, container runtime의 resolve/create log, mount source와 device permission을 본다. scheduler 단계는 이미 통과했다.
+
+**문제 2.** time-slicing 두 Pod가 24 GiB GPU에서 14 GiB와 12 GiB를 요구한다. 왜 둘 다 allocation되어도 OOM이 가능한가?
+
+**해설.** 논리 replica 두 개는 scheduler 회계 단위다. VRAM을 12 GiB씩 격리하지 않는다. 합계 peak 26 GiB가 물리 용량을 넘으므로 실제 allocator 단계에서 실패할 수 있다.
+
+**문제 3.** GPU utilization 100%만 보고 어느 Pod가 원인인지 알 수 있는가?
+
+**해설.** device-level metric은 공유 장치 전체를 나타낼 수 있다. process와 Pod UID, Claim, device 매핑이 필요하다. exporter가 tenant별 귀속을 제공하지 않으면 app metric과 시간 상관을 함께 쓴다.
+
+**문제 4.** 평균 latency 50 ms이고 p99가 400 ms다. 평균만 기준으로 정상이라 할 수 있는가?
+
+**해설.** 아니다. 1% 요청이 매우 느리며 SLO가 p99 100 ms라면 위반이다. histogram bucket, 동시 tenant, queue와 GPU kernel 시간을 함께 분석한다.
+
+**문제 5.** Pod 삭제 뒤 새 Claim이 계속 Pending이고 inventory 수는 줄었다. 무엇을 의심하는가?
+
+**해설.** unprepare 실패나 stale allocation, driver inventory 갱신 실패로 capacity가 반환되지 않았을 수 있다. 이전 Claim UID의 unprepare log, node-local state, ResourceSlice generation을 연결한다.
 
 > GPU Pod가 안 뜬다는 한 문장을 API, 인벤토리, 할당, 노드 준비, 런타임, CUDA, 메모리 문제로 분해한다. 이 장의 명령은 읽기 전용 예시이며 여기서는 실행하지 않았다.
 

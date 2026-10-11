@@ -1,6 +1,88 @@
 # 15. 문제·해설·용어사전·공식 자료 지도
 
 답을 외우는 대신 요청부터 장치와 계산 결과까지 한 경로를 그린다. 문제의 숫자와 장치 이름은 교육용 예시다. 실제 성능 측정이나 특정 제품의 사양을 뜻하지 않는다.
+## 15.0 종합 문제를 풀 때 쓰는 하나의 기준 경로
+
+이 장의 모든 답은 “요청이 있다”에서 바로 “GPU가 계산한다”로 건너뛰지 않는다. 다음 객체와 프로그램을 순서대로 놓는다.
+
+**Node**는 kubelet과 container runtime이 실행되는 서버이고, **device**는 GPU 또는 MIG instance처럼 driver가 광고하는 장치 단위다. **ResourceSlice**는 DRA driver가 API server에 게시한 device inventory다. **DeviceClass**는 관리자가 허용한 장치 선택 정책이다. **ResourceClaim**은 workload의 요구와 scheduler가 정한 allocation 결과를 가진 namespace 객체다. **ResourceClaimTemplate**은 Pod마다 Claim을 만들기 위한 청사진이다.
+
+**scheduler**는 Pod의 node 조건과 Claim의 device 조건을 함께 만족하는 조합을 찾는다. **prepare**는 선택 node의 kubelet이 DRA driver에게 장치를 실제 사용 상태로 만들도록 요청하는 단계다. **CDI**는 runtime이 device file, mount, 환경 변수를 container 설정에 넣도록 하는 명세다. **CUDA application**은 container 안에서 사용자 library를 호출하고, 그 library가 host kernel driver를 통해 GPU에 명령을 보낸다.
+
+```mermaid
+flowchart LR
+    T["ClaimTemplate"] --> C["ResourceClaim"]
+    D["DRA driver"] --> S["ResourceSlice"]
+    C --> K["scheduler allocation"]
+    S --> K
+    K --> P["kubelet/driver prepare"]
+    P --> I["CDI/runtime injection"]
+    I --> A["CUDA application"]
+    A --> M["memory·latency·result"]
+    A --> U["종료 후 unprepare"]
+```
+
+각 화살표는 서로 다른 성공 조건이다. Slice가 있다는 것은 inventory 광고 성공, Claim allocation은 선택 성공을 뜻한다. 그 다음 NodePrepareResources RPC의 성공·실패는 표준 API condition이 아니라 kubelet·DRA 드라이버 로그로 확인한다. CDI/runtime은 container 접근 설정 성공, CUDA output은 실제 계산 성공을 뜻한다. 어느 하나도 다음 단계를 자동 보장하지 않는다.
+
+## 15.1 하나의 수치 사례로 전체 문제를 연결한다
+
+node-a에는 80 GiB `a0`과 24 GiB `a1`, node-b에는 40 GiB MIG `b0`이 있다. Pod A는 full GPU 40 GiB 이상, Pod B는 24 GiB 이상이며 MIG 허용이다. scheduler는 A→a0/node-a, B→b0/node-b를 선택할 수 있다.
+
+| 시각 | 상태 | 관찰 |
+| --- | --- | --- |
+| t=0 | driver가 세 device 광고 | ResourceSlice generation 기록 |
+| t=1 | Template에서 Claim A/B 생성 | 두 Claim 미할당 |
+| t=2 | scheduler 선택 | Claim status에 a0,b0 |
+| t=3 | kubelet prepare | 준비 RPC 성공·실패를 kubelet·드라이버 로그에서 확인 |
+| t=4 | runtime CDI 병합 | container device/mount 생성 |
+| t=5 | app CUDA 초기화 | kernel driver 통신 |
+| t=6 | model 실행 | VRAM, throughput, p99 관측 |
+| t=10 | Pod B 종료 | container 제거 뒤 unprepare |
+| t=11 | driver 정리 | b0 capacity 반환 |
+
+Pod A가 실제 peak 86 GiB를 요구하면 80 GiB device에 할당됐어도 CUDA OOM이 가능하다. Pod B의 MIG instance는 profile 범위의 memory isolation이 있지만 node의 CPU, PCIe, NIC까지 독립시키지 않는다. allocation 성공과 성능 격리는 다른 문제다.
+
+## 15.2 실패 문장을 정확한 주체로 바꾸는 연습
+
+“DRA가 실패했다”는 너무 넓다. Claim 후보가 0이면 DeviceClass selector와 ResourceSlice를 본다. allocation은 있지만 NodePrepareResources RPC가 실패하면 kubelet과 node DRA driver 로그를 본다. 표준 `NodePrepared` condition은 없다. prepare 성공 뒤 container create가 실패하면 CDI spec과 runtime을 본다. container가 Running인데 CUDA 초기화가 실패하면 image library와 host driver를 본다. 계산 중 OOM이면 VRAM peak와 sharing tenant를 본다. 느리면 GPU queue, CPU data loader, PCIe, topology, network를 측정한다.
+
+**terminal failure**는 같은 입력 재시도로 회복되지 않는다고 driver가 분류한 오류다. 지원하지 않는 capability나 관리자 구성이 필요한 경우가 예다. 일시 timeout은 멱등 재시도로 회복될 수 있다. **멱등**은 같은 prepare 요청을 반복해도 device partition이나 CDI entry가 중복 생성되지 않고 같은 최종 상태가 되는 성질이다.
+
+**unprepare**는 마지막 사용 뒤 node-local 준비 상태를 해제하는 작업이다. Claim API 객체 삭제만 뜻하지 않는다. 실행 process가 남아 있는데 먼저 unprepare하면 장치 접근이 깨질 수 있다. 반대로 정리가 실패해 상태가 남으면 다음 Claim의 capacity가 누수될 수 있다.
+
+## 15.3 공유 방식 문제의 공통 오답
+
+**MIG**는 지원 GPU를 profile별 하드웨어 instance로 나눠 memory와 계산 자원 경계를 제공한다. **time-slicing**은 같은 GPU 실행 시간을 여러 논리 replica가 공유하며 고정 VRAM partition을 만들지 않는다. **MPS**는 여러 CUDA process의 명령 제출을 service process가 조정한다. 세 방식 모두 “GPU 공유”지만 memory, 실행, fault, daemon 수명이 다르다.
+
+24 GiB GPU를 time-slicing replica 4개로 광고해도 각 6 GiB가 보장되지 않는다. 네 Pod가 8 GiB씩 요구하면 논리 allocation 네 개는 성공해도 합계 32 GiB로 OOM이 가능하다. 단독 40 ms인 kernel 두 개가 직렬 경합하면 두 번째 응답은 단순 모델에서 80 ms가 된다. 등록 가능 수와 p99 SLO를 분리한다.
+
+## 15.4 버전 문제의 공통 오답
+
+Kubernetes DRA가 1.34에서 GA가 된 것은 core API의 안정 단계 역사다. 1.35의 stable/locked 표시는 그 release의 기능 단계와 gate 상태다. NVIDIA DRA driver와 DynamicMIG, GPU Operator 26.7의 지원 범위는 별도 vendor 구현 축이다. core stable을 모든 vendor 기능 stable로 확대하지 않는다.
+
+GPU Operator platform matrix는 Kubernetes, OS, kernel, GPU, driver, runtime과 operand 조합의 지원 근거다. 성능 연구는 특정 GPU, model, sharing policy, 부하와 metric의 결과다. 지원 표를 throughput 보장으로 읽거나 연구 결과를 vendor support 약속으로 읽지 않는다.
+
+## 15.5 추가 종합 문제
+
+**문제 1.** Claim A의 allocation이 기록되고 Pod가 node-a에 bind됐지만 driver log에 prepare terminal failure가 있다. scheduler를 반복 실행하면 해결되는가?
+
+**해설.** 같은 선택과 조건으로는 회복되지 않는 실패다. 장치 capability, node driver/runtime 구성, 지원 matrix를 확인하고 조건이나 구성을 수정해야 한다. allocation 성공은 prepare 성공이 아니다.
+
+**문제 2.** NodePrepareResources RPC와 CDI resolve는 성공했지만 `/dev/nvidia0` open이 permission denied다. 무엇을 확인하는가?
+
+**해설.** runtime이 만든 device permission, device cgroup, SELinux/AppArmor 같은 LSM audit를 본다. Claim selector를 바꾸는 것은 현재 증거와 맞지 않는다.
+
+**문제 3.** Pod B 삭제 뒤 b0가 새 Claim 후보로 돌아오지 않는다. 가능한 상태 전이는?
+
+**해설.** container 종료 뒤 NodeUnprepareResources가 실패했거나 driver inventory/Claim allocation이 stale할 수 있다. 이전 Claim UID, unprepare log와 ResourceSlice generation을 연결한다.
+
+**문제 4.** Operator 26.7 matrix에 지원된 node에서 time-slicing p99가 3배다. 제품 미지원의 증거인가?
+
+**해설.** 곧바로 그렇지 않다. matrix는 기능 조합 지원이고 p99는 workload 성능이다. 동시 tenant, kernel 길이, VRAM·queue, CPU와 topology를 같은 baseline으로 측정한다.
+
+**문제 5.** ResourceClaim을 model checkpoint라고 설명했다. 어떤 두 수명을 혼동했는가?
+
+**해설.** Claim은 device 요구와 allocation을 담는 API 객체다. model checkpoint는 학습 process의 가중치·optimizer 상태를 저장한 데이터다. Claim release/unprepare와 model 복원은 서로 다른 구성요소 책임이다.
 
 ## 15.1 계산과 경로 문제
 

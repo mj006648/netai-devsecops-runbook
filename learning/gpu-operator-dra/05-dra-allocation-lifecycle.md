@@ -7,6 +7,10 @@
 
 Claim의 spec은 사용자가 원하는 조건이고 status는 시스템이 관찰하거나 결정한 결과다. 사용자가 status를 원하는 값으로 써서 물리 GPU를 얻는 구조가 아니다. scheduler와 controller가 API server를 통해 status를 갱신하고, kubelet과 node driver는 노드 로컬 상태를 다룬다.
 
+표준 `ResourceClaimStatus`에서 핵심 필드는 선택 결과를 담는 `allocation`, 장치별 상태를 담을 수 있는 `devices`, 이 Claim을 사용할 Pod 등을 기록하는 `reservedFor`다. `devices[].conditions`는 드라이버가 선택하여 보고하는 장치 상태이며 `Ready`도 해당 드라이버와 기능이 실제로 게시하는 경우에만 의미가 있다. 모든 DRA 환경에 공통인 `NodePrepared` condition은 없다.
+
+따라서 네 경계를 순서대로 확인한다. 첫째, `allocation` 기록은 scheduler가 장치와 node를 선택했다는 뜻이다. 둘째, NodePrepareResources RPC 성공은 선택 node의 kubelet과 DRA driver가 준비 호출을 완료했다는 뜻이며 양쪽 로그로 확인한다. 셋째, container runtime이 CDI 편집을 적용해 container를 실제로 기동해야 한다. 넷째, 기동된 application이 CUDA 초기화와 계산을 성공해야 한다. 앞 단계의 성공은 다음 단계의 성공을 대신하지 않는다.
+
 ## 0.1 2노드·3장치·2Pod의 전체 시간표
 
 `node-a`에는 `gpu-a0` 80 GiB와 `gpu-a1` 24 GiB가 있고, `node-b`에는 `gpu-b0` 40 GiB MIG instance가 있다고 하자. Pod A는 full GPU 40 GiB 이상, Pod B는 24 GiB 이상이며 MIG도 허용한다. 각 Pod는 ResourceClaimTemplate에서 자기 Claim을 하나씩 받는다.

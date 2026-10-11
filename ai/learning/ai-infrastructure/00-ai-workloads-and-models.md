@@ -13,6 +13,109 @@
 정확도, 비용, 지연, 처리량, 재현성, 보안은 모두 인프라 선택에 영향을 준다.
 그래서 모델 이름만 보지 않고 입력의 모양, 파라미터 수, 데이터 흐름, 실패 조건을 함께 본다.
 
+## 모델을 “파일”이 아니라 살아 있는 객체로 보기
+
+**모델(model)**은 입력 숫자를 출력 숫자로 바꾸는 계산 규칙과, 그 규칙이 사용하는 학습된 값의 묶음이다. 디스크에서는 checkpoint나 여러 shard 파일로 저장될 수 있고, 실행할 때는 CPU RAM 또는 GPU 메모리에 읽혀 tensor가 된다. 모델이라는 말이 파일, 수학 함수, 서비스 전체를 문맥에 따라 가리키므로 “모델이 느리다” 대신 파일 로드가 느린지, 계산이 느린지, 요청 queue가 긴지 구분해야 한다.
+
+**Tensor(텐서)**는 같은 표현 방식의 숫자를 여러 축으로 배열한 실행 객체다. 배송 요청 4건에서 거리와 무게 두 특징을 읽으면 shape `(4, 2)`인 tensor로 표현할 수 있다. **Shape(형상)**는 각 축의 길이이고, 여기서는 첫 축 4가 요청 수, 둘째 축 2가 특징 수다. **Dtype(data type, 자료형)**은 원소 하나를 어떤 비트 규칙으로 저장하고 계산하는지 나타낸다. FP32는 보통 32 bit 부동소수점, FP16은 16 bit 부동소수점 표현이다. 같은 shape라도 dtype이 다르면 payload 크기와 표현 가능한 값, 하드웨어 실행 경로가 달라진다.
+
+**파라미터(parameter)**는 훈련이 고치는 모델 내부 tensor다. 선형 모델의 weight와 bias가 예다. 디스크 checkpoint에 보존되고 실행 중 장치 메모리에 올라가며, optimizer step을 거치며 값이 바뀐다. **Activation(활성값)**은 입력과 파라미터로 순전파를 할 때 layer 사이에 잠시 생기는 중간 tensor다. 파라미터가 많은 요청에 재사용되는 장기 상태라면, activation은 보통 현재 batch의 forward부터 backward 또는 응답 완료까지 사는 단기 상태다.
+
+**Loss(손실)**는 현재 예측이 목표에서 얼마나 벗어났는지 학습이 다룰 수 있는 숫자로 만든 함수다. 값이 작다고 모든 제품 품질이 자동으로 좋다는 뜻은 아니다. 어떤 정답, 데이터 분포, loss 정의를 썼는지가 함께 필요하다. **Gradient(기울기)**는 특정 파라미터를 조금 움직였을 때 loss가 어느 방향으로 얼마나 변하는지 나타내는 값이다. **Autograd(자동미분)**는 forward에서 만든 연산 관계를 기록하고 chain rule을 적용해 gradient를 계산하는 소프트웨어 기작이다. Autograd가 파라미터를 직접 개선하는 것은 아니다. optimizer가 gradient를 읽고 학습률 같은 규칙을 적용해 파라미터를 갱신한다.
+
+언어 모델의 **token(토큰)**은 tokenizer가 문자열을 나눈 단위에 부여한 정수 ID다. token은 언제나 단어 하나와 같지 않다. 단어 일부, 문장 부호, 공백 표현이 하나의 token이 될 수 있고 tokenizer마다 분할 결과가 다르다. 정수 ID는 embedding 표에서 벡터를 찾는 색인으로 사용된다. 원래 문자열, token ID, embedding vector는 서로 다른 객체다.
+
+**GPU(Graphics Processing Unit)**는 많은 계산 실행 단위를 두고 같은 형태의 숫자 연산을 병렬로 처리하도록 설계된 가속기다. GPU는 “모델을 이해하는 상자”가 아니다. CPU 프로그램이 메모리를 준비하고 장치 명령을 제출하면 **GPU kernel(많은 GPU thread가 서로 다른 데이터에 실행하는 작은 계산 함수)**이 행렬곱 같은 일을 수행한다. 모델 파일, CPU의 Python 객체, GPU 메모리의 parameter buffer, 현재 요청의 activation buffer를 하나로 부르면 메모리 문제를 추적할 수 없다.
+
+### 객체의 위치와 수명
+
+| 객체 | 예시 | 주된 위치 | 언제 생기고 사라지는가 |
+|---|---|---|---|
+| 원본 데이터 | 배송 기록 파일 | object storage·SSD | 데이터 보존 정책 동안 |
+| batch tensor | 요청 32건의 특징 | CPU RAM, 이후 GPU memory | loader가 만든 뒤 step 종료까지 |
+| parameter | 거리 weight, bias | checkpoint, 실행 중 GPU memory | 모델 생성부터 종료까지 |
+| activation | layer의 중간 출력 | 주로 GPU memory | 해당 forward부터 필요한 backward까지 |
+| gradient | 각 parameter의 변화 방향 | parameter와 연관된 buffer | backward에서 채우고 다음 step 전 비우거나 누적 |
+| optimizer state | momentum·분산 추정값 | GPU 또는 CPU memory, checkpoint | 여러 step에 걸쳐 유지 |
+| token ID | tokenizer가 만든 정수 | CPU RAM, 이후 장치 buffer | 요청 전처리부터 생성 완료까지 |
+| KV cache | 과거 token의 key/value | 주로 GPU memory | LLM 요청 시작부터 종료·중단까지 |
+
+“8 GB 모델”이라는 말은 이 표 중 parameter 파일만 센 것일 수 있다. 훈련 peak에는 parameter, gradient, optimizer state, saved activation, 임시 workspace가 함께 존재한다. 추론도 동시 요청의 KV cache와 임시 buffer가 커지면 parameter 크기보다 훨씬 많은 메모리를 요구할 수 있다.
+
+## 작은 배송 예측으로 forward부터 update까지
+
+배송 거리를 하나의 입력으로 쓰는 아주 작은 모델을 만든다. 실제 배송 시간은 교통, 날씨, 출발 시각 등 더 많은 특징이 필요하지만, 여기서는 객체와 상태 변화를 보려고 변수 하나만 둔다.
+
+```text
+입력 x = 2
+정답 y = 9
+초기 weight w = 3
+초기 bias b = 1
+모델 y_hat = w*x + b
+loss = 0.5*(y_hat-y)^2
+학습률 lr = 0.1
+```
+
+**Forward(순전파)**는 현재 입력과 파라미터로 예측과 loss를 만드는 방향이다.
+
+```text
+y_hat = 3*2 + 1 = 7
+error = y_hat-y = 7-9 = -2
+loss = 0.5*(-2)^2 = 2
+```
+
+실행 중에는 `x`, `w`, `b`, `y_hat`, `error`, `loss`가 scalar 또는 작은 tensor로 존재한다. 실제 framework는 backward에 필요한 `x=2`와 연산 관계를 autograd graph에 연결할 수 있다. 이 graph는 데이터 샘플 파일이 아니라 현재 forward의 계산 이력이다.
+
+**Backward(역전파)**는 loss에서 시작해 각 파라미터 방향으로 chain rule을 적용한다.
+
+```text
+d loss/d y_hat = y_hat-y = -2
+d y_hat/d w = x = 2
+d y_hat/d b = 1
+d loss/d w = -2*2 = -4
+d loss/d b = -2
+```
+
+Gradient descent optimizer는 gradient의 반대 방향으로 값을 움직인다.
+
+```text
+new_w = 3 - 0.1*(-4) = 3.4
+new_b = 1 - 0.1*(-2) = 1.2
+```
+
+같은 입력으로 다시 forward하면 `3.4*2+1.2=8.0`, 새 loss는 `0.5*(8-9)^2=0.5`다. 이 한 step에서는 loss가 2에서 0.5로 줄었다. 모든 step에서 반드시 줄어드는 것은 아니다. 학습률이 너무 크거나 batch가 달라지거나 loss surface가 복잡하면 오를 수 있다.
+
+이 추적에서 주체도 구별해야 한다. Framework는 tensor와 autograd graph를 만들고, GPU runtime은 연산을 장치에 제출하며, GPU kernel은 곱셈과 덧셈을 실행한다. Autograd가 gradient를 계산하고 optimizer가 parameter storage를 고친다. Checkpoint 저장기는 갱신된 값과 필요한 재개 상태를 파일로 직렬화한다.
+
+## 학습 step을 시스템 시간선으로 펼치기
+
+```mermaid
+sequenceDiagram
+    participant S as 저장장치
+    participant C as CPU loader·framework
+    participant G as GPU memory·kernels
+    participant K as checkpoint 저장기
+    S->>C: 배송 record 읽기·parse
+    C->>C: batch tensor와 정답 tensor 생성
+    C->>G: 입력 buffer 전송
+    G->>G: forward로 prediction·activation·loss
+    G->>G: backward로 gradient 계산
+    G->>G: optimizer가 parameter 갱신
+    G-->>C: metric에 필요한 loss 값 전달
+    C->>K: 주기적으로 parameter·optimizer state 저장
+```
+
+저장장치가 느리면 GPU가 다음 batch를 기다린다. GPU 계산이 빨라도 checkpoint를 동기식으로 오래 쓰면 step이 멈춘다. 반대로 input loader를 무한히 늘리면 CPU와 RAM을 더 쓰고 storage에 무작위 I/O 압력을 만들 수 있다. 따라서 병목은 “GPU 사용률이 낮다”에서 끝나지 않고, 어느 queue가 비었고 어느 단계가 다음 객체를 만들지 못했는지 추적한다.
+
+## 훈련과 추론에서 같은 말이 달라지는 지점
+
+훈련의 batch는 gradient 한 번을 만들기 위해 묶은 예제 집합이다. Batch를 크게 하면 행렬곱이 커져 GPU 사용 효율이 좋아질 수 있지만 activation과 gradient 관련 메모리도 커진다. 추론의 batch는 동시에 실행할 요청을 묶은 것이다. 더 많이 묶으면 throughput이 늘 수 있지만 앞 요청이 batch 형성을 기다려 latency가 나빠질 수 있다.
+
+**Latency(지연 시간)**는 한 요청이 도착해 결과를 받을 때까지의 시간이고, **throughput(처리량)**은 단위 시간에 완료한 요청이나 token 수다. 둘은 서로 바꿔 얻는 경우가 많다. 요청 네 개를 5 ms 모은 뒤 15 ms에 함께 처리하면 계산 throughput은 좋을 수 있지만 첫 요청은 최소 20 ms를 기다린다. 평균만 보면 드문 긴 대기를 놓치므로 p50, p95, p99와 입력 길이 분포를 함께 본다.
+
+LLM 추론의 prefill은 prompt token들을 병렬성이 큰 모양으로 처리한다. Decode는 각 요청마다 새 token 하나를 만들고 그 결과를 다시 입력하는 반복이다. Decode 때는 과거 token의 K와 V를 KV cache에서 읽는다. 요청 길이가 서로 다르면 어떤 요청은 먼저 끝나고 어떤 요청은 계속 자라므로 batch shape와 메모리 점유가 동적으로 바뀐다. 이 때문에 단순한 “모델 FLOPS” 하나로 serving 비용을 설명할 수 없다.
+
+
 ## 처음 보는 사람을 위한 전체 지도
 
 한 문장을 입력했다고 하자. 문자열은 그대로 GPU에 들어가지 않는다. tokenizer가 문자열을 정수 ID로 바꾸고, ID가 tensor가 되어 모델을 지나며, 마지막에는 정수 ID를 다시 문자열로 바꾼다. **Tokenizer**는 단어 사전과 분할 규칙을 함께 가진 변환기다. 같은 문장도 tokenizer가 다르면 token 수와 ID가 달라져 메모리·지연·과금량까지 달라질 수 있다.
@@ -179,6 +282,14 @@ AI 서비스에서 “성공”은 HTTP 200만이 아니다.
 답의 품질, 생성 중단 여부, 안전 정책 적용, 지연 목표, 로그 기록, 비용 예산이 모두 계약이 될 수 있다.
 어떤 계약을 확인했는지 명시해야 나중에 같은 결과를 비교할 수 있다.
 
+## 연구를 읽는 법: PagedAttention이 바꾼 것은 모델 수식보다 메모리 배치다
+
+LLM decode 요청마다 KV cache 길이는 새 token이 생길 때마다 자란다. 요청의 최종 길이를 미리 정확히 모르는데 최대 길이만큼 연속 메모리를 예약하면 쓰지 않는 공간이 커지고, 서로 다른 크기의 빈 공간이 남아 새 요청을 넣기 어려워질 수 있다. **PagedAttention**은 운영체제의 paging에서 아이디어를 가져와 한 요청의 논리적인 연속 KV cache를 고정 크기 block들에 나누고, 물리적으로 떨어진 block을 매핑해 attention kernel이 읽도록 만들었다. 요청 사이 prefix나 여러 sampling 결과가 block을 공유할 여지도 생긴다.
+
+이 변화는 attention의 수학식 `softmax(QK^T)V`를 새로운 모델로 바꾼 것이 아니다. Serving engine의 block allocator, 요청 scheduler, KV-cache-aware attention kernel을 함께 바꿔 동적 요청에서 낭비를 줄인 시스템 설계다. SOSP 2023 논문이 보고한 처리량 향상은 그 논문의 모델, GPU, 요청 분포, 비교 대상과 latency 조건에서 나온 결과다. 모든 GPU와 모든 길이에서 같은 배속이라고 일반화하면 안 된다. 짧고 동시성이 낮은 요청에서는 관리 overhead의 비중이 달라질 수 있다.
+
+
+
 ## 흔한 오개념
 
 - “AI 모델 = LLM”은 아니다. 이미지, 음성, 추천, 표 데이터 모델도 AI 모델이다.
@@ -226,6 +337,19 @@ queue wait 시간을 별도 metric으로 본다.
 둘째, 긴 prompt나 큰 output 요청이 섞여 GPU 실행 시간을 늘릴 수 있다.
 요청별 input/output token 수와 실행 시간을 함께 기록한다.
 
+문제 5.
+배송 예측 모형에서 `x=2`, `y=9`, `w=3`, `b=1`, `loss=0.5*(y_hat-y)^2`, 학습률 `0.1`이다. 한 step 뒤 `w`, `b`, 새 loss를 구하라.
+
+해설.
+Forward에서 `y_hat=3*2+1=7`, error는 `-2`, loss는 `2`다. `dL/dw=(7-9)*2=-4`, `dL/db=-2`다. Update 뒤 `w=3.4`, `b=1.2`다. 다시 계산하면 `y_hat=8`, 새 loss는 `0.5`다. 숫자가 줄었다는 것은 이 샘플의 이 한 step 결과이며 전체 데이터 일반화 성능을 증명하지 않는다.
+
+문제 6.
+Parameter payload가 8 GiB인 모델이 12 GiB GPU에 들어간다. 그러므로 batch 1 훈련이 반드시 가능하다고 결론 내릴 수 있는가?
+
+해설.
+결론 낼 수 없다. 훈련에는 parameter 외에도 gradient, optimizer state, saved activation, 임시 workspace와 allocator 여유가 필요하다. 일부 상태를 CPU에 두거나 sharding·checkpointing을 쓰면 경계가 달라진다. 먼저 dtype, optimizer, activation shape, framework allocator, 다른 프로세스 사용량을 적어 peak를 계산해야 한다.
+
+
 ## 공식 자료와 원전
 
 - PyTorch autograd 개요: https://docs.pytorch.org/tutorials/beginner/basics/autograd_tutorial.html
@@ -234,6 +358,7 @@ queue wait 시간을 별도 metric으로 본다.
 - Rumelhart, Hinton, Williams, 1986, back-propagation: https://www.nature.com/articles/323533a0
 - Krizhevsky, Sutskever, Hinton, ImageNet classification with deep convolutional neural networks: https://proceedings.neurips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html
 - Vaswani et al., Attention Is All You Need: https://arxiv.org/abs/1706.03762
+- Kwon et al., Efficient Memory Management for Large Language Model Serving with PagedAttention, SOSP 2023: https://arxiv.org/abs/2309.06180
 
 공식 문서와 논문은 개념의 기준점이다.
 제품 기본값, 특정 라이브러리 최적화, GPU 세대별 성능은 시간이 지나며 바뀐다.

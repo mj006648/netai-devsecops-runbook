@@ -1,6 +1,103 @@
 # 08. GPU 공유: MIG·time-slicing·MPS는 무엇을 나누나
 
 “GPU 하나를 여러 사람이 쓴다”에는 서로 다른 구현이 있다. 장치 메모리, 계산 실행 시간, 동시에 실행할 작업, 장애 경계를 각각 질문해야 한다. Kubernetes가 광고받은 자원을 셀 수 있다는 사실과 GPU 안에서 자원이 격리된다는 사실은 다르다.
+## 08.0 “공유” 전에 세 종류의 양을 분리한다
+
+**GPU 메모리**, 또는 VRAM은 GPU 보드에 붙어 모델 가중치와 계산 중간값을 보관하는 물리 메모리다. **실행 엔진**은 CUDA kernel의 명령을 실제로 처리하는 GPU 내부 계산 자원이다. **논리 광고 자원**은 device plugin이나 DRA driver가 Kubernetes scheduler에 보여 주는 요청 단위다. 물리 GPU 한 장, VRAM 한 덩어리, 광고 단위 한 개가 항상 일치하지 않는다.
+
+예를 들어 24 GiB 물리 GPU 한 장을 time-slicing replica 4개로 광고할 수 있다. scheduler는 네 Pod에 논리 단위 하나씩을 배정할 수 있지만, VRAM이 자동으로 6 GiB씩 partition되지는 않는다. 네 프로세스가 8 GiB씩 요구하면 합계 32 GiB라 충돌할 수 있다. 반대로 MIG profile 두 개를 만들면 지원 하드웨어가 VRAM과 실행 자원의 일부를 별도 instance로 나눈다. 같은 “GPU 두 개가 보인다”는 화면이라도 격리 의미가 다르다.
+
+**성능 격리**는 한 workload의 부하가 다른 workload의 처리 시간과 처리량을 정해진 범위 이상 흔들지 않는다는 약속이다. DRA 등록과 ResourceClaim 할당, 그 뒤의 NodePrepareResources RPC 성공, CDI 주입은 서로 다른 네 경계다. ResourceClaim의 allocation이 기록돼도 노드 준비는 아직 실패할 수 있고, 준비 RPC가 성공해도 컨테이너 기동과 CUDA 계산은 별도로 실패할 수 있다. p99 latency나 VRAM 한도까지 보장했다는 증거도 아니다.
+
+## 08.1 한 GPU에 두 workload가 들어가는 전체 흐름
+
+node-a에 24 GiB GPU `G0` 한 장이 있고 time-slicing replica 두 개 `R0`, `R1`을 driver가 광고한다고 하자. Pod A와 B가 각각 논리 단위 하나를 요청한다.
+
+| 시각 | 주체 | 상태 변화 | 무엇을 증명하는가 | 아직 모르는 것 |
+| --- | --- | --- | --- | --- |
+| t=0 | driver | ResourceSlice에 R0/R1 게시 | 두 요청 단위를 선택 가능 | VRAM 분할·지연 |
+| t=0.2 | scheduler | Claim A→R0, B→R1 | 논리 충돌 없이 할당 | 실제 GPU 실행 |
+| t=0.5 | kubelet/driver | 두 Claim prepare | node-local 접근 준비 | CUDA library 호환 |
+| t=0.7 | runtime | CDI edit 병합 | device file·mount 전달 | 계산 성공 |
+| t=1.0 | CUDA A | 14 GiB 할당 | G0 VRAM 일부 사용 | B peak |
+| t=1.1 | CUDA B | 14 GiB 할당 시도 | 총 요구 28 GiB | 한 process OOM 가능 |
+| t=2.0 | 두 workload | kernel 연속 제출 | 실행 queue 경합 | p99 증가 |
+
+```mermaid
+sequenceDiagram
+    participant S as scheduler
+    participant D as DRA driver
+    participant K as kubelet
+    participant R as runtime
+    participant A as Pod A CUDA
+    participant B as Pod B CUDA
+    participant G as 물리 GPU G0
+    S->>D: Claim A=R0, Claim B=R1 선택 결과
+    K->>D: 두 Claim prepare
+    D-->>K: 각 CDI 이름
+    K->>R: container 두 개 생성
+    A->>G: 14 GiB + kernel 제출
+    B->>G: 14 GiB + kernel 제출
+    G-->>B: VRAM 부족 또는 대기 증가
+```
+
+allocation이 두 개라는 사실은 논리 회계가 성공했다는 뜻이다. 두 CDI 이름이 같은 물리 device file로 이어질 수 있다. GPU driver의 실제 메모리 allocator와 hardware scheduler가 이후 동작하므로, Kubernetes status만으로 메모리·실행 간섭을 판단할 수 없다.
+
+## 08.2 MIG는 무엇을 물리적으로 나누는가
+
+**MIG**, Multi-Instance GPU는 지원 GPU를 정해진 profile의 GPU instance로 분할하는 하드웨어 기능이다. profile은 할당되는 메모리 크기와 계산 자원의 조합이다. MIG Manager 같은 노드 구성요소가 원하는 layout을 적용하고, device plugin 또는 DRA driver가 생성된 instance를 광고한다.
+
+MIG instance마다 메모리와 일부 fault domain이 분리되므로 time-slicing보다 강한 경계를 제공한다. 그러나 CPU, PCIe link, 전력·냉각, node network 같은 외부 경로까지 서로 다른 서버가 되는 것은 아니다. profile을 바꾸는 재구성은 기존 workload를 중단시킬 수 있어 빈 노드에서 수행하거나 drain 정책을 세워야 한다.
+
+Pod A가 10 GiB profile, Pod B가 20 GiB profile을 요구한다면 scheduler는 광고된 해당 instance를 골라야 한다. 물리 GPU 총 VRAM이 충분해도 현재 layout에 필요한 profile이 없으면 Claim은 Pending일 수 있다. DRA의 DynamicMIG 기능과 이미 만들어진 MIG device를 선택하는 기능은 다르며, 지원 단계와 driver 조건을 별도로 확인한다.
+
+## 08.3 time-slicing은 시간을 어떻게 나누는가
+
+**time-slicing**은 여러 CUDA context가 같은 물리 GPU에서 번갈아 실행되도록 논리 replica를 광고하는 방식이다. context는 한 process가 GPU 메모리와 명령 상태를 관리하는 실행 문맥이다. replica 수를 4로 늘리면 scheduler가 네 단위를 회계할 수 있지만 계산 엔진이 네 배 생기지 않는다.
+
+단독 kernel이 50 ms이고 A와 B가 완전 직렬로 실행된다는 단순 모델에서 A 요청은 0–50 ms, B 요청은 50–100 ms다. B의 응답 시간은 100 ms가 된다. 실제 GPU는 kernel 중첩과 preemption 조건이 있어 결과가 달라지므로 workload의 p50, p99, throughput을 측정한다. 짧은 kernel과 긴 kernel을 섞으면 긴 작업이 tail latency를 키울 수 있다.
+
+VRAM 사용도 공동 공간에서 경쟁할 수 있다. A 16 GiB와 B 12 GiB는 24 GiB 장치에 동시에 들어가지 않는다. 한 process의 치명 GPU 오류가 같은 장치를 쓰는 다른 context에 미치는 범위도 전용·MIG와 다를 수 있다.
+
+## 08.4 MPS는 process 제출을 어떻게 합치는가
+
+**MPS**, Multi-Process Service는 여러 CUDA client process의 명령을 하나의 MPS control/service 경로로 받아 GPU에 제출하는 NVIDIA 기능이다. MPS daemon은 노드에서 실행되는 별도 process이고 client는 socket과 환경 설정을 통해 연결된다. 이것은 Kubernetes scheduler가 아니라 CUDA 실행 계층의 공유 방식이다.
+
+MPS는 작은 kernel을 여러 process에서 함께 실행해 utilization을 높일 수 있다. 그러나 MPS daemon 수명, 사용자 격리, active thread 비율, 메모리 제한 지원과 오류 전파를 확인해야 한다. Pod가 삭제됐는데 MPS client 상태가 남거나 daemon이 죽으면 다른 client에도 영향을 줄 수 있다. CDI 환경 변수만 보였다는 사실은 MPS service가 건강하다는 뜻이 아니다.
+
+## 08.5 관측 증거를 계층별로 읽는다
+
+ResourceSlice는 driver가 어떤 논리 device를 광고했는지 증명한다. Claim allocation은 scheduler가 어떤 단위를 선택했는지 증명한다. prepare condition과 driver log는 node-local 준비 결과를 설명한다. CDI spec과 runtime log는 container에 어떤 device/mount/env가 들어갔는지 설명한다. kernel log와 NVIDIA Xid는 driver/GPU 오류를 설명한다. DCGM metric과 애플리케이션 latency는 실제 사용률·메모리·오류·성능을 설명한다.
+
+표준 ResourceClaim API에는 `NodePrepared=True`라는 condition이 없다. 노드 준비 여부는 NodePrepareResources RPC의 성공·실패와 kubelet·DRA 드라이버 로그에서 확인한다. ResourceClaimStatus의 `allocation`, `devices`, `reservedFor`는 각각 선택 결과, 드라이버가 선택적으로 보고한 장치 상태, Claim 사용 예약을 표현한다. `devices[].conditions`의 `Ready`는 해당 드라이버와 기능이 그 condition을 실제로 보고할 때만 해석하며 모든 환경의 공통 준비 표식으로 가정하지 않는다. 노드 준비 RPC가 성공해도 성능 간섭이 없다고 결론내리지 않으며, p99가 나빠졌다고 allocation이 잘못됐다고 단정하지도 않는다.
+
+## 08.6 지원 표와 연구 결과를 구분한다
+
+NVIDIA GPU Operator 26.7 platform matrix는 OS, Kubernetes, runtime, GPU 조합의 지원 범위를 알려 준다. MIG와 MPS의 지원 GPU·driver 조건도 공급자 문서를 따른다. 지원됨은 설치와 기능 동작 범위이며 특정 모델의 처리량과 SLO 보장은 아니다.
+
+IWQoS 2024 GPU sharing 연구는 정해진 GPU, 모델, 부하, 정책, 평가 metric 아래의 결과다. 논문의 평균 throughput 개선을 자신의 interactive p99 보장으로 바꾸어 읽을 수 없다. 적용하려면 단독 latency, 동시 tenant 수, memory footprint, kernel 길이, fairness metric을 동일하게 정의해 재실험한다.
+
+## 08.7 추가 완전 풀이 문제
+
+**문제 1.** 24 GiB GPU를 replica 4개로 광고했다. Pod 네 개가 각각 7 GiB를 요구하면 모두 안정적으로 실행되는가?
+
+**해설.** 논리 할당은 네 개 모두 가능하지만 VRAM 합은 28 GiB로 물리 24 GiB를 넘는다. time-slicing은 고정 6 GiB partition을 만들지 않는다. 실제 동시 peak와 allocator 동작에 따라 OOM이 발생할 수 있다.
+
+**문제 2.** MIG instance 두 개가 있으므로 network 대역폭도 완전히 분리되는가?
+
+**해설.** 아니다. MIG는 GPU 내부의 메모리와 계산 자원에 강한 partition을 제공하지만 NIC, PCIe, CPU, storage는 공유될 수 있다. end-to-end SLO는 외부 경로도 측정해야 한다.
+
+**문제 3.** Claim과 prepare, CDI가 모두 성공했는데 p99가 단독 대비 3배다. 어느 증거를 더 모으는가?
+
+**해설.** 실제 sharing mode, 동시 kernel queue, VRAM pressure, GPU utilization, CPU 공급과 PCIe/network metric을 시간축으로 맞춘다. 제어면 성공은 접근 준비만 증명한다.
+
+**문제 4.** MPS client Pod 하나가 끝났다. MPS daemon도 반드시 종료해야 하는가?
+
+**해설.** daemon이 여러 client가 공유하는 노드 서비스라면 한 Pod 종료 때 내리면 다른 client가 깨진다. client별 정리와 daemon 소유 수명을 분리하고 마지막 사용자와 관리 정책에 따라 처리한다.
+
+**문제 5.** 논문에서 sharing throughput이 20% 향상됐으므로 모든 workload에 replica를 늘리려 한다. 무엇이 빠졌는가?
+
+**해설.** 논문의 GPU, workload, tenant 수, memory 사용, latency/fairness 조건과 자신의 환경을 비교하지 않았다. 같은 실험 설계에서 baseline과 p50/p99, 오류, 전력까지 재측정해야 일반화할 수 있다.
 
 ![전체 GPU·MIG·time-slicing·MPS와 DRA 공유의 차이](assets/sharing-isolation.svg)
 

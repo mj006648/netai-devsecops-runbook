@@ -1,55 +1,115 @@
 # 03. Gradient와 최적화
 
+![03. Gradient와 최적화 도식](assets/regression-gradient.svg)
+
 [← 이전](02-linear-regression-and-loss.md) · [목차](README.md) · [다음 →](04-classification-and-probabilities.md)
+## 문제에서 시작한다: 손실은 알지만 무엇을 바꿀까
+
+**표본(sample)**은 입력과 정답 한 쌍이다. 집 크기 2와 실제 가격 6이 표본 하나라면, 크기 2는 모델에 넣는 **특징(feature)**이고 가격 6은 맞혀야 할 정답이다. 여러 표본을 한 번의 계산에 함께 넣은 묶음이 **배치(batch)**다. 이 장에서는 먼저 표본 하나로 숫자를 추적한 뒤 여러 표본의 배치로 확장한다.
+
+집값 예측 모델이 `ŷ = wx + b`라고 하자. `x`는 집 크기라는 입력 숫자, `w`는 크기 한 단위가 예측에 미치는 정도를 담은 **가중치(weight)**, `b`는 입력이 0일 때 기본 예측을 옮기는 **편향(bias)**, `ŷ`는 모델의 예측값이다. 여기서 편향은 데이터의 사회적 편향이 아니라 수식의 절편이라는 뜻이다. **매개변수(parameter)**는 학습 과정이 값을 바꾸는 모델 내부 숫자이며, 이 식에서는 `w`와 `b`가 매개변수다.
+
+정답 `y`와 예측 `ŷ`의 차이를 하나의 숫자로 줄인 것이 **손실(loss)**이다. 손실은 모델이 얼마나 틀렸는지를 최적화가 읽을 수 있는 숫자로 만든다. 평균제곱오차 `L=(ŷ-y)^2`에서 예측 4, 정답 6이면 손실은 `(4-6)^2=4`다. 손실 4만 보면 `w`를 올려야 할지 내려야 할지는 모른다. 그 방향과 민감도를 주는 것이 미분과 gradient다.
+
+**미분(derivative)**은 입력을 아주 조금 바꿀 때 출력이 얼마나 변하는지 나타내는 순간 변화율이다. 매개변수가 여러 개일 때 한 숫자만 바꾸고 나머지 숫자는 고정해 구한 미분을 **편미분(partial derivative)**이라고 한다. `w`의 편미분은 `b`를 고정하고 `w`만 움직이며 손실 변화를 보는 값이다.
+
+**기울기(gradient)**는 모든 매개변수의 편미분을 같은 순서로 묶은 벡터다. 벡터는 순서가 있는 숫자 묶음이다. 매개변수 순서가 `[w,b]`이고 편미분이 각각 `[-8,-4]`이면 기울기는 `[-8,-4]`다. 각 성분의 부호는 그 매개변수를 늘릴 때 손실이 어느 방향으로 변하는지, 크기는 현재 지점의 민감도를 나타낸다.
+
+**연쇄법칙(chain rule)**은 매개변수가 중간 변수를 거쳐 결과에 영향을 줄 때 각 구간의 민감도를 곱하는 규칙이다. `w → ŷ → L` 경로에서 `∂L/∂w=(∂L/∂ŷ)(∂ŷ/∂w)`다. `L(w)=(2w-6)^2`에서 `w=2`이면 `∂L/∂ŷ=-4`, `∂ŷ/∂w=2`라서 `∂L/∂w=-8`이다. 음수 기울기는 `w`를 조금 키우면 손실이 내려간다는 뜻이다.
+
+**벡터(vector)**는 순서가 있는 숫자 묶음이다. 매개변수가 `w1,w2,b` 세 개면 기울기도 `[∂L/∂w1, ∂L/∂w2, ∂L/∂b]` 세 숫자다. **행렬(matrix)**은 같은 길이의 숫자 행을 직사각형으로 모은 것이다. 배치의 입력을 행렬 `X`로, 여러 특징의 가중치를 벡터 `w`로 놓으면 여러 예측을 `Xw+b`로 한 번에 계산할 수 있다. **모양(shape)**은 각 축의 길이다. `X`가 4×2이면 표본 4개가 각각 특징 2개를 가진다는 뜻이다.
+
+**최적화 알고리즘(optimizer)**은 계산된 기울기를 읽고 매개변수 값을 실제로 바꾸는 절차다. **학습률(learning rate)**은 기울기 중 얼마만큼을 한 번의 갱신에 반영할지 정하는 비율이다. 기울기가 -8이고 학습률이 0.1이면 변화량은 `-0.1×(-8)=+0.8`이다. **단계(step)**는 배치 하나로 예측·손실·기울기를 계산하고 최적화 알고리즘이 한 번 갱신하는 전체 묶음이다.
+
+## 한 단계를 숫자로 끝까지 계산한다
+
+초기 `w=2`, `b=0`, 입력 `x=2`, 정답 `y=6`을 사용한다.
+
+| 단계 | 계산 주체 | 식 | 값 |
+| --- | --- | --- | ---: |
+| 순전파 | 모델 | `ŷ=wx+b` | 4 |
+| 오차 | loss 함수 | `e=ŷ-y` | -2 |
+| 손실 | loss 함수 | `L=e²` | 4 |
+| 예측 미분 | 미분 규칙 | `∂L/∂ŷ=2e` | -4 |
+| weight gradient | 연쇄법칙 | `∂L/∂w=(∂L/∂ŷ)x` | -8 |
+| bias gradient | 연쇄법칙 | `∂L/∂b=(∂L/∂ŷ)1` | -4 |
+| 갱신 | optimizer | `w←w-η∂L/∂w` | η=0.1이면 2.8 |
+| 갱신 | optimizer | `b←b-η∂L/∂b` | 0.4 |
+
+**학습률(learning rate)** `η`는 gradient를 parameter 변화량으로 바꾸는 비율이다. optimizer는 gradient를 읽어 실제 parameter를 갱신하는 알고리즘이다. 위 한 step 뒤 새 예측은 `2.8×2+0.4=6`, 손실은 0이다. 이 예제는 우연히 한 번에 맞았지만 실제 여러 sample은 서로 다른 방향의 gradient를 내므로 반복이 필요하다.
+
+```mermaid
+flowchart LR
+    X["입력 x=2"] --> P["모델 w=2,b=0"]
+    P --> YH["예측 ŷ=4"]
+    Y["정답 y=6"] --> L["loss=4"]
+    YH --> L
+    L --> G["gradient w:-8, b:-4"]
+    G --> O["optimizer, η=0.1"]
+    O --> NP["새 parameter w=2.8,b=0.4"]
+```
+
+각 화살표는 메모리에 새 숫자를 만든다. optimizer가 입력 데이터나 label을 직접 고치는 것이 아니라 parameter tensor를 갱신한다.
+
+## Batch, epoch, SGD를 실제 반복으로 읽는다
+
+**Sample**은 입력과 정답 한 쌍이다. **Batch**는 한 번의 gradient 계산에 함께 넣는 sample 묶음이다. sample 100개에서 batch size가 20이면 모든 sample을 한 번 사용하는 데 5 step이 필요하다. **Epoch**는 학습 data 전체를 한 번 사용한 구간이다. 10 epoch이면 단순 계산으로 50 optimizer step이다.
+
+**SGD**, Stochastic Gradient Descent는 전체 dataset 대신 한 sample이나 작은 batch의 gradient로 갱신한다. stochastic은 어떤 batch를 뽑느냐에 따라 gradient가 흔들린다는 뜻이다. 전체 gradient가 `[2, -4]`인데 batch A가 `[5,-1]`, batch B가 `[-1,-7]`일 수 있다. 평균 방향은 유용해도 step 하나는 loss를 올릴 수 있다.
+
+Batch가 너무 작으면 gradient noise가 커지고, 너무 크면 메모리를 많이 쓰며 update 횟수가 줄어든다. batch size를 두 배로 바꿀 때 learning rate를 무조건 두 배로 해야 한다는 법칙은 없다. optimizer, normalization, data 분포와 안정성을 함께 실험한다.
+
+## Momentum과 Adam은 무엇을 저장하는가
+
+**Momentum**은 이전 gradient 방향의 이동 평균을 optimizer state로 저장한다. 현재 gradient가 조금 흔들려도 누적된 방향으로 계속 움직여 좁은 골짜기의 진동을 줄일 수 있다. `v_t=0.9v_{t-1}+g_t`, `w←w-ηv_t` 같은 형태다. `v`는 모델 parameter와 별도로 optimizer가 가진 숫자다.
+
+**Adam**은 gradient의 1차 moment와 제곱 gradient의 2차 moment를 저장해 parameter별 step 크기를 조정한다. 1차 moment는 방향의 이동 평균, 2차 moment는 크기 제곱의 이동 평균이다. Adam이 모든 문제에서 최적이라는 뜻은 아니다. learning rate, weight decay, epsilon과 dataset에 따라 결과가 달라진다. checkpoint를 저장할 때 optimizer state를 빼면 재시작 뒤 같은 학습 궤적을 재현하지 못할 수 있다.
+
+## 왜 실패하는가
+
+Learning rate가 너무 크면 최솟값을 건너뛰며 loss가 4→9→25처럼 발산할 수 있다. 너무 작으면 loss가 줄지만 필요한 시간이 지나치게 길다. gradient가 매우 작아지는 **vanishing gradient**는 앞쪽 layer가 거의 학습되지 않게 하고, 매우 커지는 **exploding gradient**는 수치 overflow와 불안정을 만든다.
+
+Gradient가 0이라고 최솟값이라고 단정할 수 없다. `L(w)=-w²`의 `w=0`도 gradient 0이지만 최댓값이다. 여러 변수에서는 한 방향은 아래로, 다른 방향은 위로 휘는 saddle point도 있다. 현재 loss, 주변 변화, validation 결과를 함께 본다.
+
+**Gradient clipping**은 gradient norm이 문턱을 넘으면 크기를 줄이는 기법이다. norm은 vector 전체 크기를 하나의 숫자로 요약한 값이다. clipping은 폭주를 막을 수 있지만 너무 낮게 잡으면 실제 학습 신호도 지운다. 원인인 잘못된 입력 scale이나 learning rate를 숨기는 용도로 쓰지 않는다.
+
+## 연구 결과와 연결할 때
+
+Optimizer 논문은 정해진 model, dataset, budget, tuning 범위에서 비교한다. Adam이 한 benchmark에서 빨리 loss를 줄였다는 결과를 모든 task의 최종 generalization 우위로 바꾸어 읽지 않는다. 비교할 때 같은 data split, step 수 또는 compute budget, learning-rate search 범위, random seed를 기록한다.
+
+Training loss 감소는 parameter가 training sample에 맞아 간다는 증거다. 새로운 sample에 잘 맞는지는 validation loss로 본다. optimizer 속도와 일반화는 관련될 수 있지만 같은 개념은 아니다.
+
+## 추가 완전 풀이 문제
+
+### 문제 4
+
+`w=1`, `b=0`, `x=3`, `y=9`, `L=(ŷ-y)²`, learning rate 0.05다. 한 step 뒤 `w`는?
+
+**해설:** 예측은 3, 오차는 -6이다. `∂L/∂ŷ=-12`, `∂ŷ/∂w=3`이므로 gradient는 -36이다. `w←1-0.05×(-36)=2.8`이다. 새 예측과 다음 loss는 다시 순전파해야 한다.
+
+### 문제 5
+
+Sample 240개, batch size 30, epoch 5면 optimizer step은 몇 개인가?
+
+**해설:** 한 epoch에 `240/30=8` step, 5 epoch에 40 step이다. 마지막 불완전 batch와 drop 정책이 없다는 조건이다.
+
+### 문제 6
+
+Gradient가 `[3,4]`일 때 L2 norm은 얼마인가?
+
+**해설:** `sqrt(3²+4²)=5`다. clipping threshold가 2.5라면 방향은 유지하고 전체 크기를 절반으로 줄이는 방식을 쓸 수 있다.
+
+### 문제 7
+
+Training loss는 계속 줄고 validation loss는 5 epoch 뒤부터 오른다. optimizer가 고장인가?
+
+**해설:** 반드시 아니다. training data에 과도하게 맞는 overfitting 신호일 수 있다. epoch 선택, regularization, data 분포를 검토한다. training loss 하나만으로 optimizer 성공을 판정하지 않는다.
 
 Gradient는 parameter를 조금 바꿀 때 loss가 어느 방향으로 얼마나 변하는지 나타낸다.
 
 미분은 순간 변화율을 계산하는 방법이다.
 
 Optimizer는 gradient를 읽어 parameter를 실제로 갱신한다.
-
-## 이 장의 목표
-
-1. 새 용어와 수학 기호를 말로 설명한다.
-2. 입력이 중간 숫자를 거쳐 결과가 되는 과정을 계산한다.
-3. 계산 모형과 실제 성능 주장을 구분한다.
-
-![03. Gradient와 최적화 도식](assets/regression-gradient.svg)
-
-## 기본 단어와 기호
-
-**slope**는 입력 변화 대비 출력 변화이다.
-
-**derivative**는 한 점의 순간 변화율이다.
-
-**partial derivative**는 다른 변수를 고정한 한 변수의 미분이다.
-
-**gradient**는 모든 parameter 편미분의 vector이다.
-
-**chain rule**는 연결된 변화율을 곱하는 규칙이다.
-
-**learning rate**는 update 크기 계수이다.
-
-**gradient descent**는 loss가 줄어드는 방향으로 이동이다.
-
-**SGD**는 sample 또는 작은 batch 기반 gradient descent이다.
-
-**momentum**는 이전 update 방향을 누적이다.
-
-**Adam**는 gradient 평균과 제곱 평균을 쓰는 optimizer이다.
-
-**step**는 한 번의 parameter 갱신이다.
-
-**convergence**는 목표값 근처로 수렴하는 현상이다.
-
-기호를 읽을 때 이름, shape, 단위, 생성 주체를 함께 적는다.
-
-## 왜 필요한가
-
-- Loss 값만 알아서는 parameter를 어느 방향으로 바꿀지 모른다.
-- Learning rate가 너무 크면 최소점을 지나 흔들릴 수 있다.
-- 너무 작으면 학습이 지나치게 느리다.
-- Gradient 0은 전역 최솟값을 보장하지 않는다.
 
 ## 입력에서 결과까지
 
@@ -291,34 +351,6 @@ Gradient가 맞아도 학습률 때문에 loss가 커질 수 있는가?
 
 **해설:** 아니다. 다른 표본의 loss가 커질 수 있다. 전체 training 평균, validation, 독립 test를 단계별로 확인해야 한다.
 
-## 계산을 거꾸로 점검하기
-
-결과가 이상하면 마지막 값만 보지 않는다.
-
-입력의 단위와 shape가 맞는지 먼저 확인한다.
-
-중간값을 손으로 다시 계산한다.
-
-Training 중 바뀌는 parameter와 고정된 data를 구별한다.
-
-평가 data가 선택 과정에 들어갔는지 확인한다.
-
-숫자의 분모와 평균 범위를 적는다.
-
-## 실제 시스템으로 확장할 때
-
-작은 예제는 원리를 고립시켜 보여 준다.
-
-실제 system은 noise, queue, concurrency, finite precision을 포함한다.
-
-Data 수집과 label 생성 지연도 성능에 포함한다.
-
-Version, seed, split, metric 정의를 기록한다.
-
-평균과 tail, subgroup 결과를 함께 본다.
-
-실패와 timeout을 결과에서 지우지 않는다.
-
 ## 흔한 오해와 반례
 
 - Gradient와 parameter update는 같은 연산이 아니다.
@@ -345,15 +377,6 @@ Chain rule이 왜 필요한가?
 Gradient 0의 가능한 의미는?
 
 **해설:** 최솟값, 최댓값, 평평한 지점 등일 수 있어 추가 판단이 필요하다.
-
-## 학습 체크리스트
-
-- 모든 약어를 첫 등장에 풀어 썼는가?
-- 수학 기호가 가리키는 값과 단위가 명확한가?
-- 입력과 label의 시각 경계가 명확한가?
-- Parameter를 바꾸는 주체를 설명했는가?
-- Validation과 test의 책임을 나눴는가?
-- Baseline과 실패 조건을 기록했는가?
 
 ## 공식 자료
 

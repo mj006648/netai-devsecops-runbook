@@ -13,6 +13,23 @@ Linux kernel은 운영체제의 핵심 프로그램이다.
 GPU kernel은 GPU에서 많은 thread가 실행하는 작은 device program이다.
 같은 단어지만 계층이 다르다.
 
+## 먼저 실행 객체를 실제 위치에 놓기
+
+**GPU**는 CPU와 별도의 명령 실행 장치와 메모리 계층을 가진 가속기다. NVIDIA 환경의 **CUDA**는 GPU 프로그램 작성·컴파일·메모리 관리·명령 제출을 위한 프로그래밍 모델과 소프트웨어 플랫폼 이름이다. CUDA라는 한 단어 안에도 compiler, runtime API, driver API, 수학 library가 있으므로 “CUDA가 느리다”는 진단은 범위가 너무 넓다.
+
+**Runtime**은 애플리케이션이 장치 메모리 할당, 복사, kernel launch, stream과 event를 요청할 때 사용하는 사용자 공간 실행 계층이다. **Driver**는 runtime 아래에서 GPU context, 장치 주소 공간, command 제출과 오류 상태를 관리하고 운영체제의 장치 driver와 GPU를 연결한다. 제품 구현에서는 사용자 공간 library와 Linux kernel module이 함께 driver stack을 이룰 수 있다. Runtime 호출이 곧바로 GPU 회로를 직접 만지는 것은 아니다.
+
+**GPU kernel**은 GPU에서 많은 thread가 서로 다른 데이터 항목에 실행하는 장치 함수다. 여기서 kernel은 process와 virtual memory를 관리하는 Linux kernel과 다른 뜻이다. **Kernel launch**는 어느 함수에 grid·block 크기와 인자를 주어 어느 stream에 실행할지 명령을 넣는 행위다. Launch API가 반환된 순간은 대개 “명령 제출이 받아들여졌다”는 뜻이고 계산 완료 시점과 다를 수 있다.
+
+**Stream**은 GPU 작업 사이의 순서를 표현하는 명령열이다. 같은 stream에서 앞선 복사와 kernel 사이에는 순서가 있지만, 다른 stream 사이에는 event나 명시적 의존성을 넣지 않으면 필요한 데이터가 준비됐다는 보장이 생기지 않는다. Stream은 CPU thread와 같은 객체가 아니며, stream 하나가 GPU 코어 하나를 독점하는 것도 아니다. Hardware scheduler가 준비된 여러 작업을 자원 조건에 맞춰 실행한다.
+
+CPU가 쓰는 일반 RAM을 **host memory**, GPU가 주로 쓰는 장치 메모리를 **device memory**라고 부른다. **Buffer**는 데이터를 담기 위해 할당한 연속 또는 논리적으로 연결된 메모리 영역이다. Tensor 객체는 shape·dtype·stride·device 같은 metadata와 실제 원소가 든 storage buffer를 함께 가리킨다. Python 변수 `x` 자체가 GPU 안으로 이동하는 것이 아니라, runtime이 `x`의 storage 내용을 device buffer로 옮기고 kernel 인자로 그 장치 주소를 전달한다.
+
+**Pinned memory(고정된 host memory)**는 전송 동안 물리 RAM page가 회수되거나 다른 물리 위치로 옮겨지지 않도록 등록된 host buffer다. GPU DMA 엔진은 안정적인 물리 page mapping을 사용해 이 buffer와 device memory 사이를 전송할 수 있다. 일반 **pageable memory**에서 비동기 전송을 요청하면 runtime이 내부 pinned staging buffer를 거치거나 동기화할 수 있어 API가 보이는 동작과 overlap 가능성이 달라진다. Pinned memory는 무한히 쓰는 무료 최적화가 아니다. 너무 많이 고정하면 OS가 회수할 수 있는 RAM이 줄고 등록 비용도 든다.
+
+**DMA(Direct Memory Access)**는 CPU가 바이트마다 load와 store를 실행하지 않고 장치의 복사 엔진이 메모리 사이 전송을 수행하게 하는 기작이다. CPU는 descriptor와 주소를 준비하고 완료를 event, polling 또는 interrupt 경로로 확인한다. DMA가 “CPU가 전혀 관여하지 않는다”는 뜻은 아니다. 제출과 주소 mapping, cache 일관성, 오류 처리는 CPU·driver·IOMMU가 관여한다.
+
+
 ## 코드 한 줄이 장치에서 끝날 때까지
 
 ```mermaid
@@ -119,6 +136,52 @@ work_stream: wait(data_ready) → kernel(batch2)
 
 Event는 CPU 벽시계와 같은 것이 아니다. GPU 작업 순서 안의 완료 지점을 표현한다. Kernel 시간만 잴 때는 같은 실행 경로에 start/end event를 두고 end 완료를 기다린다. 사용자가 느낀 전체 지연을 잴 때는 tokenization, queue, 복사와 동기화까지 포함한 CPU 벽시계를 별도로 잰다.
 
+## 배송 batch가 host에서 GPU 결과로 돌아오는 완전 추적
+
+배송 요청 네 건의 거리와 무게를 FP32 shape `(4,2)`로 만든다고 하자. 원소 8개이므로 tensor payload는 `8×4=32 bytes`다. 실제 전송은 매우 작아 launch와 복사 준비 overhead가 더 클 수 있지만, 경로를 보기에는 충분하다.
+
+1. CPU의 loader가 파일이나 네트워크 record를 읽어 Python 또는 native 객체로 parse한다. Framework는 shape, dtype, stride를 담은 tensor metadata와 host storage를 만든다.
+2. 원본 storage가 pageable RAM이면 runtime은 비동기 DMA에 적합한 pinned staging buffer를 확보해 32 bytes를 CPU로 복사할 수 있다. 처음부터 pinned tensor를 만들었다면 이 staging 복사를 피할 수 있지만 고정 RAM의 비용을 부담한다.
+3. Runtime은 device buffer를 GPU 주소 공간에 할당한다. Framework caching allocator를 쓰면 이전에 예약한 block 일부를 재사용할 수 있으므로 매번 OS 수준 할당이 일어나는 것은 아니다.
+4. Driver는 host page가 DMA 동안 유효하도록 pin·map 상태를 준비하고, IOMMU가 있는 시스템에서는 device가 사용할 I/O virtual address를 물리 page에 연결한다.
+5. H2D copy 명령이 `copy_stream`에 enqueue된다. CPU 호출 반환과 DMA 완료는 다르다. PCIe 경로의 GPU라면 전송 요청과 data가 root complex와 PCIe link를 지나며, 통합 메모리 시스템이나 다른 interconnect에서는 물리 경로가 달라진다.
+6. Copy 뒤 `data_ready` event를 기록한다. `compute_stream`은 이 event를 기다린 다음 배송 예측 kernel을 실행하도록 명령을 받는다.
+7. Framework dispatcher는 `x @ W + b`라는 operator의 dtype·shape·device를 보고 library 또는 compiled kernel을 고른다. Runtime이 device buffer 주소, shape 정보, launch 구성을 인자로 넣는다.
+8. GPU command processor가 준비된 launch를 받아 block을 SM에 배치한다. Thread들은 `x`와 `W`를 읽고 output activation buffer에 예측값을 쓴다. 어떤 cache와 shared memory를 쓰는지는 선택된 kernel에 달려 있다.
+9. `compute_done` event가 같은 compute stream 뒤에 기록된다. CPU는 다른 batch를 준비할 수 있고, 결과가 필요할 때 event query 또는 synchronize로 완료를 확인한다.
+10. 결과를 CPU에서 읽어야 하면 D2H copy를 제출한다. Device output이 완성된 뒤 복사가 시작되도록 stream 순서나 event 의존성을 둔다. DMA가 pinned host destination에 결과를 쓴 뒤 CPU가 접근한다.
+11. 완료는 CPU가 polling으로 확인할 수도 있고 driver의 interrupt·wait 경로를 사용할 수도 있다. Interrupt가 발생했다고 Python thread가 즉시 실행되는 것은 아니다. OS scheduler가 깨운 thread에 CPU 시간을 주어야 사용자 코드가 계속된다.
+12. Framework는 output metadata와 host 또는 device storage를 사용자 코드에 돌려준다. Temporary buffer는 참조와 stream 사용이 끝나야 allocator에 반환할 수 있다. 비동기 kernel이 아직 읽는 buffer를 CPU가 재사용하면 데이터 레이스가 생긴다.
+
+```mermaid
+sequenceDiagram
+    participant C as CPU·framework
+    participant P as pinned host buffer
+    participant D as driver·IOMMU
+    participant G as GPU device memory
+    participant S as GPU streams
+    C->>P: batch 32 B 준비
+    C->>D: H2D와 kernel 비동기 제출
+    D->>G: DMA로 input buffer 전송
+    G-->>S: data_ready event
+    S->>G: prediction kernel 실행
+    G-->>S: compute_done event
+    C->>D: 완료 확인·D2H 요청
+    D->>P: DMA로 결과 전송
+    D-->>C: wait 종료, host가 결과 사용
+```
+
+이 그림의 화살표 수가 곧 성능 비용의 비율은 아니다. 32 B 예제는 overhead가 지배적이지만 큰 batch에서는 transfer bandwidth와 kernel 계산량이 중요해질 수 있다. Copy와 compute overlap도 pinned memory, 별도 copy engine, 충분한 작업 크기, 올바른 stream 의존성이 모두 있을 때만 가능하다.
+
+### 버스, 주소, 완료를 조금 더 깊게 보기
+
+PCIe는 CPU·메모리 쪽 root complex와 GPU 같은 endpoint를 잇는 packet 기반 interconnect다. Driver가 GPU에 host 주소 숫자 하나를 그대로 주는 것으로 끝나지 않는다. OS는 process의 virtual page를 물리 page에 연결하고 pin하며, IOMMU는 장치 관점 주소를 허용된 물리 page에 매핑할 수 있다. 이 경계는 잘못된 장치 접근이 임의의 RAM을 덮지 못하도록 제한하는 데도 쓰인다.
+
+GPU device address도 process의 CPU virtual address와 같은 숫자 공간이라고 가정하면 안 된다. Runtime과 driver가 context별 장치 mapping을 만들고 kernel에는 그 장치에서 유효한 pointer를 넘긴다. Unified virtual addressing이나 managed memory가 비슷한 pointer 사용 경험을 제공해도 실제 page 위치, migration, fault 처리 비용이 사라지는 것은 아니다.
+
+PCIe bandwidth 수치만으로 작은 transfer 시간을 계산하기도 어렵다. 고정된 제출 비용, packet overhead, 방향 전환, NUMA 원격 RAM, 동시 traffic이 있다. 큰 연속 buffer는 peak bandwidth에 가까워질 수 있지만 수많은 작은 복사는 overhead 비율이 크다. 그래서 작은 tensor들을 합치거나 다음 batch 전송과 현재 batch 계산을 pipeline으로 겹치는 설계가 나온다.
+
+
 ## GPU kernel과 Linux kernel
 
 Linux kernel은 process, virtual memory, file, network, driver를 관리한다.
@@ -130,9 +193,7 @@ CUDA C++ 문서에서는 kernel을 host에서 launch하고, 많은 CUDA thread�
 GPU kernel은 syscall handler가 아니다.
 GPU kernel 안에서 일반적인 Linux syscall을 호출하는 식으로 생각하면 안 된다.
 
-두 kernel은 만나는 지점이 있다.
-프로그램이 GPU memory를 할당하거나 kernel launch를 제출할 때 driver 경로가 OS와 장치를 연결한다.
-**DMA(Direct Memory Access, 직접 메모리 접근)**는 CPU가 byte마다 복사하지 않고 장치가 메모리와 데이터를 옮기는 방식이다. **Page pinning(페이지 고정)**은 전송 중 CPU 메모리 페이지가 다른 물리 위치로 옮겨지지 않게 고정한다. **Interrupt(인터럽트)**는 장치 완료나 오류를 CPU에 알리는 신호이고, **memory mapping(메모리 매핑)**은 장치·파일 영역을 process 주소 공간에서 접근할 수 있게 연결하는 방식이다. 더 자세한 OS·버스 동작은 [Linux I/O 장](../../../linux/learning/linux-kernel/05-vfs-devices-and-io.md)과 [하드웨어 PCIe 장](../../../hardware/learning/server-hardware/03-pcie-slots-switches.md)에서 이어진다.
+두 kernel은 driver 경로에서 만난다. 프로그램이 GPU memory를 할당하거나 launch를 제출하면 사용자 공간 runtime, 장치 파일과 memory mapping, Linux의 kernel-mode driver가 command와 주소를 검증·준비한다. Page pinning은 전송 중 host page의 물리 위치를 안정시키고, DMA engine은 준비된 mapping을 사용한다. 장치 완료 interrupt는 기다리는 CPU thread를 runnable로 만들 수 있지만 그 thread의 즉시 실행까지 보장하지는 않는다. Linux I/O와 PCIe 링크 문서는 이 경로의 추가 사례를 제공하며, 이 장의 완전 추적은 위 절에 포함했다.
 
 ## Stream은 GPU 작업의 순서표다
 
@@ -251,6 +312,20 @@ Output activation은 `(4, 128, 4096)`이다.
 따라서 위 계산은 최소 payload 감각을 주는 모델이지 실제 peak memory 보장이 아니다.
 peak memory는 allocator, kernel 선택, graph capture, stream 겹침에 따라 달라질 수 있다.
 
+## 최신 연구를 실행 계층에 놓기: PagedAttention과 FlashInfer
+
+LLM serving의 attention은 학습용 고정 shape 연산과 다르다. Prefill은 여러 query token을 한꺼번에 처리하지만 decode는 요청마다 보통 새 query token 하나가 자라고, 각 요청의 KV cache 길이도 다르다. 짧은 요청과 긴 요청을 같은 kernel launch에 넣으면 block별 작업량이 달라 어떤 SM은 먼저 끝나고 다른 SM을 기다리는 load imbalance가 생길 수 있다.
+
+**PagedAttention**은 KV cache를 고정 크기 block으로 관리해 논리적으로 연속된 token 기록을 물리적으로 떨어진 device-memory block에 둘 수 있게 한다. 이는 allocator와 요청 scheduler가 더 많은 동시 요청을 배치하도록 돕지만, attention kernel은 block table을 따라 K와 V를 찾아야 한다. 일반 운영체제 page fault처럼 매 token마다 저장 장치에서 읽는다는 뜻은 아니다. 이름은 paging에서 가져왔지만 대상은 주로 GPU 메모리 안의 KV cache block이다.
+
+**FlashInfer**는 MLSys 2025에 발표된 LLM inference용 attention engine이다. 연구가 다룬 핵심은 하나의 고정 kernel만 제공하는 것이 아니라, paged KV, 공유 prefix, 다양한 query 길이와 decoding 형태를 composable format과 customizable template로 표현하는 것이다. JIT compilation은 실제 workload 설정에 맞는 kernel을 만들고, load-balanced scheduling은 길이가 다른 요청의 작업을 GPU에 더 고르게 나누려 한다. CUDA Graph는 반복 launch overhead를 줄이기 위해 고정된 실행 구성을 재사용하는 기법인데, 동적 요청과 고정 구성의 긴장을 scheduling metadata를 통해 다룬다.
+
+논문이 보고한 inter-token latency 감소와 장문·parallel generation 개선은 논문의 GPU, 모델, request trace, 비교 compiler backend, software version에서 측정한 결과다. FlashInfer를 설치하면 모든 operator와 end-to-end 서비스가 같은 비율로 빨라진다는 뜻이 아니다. Tokenization, queueing, network, 다른 layer, memory capacity가 병목이면 attention kernel 개선의 전체 효과는 작다. JIT는 처음 compile하는 비용과 code cache 관리가 있고, shape·기능 조합이 달라지면 재사용 조건도 달라진다.
+
+FlashAttention-3, PagedAttention, FlashInfer도 역할이 다르다. FlashAttention-3는 Hopper H100의 비동기 Tensor Core·TMA pipeline과 FP8 경로를 활용한 attention kernel 연구다. PagedAttention은 동적 KV cache의 block 배치와 serving memory management를 함께 바꾼다. FlashInfer는 여러 inference 패턴과 KV 형식에 맞춘 kernel·scheduling engine을 제공한다. 실제 serving stack은 이 아이디어들을 계층에 맞춰 조합할 수 있지만 이름이 비슷하다고 같은 최적화로 묶어서는 안 된다.
+
+
+
 ## Compiler와 fusion
 
 Framework는 연산 그래프를 그대로 하나씩 실행할 수도 있고, 일부를 compiler가 묶을 수도 있다.
@@ -309,6 +384,19 @@ Linux kernel과 GPU kernel의 차이를 한 문장으로 쓰라.
 Linux kernel은 운영체제 핵심으로 process, memory, device를 관리하고, GPU kernel은 GPU에서 병렬 thread가 실행하는 계산 함수다.
 둘은 driver와 runtime을 통해 연결되지만 같은 계층의 프로그램이 아니다.
 
+문제 5.
+Pageable host tensor를 pinned staging buffer를 거쳐 GPU로 복사할 때 객체와 복사가 어떤 순서로 생기는지 쓰라.
+
+해설.
+Framework가 pageable storage를 만들고, runtime이 pinned buffer를 확보한 뒤 CPU가 pageable→pinned로 복사한다. Driver는 pinned page를 DMA 주소에 map하고 H2D 명령을 stream에 넣는다. DMA engine이 pinned host buffer→device buffer를 전송한 뒤 event가 완료된다. 비동기 API 반환은 마지막 단계의 완료와 다르며, runtime 구현과 전송 크기에 따라 내부 staging 동작은 달라질 수 있다.
+
+문제 6.
+Copy 8 ms와 compute 12 ms인 batch 두 개를 완전히 직렬 실행하면 40 ms다. 이상적으로 batch 2 copy를 batch 1 compute와 전부 겹치면 얼마인가?
+
+해설.
+시간선은 batch 1 copy 8 ms, 그 뒤 batch 1 compute 12 ms와 batch 2 copy 8 ms가 겹치고, 마지막 batch 2 compute 12 ms다. 총 `8+12+12=32 ms`다. `max(12,8)=12`인 중간 구간을 쓴 셈이다. 실제 32 ms를 얻으려면 pinned memory, copy/compute 동시 실행 지원, 독립 자원, 올바른 event 의존성이 필요하다. 대역폭을 서로 다투면 더 길어진다.
+
+
 ## 공식 자료
 
 - NVIDIA CUDA C++ Programming Guide, kernels and programming model: https://docs.nvidia.com/cuda/cuda-c-programming-guide/
@@ -316,6 +404,9 @@ Linux kernel은 운영체제 핵심으로 process, memory, device를 관리하�
 - PyTorch CUDA semantics and memory management: https://docs.pytorch.org/docs/stable/notes/cuda.html
 - PyTorch autograd mechanics: https://docs.pytorch.org/docs/stable/notes/autograd.html
 - NVIDIA NCCL documentation: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/
+- Kwon et al., PagedAttention, SOSP 2023: https://arxiv.org/abs/2309.06180
+- Shah et al., FlashAttention-3, 2024: https://arxiv.org/abs/2407.08608
+- Ye et al., FlashInfer, MLSys 2025: https://proceedings.mlsys.org/paper_files/paper/2025/hash/dbf02b21d77409a2db30e56866a8ab3a-Abstract-Conference.html
 
 버전 caveat: CUDA, driver, PyTorch, NCCL, GPU architecture의 조합에 따라 가능한 기능과 기본 동작이 달라질 수 있다.
 이 장은 API의 큰 의미와 측정 원칙을 설명하며, 특정 제품의 기본 성능이나 설정을 보증하지 않는다.

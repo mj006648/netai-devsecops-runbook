@@ -6,7 +6,7 @@ AI 인프라는 결국 많은 숫자를 정해진 모양으로 읽고 곱하고 
 그 숫자 묶음을 tensor라고 부른다.
 이 장은 tensor의 모양, matrix multiplication, 자동미분, attention, Transformer를 작은 예제로 연결한다.
 
-**Tensor(텐서)**는 축을 가진 숫자 배열이고, **shape(형상)**는 각 축의 길이다. **Embedding(임베딩)**은 token 같은 이산 항목을 여러 실수로 표현한 벡터다. **Forward(순전파)**는 입력에서 예측값을 계산하는 방향, **backward(역전파)**는 손실에서 거꾸로 각 파라미터의 **gradient(기울기, 값을 조금 바꿀 때 손실이 변하는 정도)**를 계산하는 방향이다. 이 장에서 **activation(활성값)**은 순전파 중 layer 사이에 생기는 중간 tensor를 뜻한다.
+**Tensor(텐서)**는 축을 가진 숫자 배열이고, **shape(형상)**는 각 축의 길이다. **Token(토큰)**은 tokenizer가 문자열을 나눈 단위에 붙인 정수 ID이고, **embedding(임베딩)**은 token 같은 이산 항목을 여러 실수로 표현한 벡터다. **Forward(순전파)**는 입력에서 예측값을 계산하는 방향이고, **loss(손실)**는 예측과 목표의 차이를 학습 가능한 숫자로 나타낸 함수다. **Backward(역전파)**는 loss에서 거꾸로 각 파라미터의 **gradient(기울기, 값을 조금 바꿀 때 loss가 변하는 정도)**를 계산하는 방향이다. 이 장에서 **activation(활성값)**은 순전파 중 layer 사이에 생기는 중간 tensor를 뜻한다.
 
 목표는 딥러닝 수학 전체를 끝내는 것이 아니다.
 GPU 메모리 표와 실행 로그를 읽을 때 “batch, sequence, embedding, head가 무엇을 뜻하는지” 이해하는 것이다.
@@ -46,6 +46,21 @@ device는 숫자가 CPU 메모리에 있는지 GPU 메모리에 있는지 같은
 PyTorch 튜토리얼은 입력과 출력, 모델 파라미터를 tensor로 표현한다고 설명한다.
 PyTorch의 broadcasting 문서는 shape가 다른 tensor 연산이 어떤 규칙으로 확장되는지 설명한다.
 이 규칙은 편리하지만, 의도하지 않은 큰 중간 tensor를 만들 수 있으므로 shape를 항상 적는다.
+
+### Shape, dtype, storage는 서로 다른 질문이다
+
+Tensor를 읽을 때 세 질문을 순서대로 한다. Shape는 “논리적으로 몇 개의 원소가 어떤 축에 놓였는가”, dtype은 “원소 하나를 어떤 비트 규칙으로 표현하는가”, storage는 “실제 바이트가 어느 메모리에 놓였는가”다. Shape `(2, 3)`인 FP32 tensor는 payload만 세면 `2×3×4=24 bytes`이고 FP16이면 `2×3×2=12 bytes`다. 그러나 framework allocator의 정렬과 메모리 block, 객체 metadata 때문에 실제 예약량은 더 클 수 있다.
+
+같은 storage를 다른 shape로 보는 **view**도 가능하다. 예를 들어 연속된 여섯 원소를 `(2,3)` 또는 `(3,2)`로 해석할 수 있다. 이때 **stride**는 한 축에서 다음 원소로 갈 때 storage에서 몇 칸 이동하는지를 적는다. 축을 transpose하면 논리 shape는 바뀌지만 실제 바이트를 즉시 복사하지 않고 stride만 달라질 수 있다. 어떤 GPU kernel은 이런 비연속 배치를 직접 읽고, 어떤 구현은 연속 buffer로 복사한다. 따라서 “shape가 같다”만으로 같은 메모리 접근 비용을 보장할 수 없다.
+
+Dtype은 용량뿐 아니라 수치 결과에도 영향을 준다. 표현 비트가 적으면 메모리 전송량과 특정 하드웨어의 계산량을 줄일 수 있지만, 아주 큰 값은 overflow하고 아주 작은 차이는 반올림으로 사라질 수 있다. Mixed precision 훈련은 모든 객체를 무조건 같은 낮은 정밀도로 바꾸는 방식이 아니다. 계산, parameter의 master copy, gradient 축척과 누적을 서로 다른 정밀도로 둘 수 있다. 어떤 dtype이 빠르고 정확한지는 GPU 세대, kernel 지원, 모델 값의 분포와 loss scaling에 달려 있다.
+
+### Parameter, activation, gradient의 서로 다른 수명
+
+Parameter는 여러 batch와 요청에 재사용되는 학습 대상이다. Forward가 시작되기 전부터 존재하고 optimizer step 뒤 값이 바뀌며 checkpoint에 저장된다. Activation은 특정 batch의 입력이 layer를 지나며 생긴 결과다. Backward가 필요로 하는 activation은 해당 역전파가 끝날 때까지 보존하거나, **activation checkpointing**을 쓰면 일부를 버렸다가 backward 때 다시 계산한다. 여기서 checkpointing은 장애 복구 파일을 쓰는 checkpoint와 이름만 같고, 중간 activation 메모리와 재계산 시간을 바꾸는 기법이다.
+
+Gradient buffer는 parameter와 같은 shape를 가지는 경우가 많고 backward가 기여를 더한다. Microbatch 두 개를 누적한다면 첫 backward 뒤 값을 지우지 않고 둘째 기여를 더한 다음 optimizer가 읽는다. 반대로 독립 step 사이에 의도 없이 남기면 이전 batch gradient가 섞인다. `parameter`, `parameter.grad`, saved activation은 값의 의미와 수명이 다르므로 메모리 snapshot에서 따로 센다.
+
 
 ## Matrix multiplication의 모양
 
@@ -266,6 +281,61 @@ Value가 `[10, 0]`, `[0, 20]`이라는 두 벡터라면 output은 가중합이�
 
 이 숫자는 첫 번째 token을 그대로 복사했다는 뜻이 아니다. 두 Value 표현을 학습된 비율로 섞었다는 뜻이다. 위 `[2.0, 1.0]`은 scaling과 mask가 끝난 값이므로 바로 softmax에 넣었다.
 
+### 세 token causal attention을 처음부터 끝까지 계산하기
+
+세 token `["배송", "지연", "확인"]`이 이미 embedding과 projection을 지나 head 차원 1인 Q, K, V를 얻었다고 하자. 실제 모델의 vector는 훨씬 길지만, 여기서는 softmax와 mask를 손으로 계산하려고 숫자 하나씩만 둔다.
+
+```text
+Q = [1, 1, 2]
+K = [1, 2, 0]
+V = [10, 20, 30]
+D_head = 1, 따라서 sqrt(D_head)=1
+```
+
+**Causal mask**는 다음 token을 생성하는 위치가 미래 token을 미리 보지 못하게 하는 규칙이다. Token `i`는 `j≤i` 위치만 본다. 먼저 각 query와 key를 곱하고 미래 위치를 `-∞`로 가린다. `-∞`는 실제 구현에서 dtype에 맞는 매우 작은 값이나 mask 연산으로 표현될 수 있다.
+
+```text
+score =
+token 1: [1,   -∞, -∞]
+token 2: [1,    2, -∞]
+token 3: [2,    4,  0]
+```
+
+첫째 token은 자기 자신만 볼 수 있으므로 softmax weight `[1]`, output은 `1×10=10`이다.
+
+둘째 행 `[1,2]`의 지수값은 약 `[2.718, 7.389]`이고 합은 `10.107`이다. 따라서 weight는 약 `[0.269, 0.731]`이다.
+
+```text
+output_2 = 0.269×10 + 0.731×20
+         = 17.31
+```
+
+셋째 행 `[2,4,0]`의 지수값은 약 `[7.389,54.598,1]`, 합은 `62.987`이다. Weight는 약 `[0.117,0.867,0.016]`이다.
+
+```text
+output_3 ≈ 0.117×10 + 0.867×20 + 0.016×30
+         ≈ 18.99
+```
+
+결과 shape는 다시 세 위치를 가진 `(S=3,D_head=1)`이다. 이 값은 “두 번째 단어를 86.7% 복사했다”는 뜻이 아니다. Value는 학습된 표현이고, 이후 output projection, residual, normalization, MLP를 더 지난다.
+
+수치 안정적인 softmax 구현은 각 행의 최댓값을 빼고 exponent를 계산한다. `[2,4,0]`에서 4를 빼면 `[-2,0,-4]`다. 모든 원소에 같은 값을 빼도 비율은 같지만 exponent가 지나치게 커지는 것을 막는다. Mask된 위치는 정규화 합에 들어가지 않아 weight 0이 되어야 한다.
+
+### 왜 기본 attention은 메모리 이동 문제도 되는가
+
+교과서식 구현은 `S×S` score를 GPU의 큰 장치 메모리에 쓰고, 다시 읽어 mask·softmax를 계산하고, probability를 또 쓴 뒤 V와 곱을 수 있다. GPU 칩 안의 빠르지만 작은 SRAM과 칩 밖의 크지만 상대적으로 느린 HBM 사이를 중간 tensor가 여러 번 오가면 산술 장치가 데이터를 기다릴 수 있다. **Tiling**은 Q·K·V를 작은 block으로 나누어 빠른 on-chip 메모리에서 재사용하는 방식이다. **Online softmax**는 전체 행을 한 번에 저장하지 않고 block별 최댓값과 정규화 합을 갱신하면서 수학적으로 같은 softmax 결과를 만드는 방법이다.
+
+FlashAttention 계열은 이런 IO-aware tiling으로 완전한 `S×S` probability 행렬을 HBM에 materialize하지 않고 정확한 attention을 계산한다. 여기서 “정확한”은 근사 sparse attention으로 식을 바꾸지 않았다는 뜻이다. Floating-point 연산 순서가 달라져 마지막 bit까지 동일하다는 뜻은 아니다. 이 기법은 score의 논리적 shape가 사라졌다는 뜻도 아니다. 수학적으로는 여전히 각 query가 허용된 key들과 관계를 계산하지만, 중간 객체를 저장하는 방식이 달라진다.
+
+### FlashAttention-3가 바꾼 실행 파이프라인
+
+FlashAttention-3 논문은 2024년 Hopper H100을 중심으로 새 하드웨어 기능을 사용했다. **Tensor Core**는 행렬 곱셈 누산을 빠르게 수행하는 GPU 계산 장치이고, **TMA(Tensor Memory Accelerator)**는 Hopper에서 다차원 tensor block 전송을 비동기로 다루는 기능이다. **Warp specialization**은 warpgroup마다 데이터 이동, 행렬곱, softmax 같은 역할을 나누어 서로 겹치게 하는 실행 구성이다.
+
+Attention 한 tile에는 행렬곱과 softmax가 번갈아 나타난다. Tensor Core의 행렬곱이 끝날 때까지 softmax 실행 자원이 놀고, softmax 동안 Tensor Core가 놀면 peak 연산량을 쓰기 어렵다. 논문은 서로 다른 tile의 행렬곱과 softmax를 interleave하고 비동기 전송을 겹쳐 이 빈 구간을 줄인다. FP8 경로에서는 block quantization과 값 분포를 섞는 변환을 사용해 낮은 정밀도의 큰 오차를 줄이려 했다.
+
+논문이 보고한 속도와 TFLOP/s는 H100, 선택한 head dimension·sequence length·dtype·비교 구현이라는 평가 조건에 묶인다. TMA와 해당 Tensor Core 명령이 없는 GPU에 같은 pipeline을 그대로 적용할 수 없다. FP8 결과도 모든 모델의 end-to-end 품질을 자동 보증하지 않는다. Tokenization, 다른 Transformer layer, 통신, KV cache 관리가 지배적인 서비스에서는 attention kernel의 배속이 전체 배속과 같지 않다. 연구 결과를 사용할 때는 kernel 단독 시간과 모델 전체 시간, 훈련과 decode, FP16과 FP8을 분리해 읽는다.
+
+
 ## Multi-head attention
 
 Multi-head attention은 embedding 차원을 여러 head로 나누어 여러 attention을 병렬로 계산한다.
@@ -379,6 +449,19 @@ FP16으로 전부 저장하면 128 MiB다.
 gradient는 `-6 × 3 = -18`이다.
 `new_w = 2 - 0.05 × (-18) = 2.9`다.
 
+문제 5.
+Shape `(4, 3, 8)` tensor를 FP32와 FP16으로 각각 저장할 때 payload는 몇 byte인가? 실제 allocator 예약량도 반드시 이 값인가?
+
+해설.
+원소 수는 `4×3×8=96`이다. FP32는 원소당 4 byte이므로 `96×4=384 bytes`, FP16은 2 byte이므로 `192 bytes`다. 이는 원소 payload다. 실제 예약량은 정렬, allocator block, metadata, workspace 때문에 더 클 수 있다. 또한 transpose된 view라면 shape와 원소 수가 같아도 stride와 접근 순서가 다를 수 있다.
+
+문제 6.
+세 token 예제의 셋째 score `[2,4,0]`에서 최댓값 4를 빼면 왜 attention 결과가 바뀌지 않는가? 근사 weight와 output을 다시 구하라.
+
+해설.
+Softmax의 분자와 분모에 공통으로 `exp(-4)`가 곱해졌다가 약분되므로 같은 비율이다. 바뀐 score는 `[-2,0,-4]`, 지수값은 약 `[0.1353,1,0.0183]`, 합은 `1.1536`이다. Weight는 약 `[0.117,0.867,0.016]`이고 V가 `[10,20,30]`이면 output은 약 `18.99`다. 최댓값 빼기는 큰 exponent로 인한 overflow 위험을 줄이는 수치 안정화다.
+
+
 ## 공식 자료와 원전
 
 - PyTorch tensor tutorial: https://docs.pytorch.org/tutorials/beginner/basics/tensor_tutorial.html
@@ -386,6 +469,7 @@ gradient는 `-6 × 3 = -18`이다.
 - PyTorch autograd mechanics: https://docs.pytorch.org/docs/stable/notes/autograd.html
 - PyTorch automatic differentiation tutorial: https://docs.pytorch.org/tutorials/beginner/basics/autograd_tutorial.html
 - Vaswani et al., Attention Is All You Need: https://arxiv.org/abs/1706.03762
+- Shah et al., FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision, 2024: https://arxiv.org/abs/2407.08608
 
 문서의 API 세부사항은 PyTorch 버전에 따라 바뀔 수 있다.
 이 장은 실행 가능한 PyTorch 코드를 요구하지 않고, shape와 계산 흐름을 이해하기 위한 교재다.

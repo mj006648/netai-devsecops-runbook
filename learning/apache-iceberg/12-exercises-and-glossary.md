@@ -120,9 +120,51 @@ Writer가 2시간 동안 파일을 쓰고 마지막에 커밋한다. Cleaner가 
 
 **해설 방향.** 두 요구는 다르다. Query 결과, 현재 파일의 삭제 방식, 과거 참조, 파일 rewrite, 만료·정리, 객체 버전·백업 정책을 연결한다. 실제 보존 요구와 조직 정책을 먼저 정한다. 테이블 포맷만으로 법적 준수를 판정하지 않는다.
 
-## 5. 용어사전
+## 5. 종합 상태 추적 문제 여섯 개
 
-| 용어 | 쉬운 뜻 | 자세히 볼 장 |
+다음 여섯 문제는 용어를 따로 암기하는 대신 한 테이블의 상태가 어떻게 바뀌는지 계산한다. 모든 문제에서 catalog의 현재 metadata pointer, snapshot의 파일 집합, data/delete file의 적용, 보존 참조를 순서대로 적는다.
+
+### 종합 문제 1: Reader가 여섯 행 중 세 행을 반환한다
+
+현재 snapshot S5는 data file A와 B를 참조한다. A에는 `(id,amount)`가 `(1,10)`, `(2,20)`, `(3,30)` 순서로 있고 data sequence는 2다. B에는 `(4,40)`, `(5,50)`, `(6,60)`이 있고 data sequence는 5다. 같은 partition에 equality delete E가 `id=2`, sequence 4를 기록하고, position delete P가 B의 position 1, sequence 5를 기록한다. `amount >= 20` 결과를 구하라.
+
+**해설.** 먼저 S5의 manifests가 A·B·E·P를 현재 파일로 선택한다. E는 equality delete이므로 data sequence가 delete sequence보다 작은 A에는 `2 < 4`로 적용되어 id 2를 지운다. B에는 `5 < 4`가 거짓이므로 적용되지 않는다. P는 position 계열이어서 B의 sequence가 `5 <= 5`이므로 position 1, 즉 id 5를 지운다. 남은 행은 id 1, 3, 4, 6이고 SQL 조건 `amount >= 20`을 적용하면 id 3, 4, 6의 세 행이다. Delete 적용과 SQL filter의 순서를 개념적으로 분리해야 한다.
+
+### 종합 문제 2: Rewrite 뒤 저장 bytes가 증가한다
+
+A 40 MiB와 B 30 MiB, delete P 1 MiB가 S5에 속한다. Compaction이 삭제를 반영한 C 55 MiB를 쓰고 S6을 commit했다. Tag `audit`가 S5를 가리킨다. 현재 data 크기, 객체 저장소의 관련 파일 합계, 즉시 삭제 가능한 파일을 구하라.
+
+**해설.** 현재 snapshot S6의 data는 C 55 MiB다. 저장소에는 A+B+P+C가 있어 126 MiB다. Tag가 S5를 보존하므로 A·B·P는 고아가 아니며 즉시 삭제할 수 없다. C도 현재 파일이다. 따라서 표에 주어진 파일 중 즉시 삭제 가능한 것은 없다. Tag 제거와 retention 검사를 거쳐 S5를 만료한 뒤에야 A·B·P의 reachability를 다시 계산한다.
+
+### 종합 문제 3: Commit timeout 뒤 재시도한다
+
+Writer W가 입력 100행으로 D를 만들고 snapshot S8을 commit 요청했다. Catalog는 성공했지만 응답이 유실되었다. W는 timeout만 보고 같은 100행으로 E를 만들어 다시 append하려 한다. 안전한 판단 순서와 잘못된 경우의 행 수를 구하라.
+
+**해설.** 먼저 table UUID와 W의 작업·batch 식별자, 현재 snapshot과 snapshot summary를 조회해 첫 commit이 게시되었는지 확인한다. S8이 W의 결과임을 확인하면 성공으로 종결하고 새 append를 하지 않는다. 확인 없이 E를 append하면 현재 결과는 200행이 될 수 있다. 원자적 commit은 한 commit 내부의 부분 공개를 막지만 서로 다른 두 성공 commit의 업무 중복을 제거하지 않는다.
+
+### 종합 문제 4: v2에서 v3로 올린 공유 테이블
+
+Spark writer는 v3 DV를 지원하지만 BI reader는 v2까지만 지원하고 compactor의 지원 범위는 모른다. Property를 3으로 바꾸고 첫 DV를 쓰기 전에 무엇을 검증해야 하며, DV를 쓴 뒤 property만 2로 되돌리는 계획이 왜 실패하는가?
+
+**해설.** Library 릴리스 번호가 아니라 모든 reader, writer, catalog, maintenance 도구의 table-format read/write 기능을 확인한다. Legacy position/equality deletes와 v3 DV가 함께 있는 snapshot, row lineage, schema defaults를 격리된 복사본에서 읽고 다시 쓰며 결과와 sequence를 비교한다. BI reader가 DV를 해석하지 못하면 현재 행을 틀리게 읽거나 명확히 거절해야 하므로 공유 테이블은 아직 v3 준비가 되지 않았다. DV가 manifest에서 참조된 뒤 숫자만 2로 낮추면 v2 reader가 알 수 없는 물리 표현이 남는다. 복구는 검증된 새 snapshot·복사 테이블·호환 가능한 rewrite 전략으로 설계한다.
+
+### 종합 문제 5: Streaming checkpoint와 expiration
+
+Consumer의 checkpoint는 마지막으로 처리한 snapshot S10을 기록한다. 현재는 S15이고 정책이 S13 이후만 남기려 한다. Consumer가 6시간 중단되었고 S11~S15의 append를 아직 읽지 않았다. S10을 만료해도 현재 SELECT가 정상이라는 이유로 안전한가?
+
+**해설.** 안전하지 않다. 현재 SELECT는 S15의 완성 상태만 필요하지만 incremental consumer는 S10에서 S11로 이어지는 계보를 시작점으로 사용할 수 있다. 먼저 consumer를 최신 상태로 복구하거나 지원되는 대체 시작점을 정하고, checkpoint와 snapshot retention의 최대 중단 시간을 맞춘다. Append reader가 UPDATE/DELETE를 완전한 CDC로 제공하는지도 별도 조건이다.
+
+### 종합 문제 6: Expiration과 orphan cleanup을 구별한다
+
+S1은 F1, S2는 F2, 현재 S3은 F3를 참조한다. Retention 때문에 S2와 S3을 남기고 S1을 만료했다. 저장소에는 실패한 writer의 X도 있다. F1과 X가 모두 현재 S3 manifest에 없다는 사실만으로 둘을 같은 방식으로 삭제할 수 있는가?
+
+**해설.** 아니다. F1은 알려진 과거 snapshot S1의 파일이며 expiration이 모든 branch/tag와 보존 조건을 계산한 뒤 삭제 대상을 결정한다. X는 snapshot 계보에 게시되지 않은 orphan 후보지만 정상 진행 중 writer의 파일일 수 있어 생성 시각, 최장 작업 시간, 재시도와 commit 불확실성을 포함한 유예가 필요하다. S3 하나만 훑는 수동 삭제는 S2의 F2까지 손상할 수 있다. 두 절차 모두 지원 도구와 전체 참조 범위를 사용하지만 출발하는 증거가 다르다.
+
+## 6. 문맥으로 읽는 용어사전
+
+아래 표의 마지막 열은 설명을 다른 장으로 미루는 지시가 아니라, 이 장의 상태 추적에서 그 용어가 맡은 자리다. 예를 들어 snapshot은 단순한 “버전”이라는 이름이 아니라 manifest list를 통해 특정 시점의 유효 파일 집합을 고정하는 metadata 객체다. Catalog는 그 snapshot 자체가 아니라 현재 metadata JSON의 위치를 이름에 연결하고 commit 때 예상한 이전 위치와 새 위치를 비교한다. Reader는 catalog → metadata → snapshot → manifest list → manifest → data/delete file 순서로 객체를 따라가며, 각 단계의 결과가 다음 단계 입력이 된다.
+
+| 용어 | 쉬운 뜻 | 상태 흐름에서 맡는 자리 |
 | --- | --- | --- |
 | Row / Column | 한 기록 / 같은 의미의 값 자리 | 00 |
 | Schema | 필드 이름·타입·필수 여부의 구조 약속 | 00·03 |
@@ -177,7 +219,7 @@ Writer가 2시간 동안 파일을 쓰고 마지막에 커밋한다. Cleaner가 
 | Event / Commit time | 사건 발생 / 테이블 확정 시각 | 04·11 |
 | Credential vending | 제한된 파일 접근 자격증명 제공 | 08·11 |
 
-## 6. 공식 자료를 찾는 지도
+## 7. 공식 자료를 찾는 지도
 
 자료 확인일은 2026-10-08이다. `latest` 문서는 이후 달라질 수 있다. 운영 판단에는 사용 중인 릴리스의 문서·artifact·릴리스 노트를 함께 확인한다. 이 책의 그림·주문 값·계산 문제는 직접 만든 설명용 자료다.
 
@@ -205,7 +247,7 @@ Writer가 2시간 동안 파일을 쓰고 마지막에 커밋한다. Cleaner가 
 | [Apache Spark 4.0 release](https://spark.apache.org/releases/spark-release-4-0-0.html) | Java·Scala·Python 실행 전제 |
 | [Parquet overview](https://parquet.apache.org/docs/overview/) | 파일의 컬럼 저장 개념 |
 
-## 7. 학습 완료 점검
+## 8. 학습 완료 점검
 
 다음 문장을 스스로 완성하면 이 책의 핵심을 연결한 것이다.
 

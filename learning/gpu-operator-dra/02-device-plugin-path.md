@@ -201,7 +201,7 @@ GPU extended resource는 `limits`에만 적으면 그 값이 request로 사용�
 
 **교육용 예:** 물리 GPU 한 장을 time-slicing replica 4개로 광고하면 scheduler가 보는 자원 수는 4가 될 수 있다. 네 Pod가 각각 1을 요청해도 GPU가 물리적으로 네 장으로 늘어난 것은 아니다. 각 Pod에 VRAM 1/4이 독립 보장된다는 의미도 아니다.
 
-따라서 조사할 때 Node capacity의 숫자만 쓰지 말고 plugin configuration·MIG profile·sharing policy를 함께 기록한다. 자세한 격리는 [08장](08-sharing-mig-timeslicing-mps.md)에서 설명한다.
+따라서 조사할 때 Node capacity의 숫자만 쓰지 말고 plugin configuration·MIG profile·sharing policy를 함께 기록한다. MIG는 지원 GPU를 하드웨어 인스턴스로 나누어 profile별 메모리와 계산 자원 경계를 제공하고, time-slicing은 같은 물리 GPU의 실행 시간을 여러 논리 replica가 공유하며 고정 VRAM 구획을 만들지 않는다. MPS는 여러 CUDA 프로세스의 명령을 서비스 프로세스가 함께 제출하도록 조정하지만 독립 GPU를 새로 만들지는 않는다. 그러므로 같은 `nvidia.com/gpu: 1` 요청도 광고 주체와 공유 설정에 따라 물리적 의미, 장애 범위, 성능 간섭이 달라진다.
 
 ## 02.4 개수 조건과 배치 조건을 동시에 본다
 
