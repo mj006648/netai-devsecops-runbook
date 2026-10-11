@@ -1,10 +1,10 @@
 # 02. 전력·dB·링크 버짓
 
-## 전력이 실제로 존재하는 위치부터 찾는다
+## 전력이 실제로 존재하는 위치
 
-**전력**은 단위 시간에 전달되는 에너지 비율이며 단위는 watt다. 송신기의 power amplifier 출력, cable을 지나는 RF, 안테나 급전점, 공간을 지나 수신 안테나에 들어온 신호는 모두 전력으로 표현할 수 있지만 측정 위치가 다르다. “송신 전력 100 mW”와 “수신 전력 100 mW”는 같은 숫자여도 전혀 다른 지점이다.
+**전력(power)**은 단위 시간에 전달되는 에너지의 비율이며 단위는 watt(W)다. 송신기의 전력 증폭기 출력, cable을 지나는 고주파 신호, 안테나 급전점, 공간을 지나 수신 안테나에 들어온 신호는 모두 전력으로 표현할 수 있지만 측정 위치가 다르다. “송신 전력 100 mW”와 “수신 전력 100 mW”는 같은 숫자여도 전혀 다른 지점을 가리킨다.
 
-UE baseband가 만든 I/Q sample은 DAC와 mixer를 지나 작은 RF 전압이 된다. power amplifier가 이를 키우고, cable·connector를 지나 안테나에 공급한다. 안테나는 에너지를 새로 만들지 않고 방향별 방사 패턴으로 분포시킨다. 공간에서는 거리 확산, 벽 흡수, 회절, 반사로 특정 수신 안테나에 결합되는 전력이 줄어든다.
+단말의 베이스밴드가 만든 **I/Q(In-phase/Quadrature, 동상/직교 성분)** 표본은 **DAC(Digital-to-Analog Converter, 디지털-아날로그 변환기)**와 믹서를 지나 작은 **RF(Radio Frequency, 무선 주파수)** 전압이 된다. **PA(Power Amplifier, 전력 증폭기)**가 이를 키우고 cable과 connector를 지나 안테나에 공급한다. 안테나는 에너지를 새로 만들지 않고 방향별 방사 패턴으로 분포시킨다. 공간에서는 거리 확산, 벽 흡수, 회절, 반사 때문에 특정 수신 안테나에 결합되는 전력이 줄어든다.
 
 | 위치 | 물리 대상 | 담당 주체 | 다음 단계 |
 |---|---|---|---|
@@ -13,17 +13,51 @@ UE baseband가 만든 I/Q sample은 DAC와 mixer를 지나 작은 RF 전압이 �
 | receiver 입력 | 수신 antenna가 얻은 RF | LNA | filter·mixer |
 | ADC 입력 | 낮춰진 analog I/Q | ADC | digital sample |
 
-## dB와 dBm을 계산 도구로 이해한다
+여기서 **LNA(Low-Noise Amplifier, 저잡음 증폭기)**는 수신 신호에 잡음을 적게 더하면서 증폭하고, **ADC(Analog-to-Digital Converter, 아날로그-디지털 변환기)**는 연속 전압을 디지털 표본으로 바꾼다. 같은 “전력”이라도 어느 표의 위치에서 측정했는지를 빠뜨리면 링크 계산을 이어 갈 수 없다.
 
-**dB**는 두 전력의 비율을 로그로 나타낸 값이다. `G_dB=10log10(P2/P1)`이다. 10배는 +10 dB, 100배는 +20 dB, 절반은 약 -3 dB다. 비율이므로 기준 없이 “3 dB의 절대 전력”이라고 말하지 않는다.
+## W·mW·dB·dBm
 
-**dBm**은 1 mW를 기준으로 한 절대 전력이다. `P_dBm=10log10(P_mW/1mW)`다. 0 dBm=1 mW, 20 dBm=100 mW다. -60 dBm은 `10^(-60/10) mW=10^-6 mW=10^-9 W`, 즉 1 nW다.
+작은 수신 전력을 W나 mW로만 쓰면 0이 많은 숫자가 된다. 무선에서는 전력비를 더하고 빼기 쉽게 로그 단위를 사용한다.
 
-두 20 dBm 신호를 더할 때 dBm 숫자를 더하면 안 된다. 각각 100 mW이므로 합은 200 mW다. `10log10(200)=약 23 dBm`이다. 같은 전력 두 개 합은 +3 dB가 된다.
+**dB(decibel, 데시벨)**는 두 전력의 비율을 로그로 나타낸 값이다.
 
-## link budget은 위치별 이득과 손실 장부다
+`G_dB=10log10(P2/P1)`
 
-**링크 버짓**은 송신기에서 수신기까지 각 구간의 이득과 손실을 dB로 더하고 빼는 장부다. 입력은 송신 출력, cable loss, antenna gain, path loss다. 결과는 예상 수신 전력이다.
+| 전력비 | dB |
+|---:|---:|
+| 1배 | 0 dB |
+| 2배 | 약 +3 dB |
+| 10배 | +10 dB |
+| 100배 | +20 dB |
+| 1/2 | 약 -3 dB |
+| 1/10 | -10 dB |
+
+dB는 비율이므로 기준 없이 “3 dB의 절대 전력”이라고 말하지 않는다.
+
+**dBm(decibel-milliwatt, 1 mW 기준 데시벨 전력)**은 1 mW를 기준으로 한 절대 전력이다.
+
+`P_dBm=10log10(P_mW/1mW)`
+
+| dBm | 전력 |
+|---:|---:|
+| -10 dBm | 0.1 mW |
+| 0 dBm | 1 mW |
+| 10 dBm | 10 mW |
+| 20 dBm | 100 mW |
+| 30 dBm | 1 W |
+
+-60 dBm은 `10^(-60/10) mW=10^-6 mW=10^-9 W`, 즉 1 nW다. 두 20 dBm 신호를 더할 때 dBm 숫자를 더해서 40 dBm이라고 하면 안 된다. 각각 100 mW이므로 합은 200 mW이고 `10log10(200)≈23 dBm`이다. 같은 전력 두 개의 합은 원래 하나보다 약 +3 dB다. 서로 독립적인 -90 dBm 잡음원 두 개도 각각 1 pW이므로 합은 2 pW, 약 -87 dBm이다. 로그값을 합하기 전에 선형 전력으로 바꿔야 한다.
+
+## 링크 버짓과 EIRP
+
+**링크 버짓(link budget)**은 송신기에서 수신기까지 각 구간의 이득과 손실을 dB로 더하고 빼는 장부다. 입력은 송신 출력, cable loss, antenna gain, path loss이고 결과는 예상 수신 전력이다.
+
+```mermaid
+flowchart LR
+    T[TX 20dBm] -->|cable -2dB| A1[antenna +5dBi]
+    A1 -->|path -80dB| A2[antenna +2dBi]
+    A2 -->|cable -1dB| R[RX -56dBm]
+```
 
 송신기 20 dBm, 송신 cable -2 dB, 송신 antenna +5 dBi, path -80 dB, 수신 antenna +2 dBi, 수신 cable -1 dB라면 다음과 같다.
 
@@ -38,168 +72,9 @@ UE baseband가 만든 I/Q sample은 DAC와 mixer를 지나 작은 RF 전압이 �
 | 수신 antenna 뒤 | -55 dBm |
 | 수신 cable 뒤 | -56 dBm |
 
-**dBi**는 이상적인 등방성 안테나와 비교한 특정 방향 이득이다. 안테나 전체 에너지를 증가시키지 않는다. 한 방향으로 집중하면 다른 방향의 방사는 줄어든다. antenna 방향이 틀리면 명목 gain이 높아도 링크에는 도움이 되지 않는다.
+**dBi(decibel-isotropic, 등방성 안테나 대비 데시벨 이득)**는 이상적인 등방성 안테나와 비교한 특정 방향의 이득이다. 안테나가 전체 에너지를 증가시키는 값이 아니다. 한 방향으로 집중하면 다른 방향의 방사는 줄어들며, 안테나 방향이 틀리면 명목 gain이 높아도 링크에 도움이 되지 않는다.
 
-## FSPL과 실제 channel loss를 구별한다
-
-자유공간 경로 손실은 장애물과 반사가 없는 far-field 확산 모형이다.
-
-`FSPL(dB)=32.44+20log10(d_km)+20log10(f_MHz)`
-
-2 GHz, 0.1 km이면 `32.44-20+20log10(2000)`이다. `20log10(2000)≈66.02`이므로 약 78.46 dB다. 거리를 0.2 km로 두 배 늘리면 `20log10(2)≈6.02 dB`가 추가되어 약 84.48 dB다.
-
-이 계산은 km와 MHz 단위에 맞춘 상수를 썼다. m와 GHz를 그대로 넣으면 단위 오류다. 실내 벽, 지면 반사, 회절, foliage, 비, antenna polarization mismatch는 별도다.
-
-## noise, interference, SNR, SINR
-
-**noise**는 receiver thermal noise와 내부 회로 잡음처럼 원하는 전송과 무관한 성분이다. **interference**는 다른 송신기의 구조 있는 RF가 같은 수신 대역에 들어온 것이다. **SNR**은 원하는 신호와 noise의 비, **SINR**은 noise와 interference를 함께 분모에 둔 비다.
-
-원하는 신호 -56 dBm, noise -96 dBm이면 SNR은 40 dB다. 간섭이 -60 dBm이면 noise보다 간섭이 훨씬 크므로 단순 SNR만 보고 성공을 예측하면 틀린다. 정확한 SINR은 noise와 interference를 linear power로 합친 뒤 신호와 비교한다.
-
-noise -96 dBm은 약 `2.51×10^-10 mW`, interference -60 dBm은 `10^-6 mW`라 후자가 지배한다. 합은 거의 -60 dBm이고 SINR은 약 `-56-(-60)=4 dB`다.
-
-대역폭을 넓히면 같은 noise spectral density에서 총 noise power가 증가한다. 20 MHz에서 40 MHz로 두 배면 이상 모형상 약 +3 dB noise가 늘 수 있다. 더 넓은 대역이 늘 더 높은 SNR을 주는 것은 아니다.
-
-## sensitivity와 margin의 조건
-
-**receiver sensitivity**는 특정 대역폭, modulation, code rate, 목표 error rate에서 필요한 입력 전력 기준이다. 안테나가 물리적으로 감지할 수 있는 영원한 단일 숫자가 아니다. 높은 MCS는 보통 더 높은 SINR을 요구하고, 강한 FEC와 낮은 rate는 더 약한 신호에서 동작할 수 있다.
-
-예상 수신 -56 dBm, 해당 조건 sensitivity -70 dBm이면 margin은 14 dB다. fading 8 dB와 구현 오차 3 dB를 동시에 가정하면 남은 단순 margin은 `14-8-3=3 dB`다. 간섭이 새로 생기면 이 장부 밖의 추가 손실이 된다.
-
-## 두 전체 수치 추적
-
-첫째, 거리 변화다. 100 m에서 path loss 78.5 dB였던 2 GHz 자유공간 모형은 200 m에서 약 84.5 dB다. 다른 항목이 같으면 수신 -56 dBm은 -62 dBm으로 6 dB 낮아진다. sensitivity -70 dBm에 대한 margin은 14 dB에서 8 dB로 준다.
-
-둘째, 대역폭 변화다. 20 MHz noise -96 dBm, signal -66 dBm이면 SNR 30 dB다. 같은 noise density에서 40 MHz로 넓혀 noise가 -93 dBm이 되고 signal power가 같다고 단순 가정하면 SNR은 27 dB다. 대신 더 많은 subcarrier·resource로 총 rate가 늘 여지는 있다. rate와 reliability를 같이 본다.
-
-## AI-RAN 모델 평가와 링크 버짓의 관계
-
-AI 모델이 beam, MCS, power를 추천해도 입력 RSSI·SINR의 측정 위치와 대역폭을 알아야 한다. simulation에서 path loss와 fading 분포를 만든 결과는 실제 도시·실내 환경 전체 보장이 아니다. 2024 multi-task learning 연구의 네 simulation task와 partial federation, negative transfer 조건은 [원문](https://arxiv.org/abs/2404.15197)의 실험 경계 안에서 읽는다.
-
-## 시간에 따라 변하는 fading 추적
-
-평균 수신 -66 dBm, sensitivity -75 dBm이면 평균 margin은 9 dB다. 사람이 지나갈 때 20 ms 동안 12 dB deep fade가 생기면 순간 수신은 -78 dBm으로 기준보다 3 dB 낮다.
-
-| 시각 | fading | 수신 | margin |
-|---:|---:|---:|---:|
-| 0 ms | 0 dB | -66 dBm | 9 dB |
-| 10 ms | -6 dB | -72 dBm | 3 dB |
-| 20 ms | -12 dB | -78 dBm | -3 dB |
-| 40 ms | -2 dB | -68 dBm | 7 dB |
-
-평균 RSSI만 보면 짧은 packet 실패를 놓친다. FEC, HARQ, antenna diversity는 서로 다른 시간·공간 정보를 쓰며 임의로 긴 fade의 성공을 보장하지 않는다.
-
-## 추가 문제와 완전 해설
-
-### 1. 50 mW는 몇 dBm인가?
-`10log10(50)≈16.99 dBm`, 약 17 dBm이다.
-
-### 2. -70 dBm 신호와 -90 dBm noise의 SNR은?
-20 dB다. 같은 측정 대역이라는 조건이 필요하다.
-
-### 3. 3개의 같은 -90 dBm noise를 합치면?
-각 1 pW이므로 3 pW다. `10log10(3)≈4.77 dB` 증가해 약 -85.2 dBm이다.
-
-### 4. 2 GHz에서 거리를 네 배로 하면 FSPL 증가는?
-`20log10(4)=약12.04 dB`다. 자유공간 조건의 값이다.
-
-### 5. margin 10 dB면 연결이 보장되는가?
-아니다. fading·간섭·방향·구현 오차와 sensitivity 조건이 바뀔 수 있다.
-
-[이 책 목차](README.md)
-
-[← 이전](01-waves-frequency-and-spectrum.md) · [다음 →](03-sampling-iq-and-radio-chain.md)
-
-## 핵심 계산 복습: 전력과 단위
-
-전력은 단위 시간에 전달되는 energy 비율이며 단위는 W다.
-무선 수신 전력은 작아 mW와 dBm을 많이 쓴다.
-
-## dB 비율표
-
-| 비율 | dB |
-|---:|---:|
-| 1배 | 0 |
-| 2배 | 약 +3 |
-| 10배 | +10 |
-| 1/2 | 약 -3 |
-| 1/10 | -10 |
-| 100배 | +20 |
-
-전력비의 정확한 식은 `10log10(P2/P1)`이다.
-dB는 기준 없는 절대 전력이 아니라 비율이다.
-
-## dBm
-
-dBm은 1mW를 기준으로 한 절대 전력이다.
-
-| dBm | 전력 |
-|---:|---:|
-| 0 | 1mW |
-| 10 | 10mW |
-| 20 | 100mW |
-| 30 | 1W |
-| -10 | 0.1mW |
-
-두 20dBm 송신기의 전력을 더하면 40dBm이 아니다.
-100mW+100mW=200mW, 약 23dBm이다.
-
-## link budget
-
-```mermaid
-flowchart LR
-    T[TX 20dBm] -->|cable -2dB| A1[antenna +5dBi]
-    A1 -->|path -80dB| A2[antenna +2dBi]
-    A2 -->|cable -1dB| R[RX -56dBm]
-```
-
-```text
-20 - 2 + 5 - 80 + 2 - 1 = -56dBm
-```
-
-dBi는 이상적인 등방성 안테나 대비 특정 방향 gain이다.
-안테나는 energy를 만들지 않고 방향별 분포를 바꾼다.
-
-## EIRP
-
-송신 출력에서 송신 cable loss를 빼고 antenna gain을 더한다.
-위 예의 EIRP는 `20-2+5=23dBm`이다.
-실제 규제 판단은 지역·band·장치 조건의 공식 규정을 따른다.
-
-## margin
-
-필요 수신 전력이 -70dBm이면 margin은 `-56-(-70)=14dB`다.
-이는 단순 budget 여유다.
-fading, 간섭, 구현 오차가 시간과 위치에 따라 바뀐다.
-14dB가 연결을 보장하지 않는다.
-
-## FSPL
-
-FSPL은 장애물과 반사가 없는 자유공간 spreading loss 모형이다.
-
-```text
-FSPL(dB) ≈ 32.44 + 20log10(d_km) + 20log10(f_MHz)
-```
-
-2.4GHz, 0.1km:
-
-```text
-32.44 + 20log10(0.1) + 20log10(2400)
-≈ 32.44 - 20 + 67.60
-≈ 80.04dB
-```
-
-단위가 km와 MHz일 때의 상수다.
-m와 GHz를 그대로 넣으면 틀린다.
-far-field 자유공간 조건이며 벽·비·회절·multipath 측정값이 아니다.
-
-## 거리 두 배
-
-같은 주파수에서 거리를 두 배로 하면 FSPL은 `20log10(2)≈6dB` 증가한다.
-100m에서 80dB였다면 200m 자유공간 모형은 약 86dB다.
-실내에서는 반사와 차폐 때문에 정확히 6dB가 아닐 수 있다.
-
-## 주체와 상태
+**EIRP(Equivalent Isotropically Radiated Power, 등가 등방 방사 전력)**는 실제 안테나가 특정 방향으로 방사하는 효과를 등방성 안테나의 출력으로 환산한 값이다. 위 예에서는 송신 출력에서 송신 cable loss를 빼고 antenna gain을 더한 `20-2+5=23 dBm`이다. 실제 규제 판단은 지역, 주파수 대역, 장치 조건에 해당하는 공식 규정을 따라야 한다.
 
 | 주체 | 입력 | 중간 상태 | 결과 |
 |---|---|---|---|
@@ -209,58 +84,98 @@ far-field 자유공간 조건이며 벽·비·회절·multipath 측정값이 아
 | channel | field | path·fading | 수신 field |
 | receiver | field | noise figure·filter | detector sample |
 
-## SNR과 RSSI
+## 거리·FSPL·실제 채널 손실
 
-RSSI는 받은 총 power의 구현 지표일 수 있다.
-SNR은 원하는 signal과 noise의 비율이다.
-signal -60dBm, noise -90dBm이면 SNR 30dB다.
-interference가 -62dBm이면 RSSI는 강해 보여도 decode가 어려울 수 있다.
+**FSPL(Free-Space Path Loss, 자유공간 경로 손실)**은 장애물과 반사가 없는 원거리장(far-field)에서 전파가 퍼지는 손실 모형이다.
 
-## 합산 예
+`FSPL(dB)=32.44+20log10(d_km)+20log10(f_MHz)`
 
-서로 독립적인 -90dBm noise source 두 개의 power를 더한다.
-각각 1pW라면 합은 2pW다.
-따라서 약 -87dBm으로 3dB 증가한다.
-dBm 숫자를 산술로 더하지 않고 linear power로 합친다.
+2 GHz, 0.1 km이면 `32.44-20+20log10(2000)`이다. `20log10(2000)≈66.02`이므로 약 78.46 dB다. 거리를 0.2 km로 두 배 늘리면 `20log10(2)≈6.02 dB`가 추가되어 약 84.48 dB다.
 
-## 관측 경계
+원문의 별도 2.4 GHz 예에서는 0.1 km일 때 다음과 같다.
 
-link budget은 계획값이다.
-실제 cable loss와 antenna pattern은 주파수에 따라 다르다.
-receiver sensitivity는 modulation, coding, bandwidth, error 기준에 따라 다르다.
-RF 모형값은 현장 측정이 아니다.
+```text
+32.44 + 20log10(0.1) + 20log10(2400)
+≈ 32.44 - 20 + 67.60
+≈ 80.04 dB
+```
 
-## 반례
+같은 주파수에서 거리를 두 배로 하면 자유공간 모형의 손실은 약 6 dB 증가한다. 따라서 2 GHz의 100 m 손실 78.5 dB는 200 m에서 약 84.5 dB가 되고, 2.4 GHz의 100 m 손실 80 dB는 200 m에서 약 86 dB가 된다. 두 예의 시작값이 다른 이유는 주파수가 각각 2 GHz와 2.4 GHz이기 때문이다.
 
-출력을 높여도 receiver front-end가 포화되면 나빠질 수 있다.
-antenna gain이 높아도 방향이 틀리면 약하다.
-FSPL이 낮아도 같은 channel 간섭이 강하면 실패한다.
-대역폭을 넓히면 noise power도 늘 수 있다.
+FSPL 식의 상수 32.44는 거리를 km, 주파수를 MHz로 넣을 때 맞는다. m와 GHz를 그대로 대입하면 단위 오류다. 또한 실내 벽, 지면 반사, 회절, 나뭇잎, 비, 안테나 편파 불일치는 별도다. 실내에서는 거리 두 배가 정확히 6 dB 증가를 만들지 않을 수 있다.
 
-## 문제
+**페이딩(fading)**은 반사·회절·이동 등으로 수신 전력이 시간과 위치에 따라 변하는 현상이다. 평균 수신 전력만 보면 짧고 깊은 fade를 놓칠 수 있다. 평균 수신 -66 dBm, sensitivity -75 dBm인 링크에 사람이 지나가며 다음 변화가 생겼다고 하자.
 
-## sensitivity가 만들어지는 과정
+| 시각 | fading | 수신 | margin |
+|---:|---:|---:|---:|
+| 0 ms | 0 dB | -66 dBm | 9 dB |
+| 10 ms | -6 dB | -72 dBm | 3 dB |
+| 20 ms | -12 dB | -78 dBm | -3 dB |
+| 40 ms | -2 dB | -68 dBm | 7 dB |
 
-receiver sensitivity는 안테나가 감지할 수 있는 절대 최솟값 하나가 아니다.
-선택한 bandwidth가 noise power를 정하고, receiver noise figure가 내부 noise를 더한다.
-modulation과 code rate가 필요한 SINR을 정하고, 목표 packet error rate가 합격선을 정한다.
-설계자는 이 조건에서 필요한 입력 power를 sensitivity로 기록한다.
-같은 radio라도 좁은 bandwidth와 강한 FEC에서는 더 약한 signal을 복호할 수 있다.
-반대로 높은 MCS에서는 더 강한 signal·낮은 interference가 필요하다.
+20 ms 동안 수신 전력이 기준보다 3 dB 낮으므로 그 구간의 패킷은 실패할 수 있다. **FEC(Forward Error Correction, 순방향 오류 정정)**, **HARQ(Hybrid Automatic Repeat reQuest, 오류 정정과 재전송을 결합한 방식)**, 안테나 diversity는 서로 다른 시간·공간 정보를 활용하지만 임의로 긴 fade에서 성공을 보장하지 않는다.
 
-1. 100mW는 몇 dBm인가?
-2. 15dBm, cable -1dB, antenna +4dBi의 EIRP는?
-3. 수신 -65dBm, 필요 -72dBm의 margin은?
+## 잡음·간섭·SNR·SINR
 
-## 해설
+**잡음(noise)**은 수신기의 열잡음과 내부 회로 잡음처럼 원하는 전송과 무관한 성분이다. **간섭(interference)**은 다른 송신기의 구조 있는 RF가 같은 수신 대역에 들어온 것이다. **SNR(Signal-to-Noise Ratio, 신호 대 잡음비)**은 원하는 신호와 잡음의 비다. **SINR(Signal-to-Interference-plus-Noise Ratio, 신호 대 간섭 및 잡음비)**은 잡음과 간섭을 함께 분모에 둔다.
 
-1. 1mW의 100배이므로 20dBm이다.
-2. `15-1+4=18dBm`이다.
-3. `-65-(-72)=7dB`다.
+원하는 신호 -56 dBm, 잡음 -96 dBm이면 같은 측정 대역에서 SNR은 `-56-(-96)=40 dB`다. 간섭이 -60 dBm이면 잡음보다 훨씬 크므로 SNR만 보고 성공을 예측하면 틀린다. 정확한 SINR은 잡음과 간섭을 선형 전력으로 합친 뒤 신호와 비교한다. -96 dBm은 약 `2.51×10^-10 mW`, -60 dBm은 `10^-6 mW`이므로 간섭이 지배한다. 합은 거의 -60 dBm이고 SINR은 약 `-56-(-60)=4 dB`다.
+
+**RSSI(Received Signal Strength Indicator, 수신 신호 강도 지표)**는 구현에 따라 수신 대역의 총 전력을 나타낼 수 있다. 원하는 신호 -60 dBm, 잡음 -90 dBm이면 SNR은 30 dB지만, 간섭이 -62 dBm이면 RSSI가 강하게 보여도 복호가 어려울 수 있다. RSSI와 SNR·SINR은 같은 지표가 아니다.
+
+같은 잡음 전력 밀도에서 대역폭을 20 MHz에서 40 MHz로 두 배 넓히면 이상 모형상 총 잡음 전력이 약 +3 dB 늘 수 있다. 20 MHz에서 signal -66 dBm, noise -96 dBm이면 SNR은 30 dB다. signal power가 같다는 단순 조건에서 40 MHz로 넓혀 noise가 -93 dBm이 되면 SNR은 27 dB다. 대신 더 많은 subcarrier와 resource로 총 rate가 늘 여지가 있으므로 전송률과 신뢰성을 함께 본다.
+
+## 수신 감도와 링크 여유
+
+**수신 감도(receiver sensitivity)**는 특정 대역폭, 변조, 부호율(code rate), 목표 오류율에서 복호에 필요한 수신기 입력 전력 기준이다. 안테나가 물리적으로 감지할 수 있는 영원한 단일 최솟값이 아니다.
+
+대역폭은 잡음 전력을 정하고, 수신기 잡음 지수(noise figure)는 내부 잡음을 더한다. 변조와 code rate는 필요한 SINR을 정하며, 목표 패킷 오류율이 합격선을 정한다. 같은 radio라도 좁은 대역폭과 강한 FEC에서는 더 약한 신호를 복호할 수 있고, 높은 **MCS(Modulation and Coding Scheme, 변조 및 부호화 방식)**에서는 더 강한 신호와 낮은 간섭이 필요하다.
+
+예상 수신 -56 dBm, 해당 조건의 sensitivity -70 dBm이면 링크 여유(margin)는 `-56-(-70)=14 dB`다. fading 8 dB와 구현 오차 3 dB를 동시에 가정하면 남은 단순 margin은 `14-8-3=3 dB`다. 간섭이 새로 생기면 이 장부 밖의 추가 저하가 된다. 출력 증가도 언제나 해결책은 아니다. 수신기 전단이 포화되면 오히려 성능이 나빠질 수 있다.
+
+거리 변화까지 이어 보면, 2 GHz 자유공간 모형에서 100 m의 수신 전력이 -56 dBm이었다면 200 m에서는 약 6 dB 낮은 -62 dBm이 된다. sensitivity -70 dBm에 대한 margin은 14 dB에서 8 dB로 줄어든다. 이 결과는 다른 링크 항목이 모두 같다는 조건에서만 성립한다.
+
+## 연구·계획값을 읽는 조건
+
+링크 버짓은 계획값이다. 실제 cable loss와 antenna pattern은 주파수에 따라 다르고, sensitivity는 modulation, coding, bandwidth, 오류 기준에 따라 달라진다. RF 모형값은 현장 측정값이 아니다. antenna gain이 높아도 방향이 틀리면 약하고, FSPL이 낮아도 같은 channel 간섭이 강하면 실패하며, 대역폭을 넓히면 잡음 전력도 늘 수 있다.
+
+**AI-RAN(Artificial Intelligence for Radio Access Network, 무선 접속망에 인공지능을 적용하는 접근)** 모델이 beam, MCS, power를 추천하더라도 입력 RSSI·SINR의 측정 위치와 대역폭을 알아야 한다. simulation에서 path loss와 fading 분포를 만들어 얻은 결과는 실제 도시·실내 환경 전체의 보장이 아니다. 2024 multi-task learning 연구의 네 simulation task, partial federation, negative transfer 조건은 [원문](https://arxiv.org/abs/2404.15197)의 실험 경계 안에서 읽어야 한다.
+
+## 문제와 해설
+
+### 1. 50 mW와 100 mW는 각각 몇 dBm인가?
+
+50 mW는 `10log10(50)≈16.99 dBm`, 즉 약 17 dBm이다. 100 mW는 1 mW의 100배이므로 `10log10(100)=20 dBm`이다.
+
+### 2. -70 dBm 신호와 -90 dBm 잡음의 SNR은 얼마인가?
+
+같은 위치와 측정 대역이라는 조건에서 `-70-(-90)=20 dB`다. 측정 대역이 다르면 두 값을 바로 뺄 수 없다.
+
+### 3. 같은 -90 dBm 잡음원 3개의 전력을 합치면 얼마인가?
+
+각각 1 pW이므로 합은 3 pW다. 같은 전력 세 개를 합치면 `10log10(3)≈4.77 dB` 증가하므로 약 -85.2 dBm이다. dBm 숫자 세 개를 산술로 더하지 않는다.
+
+### 4. 2 GHz에서 거리를 네 배로 하면 FSPL은 얼마나 증가하는가?
+
+주파수가 같고 자유공간 조건이라면 `20log10(4)≈12.04 dB` 증가한다. 벽·반사·회절이 있는 실제 환경의 보편 법칙은 아니다.
+
+### 5. margin이 10 dB이면 연결이 보장되는가?
+
+보장되지 않는다. margin은 명시한 sensitivity 조건과 계획값에 대한 여유다. 시간에 따른 fading, 간섭, 안테나 방향, 구현 오차, 대역폭이나 MCS 변경으로 실제 여유가 줄 수 있다.
+
+### 6. 송신기 15 dBm, cable loss 1 dB, antenna gain 4 dBi의 EIRP는 얼마인가?
+
+`15-1+4=18 dBm`이다. 이는 해당 안테나 방향의 등가 등방 방사 전력이며 실제 허용 여부는 적용 규정을 확인해야 한다.
+
+### 7. 수신 전력 -65 dBm, 필요한 수신 전력 -72 dBm의 margin은 얼마인가?
+
+`-65-(-72)=7 dB`다. 두 값은 같은 수신기 입력 위치와 동일한 bandwidth·modulation·coding·오류 기준에 대응해야 한다.
 
 ## 공식 출처
 
 - [MIT 6.450 wireless notes](https://ocw.mit.edu/courses/6-450-principles-of-digital-communications-i-fall-2006/pages/lecture-notes/)
 - [FCC RF resources](https://www.fcc.gov/engineering-technology)
+
+[이 책 목차](README.md)
 
 [← 이전](01-waves-frequency-and-spectrum.md) · [다음 →](03-sampling-iq-and-radio-chain.md)

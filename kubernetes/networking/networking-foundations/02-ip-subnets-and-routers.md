@@ -1,17 +1,5 @@
 # 02. IP, Subnet, Router
 
-## 추가 손계산: prefix, LPM, TTL
-
-192.0.2.70/26의 mask는 255.255.255.192이고 block 크기는 64다. 70은 64~127 범위이므로 network는 192.0.2.64, broadcast는 192.0.2.127, 일반 host 범위는 .65~.126이다.
-
-route table에 `192.0.2.0/24→A`, `192.0.2.64/26→B`, `0.0.0.0/0→C`가 있으면 192.0.2.70은 /24와 /26 모두 일치한다. LPM(longest prefix match)은 더 구체적인 /26의 B를 고른다.
-
-TTL 3 packet이 router 세 개를 지나면 각 router가 1씩 줄인다. 세 번째 router에서 전달 전 0이 되어 폐기되고 ICMP Time Exceeded가 돌아올 수 있다. TTL은 초가 아니라 hop마다 감소하는 필드다.
-
-### 추가 문제 5
-
-IPv4 packet 2,000 byte가 MTU 1,500 링크를 만나고 fragmentation이 허용되면 header와 8-byte fragment offset 단위를 고려해 나뉜다. IPv6 router는 transit packet을 fragment하지 않으며 ICMPv6 Packet Too Big으로 송신자에게 더 작은 packet을 만들게 한다.
-
 범위: 이 장은 IP(Internet Protocol, 네트워크 사이에서 packet을 전달하는 규칙) 주소, subnet(같은 network prefix를 공유하는 주소 범위), CIDR(Classless Inter-Domain Routing, `/26`처럼 prefix 길이로 범위를 나타내는 방식), routing(목적지로 갈 다음 경로 선택), ARP(Address Resolution Protocol, IPv4 next-hop IP에 대응하는 MAC을 찾는 규칙)를 설명한다. 이어서 NDP(IPv6 이웃 발견), TTL(packet의 hop 수명), ICMP(IP 오류·진단 메시지), PMTUD(경로 MTU 탐색), NAT(주소·포트 변환)를 다룬다.
 명령 실행이나 호스트 설정 없이 손계산과 packet journey로 이해한다.
 
@@ -419,6 +407,14 @@ R1이 목적지 route를 알아도 R2의 링크 주소를 확인하지 못하면
 | NAT는 주소만 바꾸고 끝이다 | port와 상태, reverse path가 중요하다 |
 | default route가 있으면 최적 경로다 | 더 구체적인 route가 있으면 LPM으로 그쪽이 선택된다 |
 
+## 주소·경로 선택·패킷 수명을 한 사례로 연결한다
+
+192.0.2.70/26의 mask는 255.255.255.192이고 block 크기는 64다. 70은 64~127 범위이므로 network는 192.0.2.64, broadcast는 192.0.2.127, 일반 host 범위는 .65~.126이다.
+
+route table에 `192.0.2.0/24→A`, `192.0.2.64/26→B`, `0.0.0.0/0→C`가 있으면 192.0.2.70은 /24와 /26 모두 일치한다. LPM(longest prefix match)은 더 구체적인 /26의 B를 고른다.
+
+TTL 3 packet이 router 세 개를 지나면 각 router가 1씩 줄인다. 세 번째 router에서 전달 전 0이 되어 폐기되고 ICMP Time Exceeded가 돌아올 수 있다. TTL은 초가 아니라 hop마다 감소하는 필드다.
+
 ## 21. 해설 문제
 
 ### 문제 1
@@ -465,7 +461,12 @@ NAT 장비가 나가는 packet의 source를 `10.0.1.10:50000`에서 `198.51.100.
 
 NAT state table에 외부 tuple과 내부 tuple의 매핑이 있어야 하고, 돌아오는 packet이 그 NAT 장비를 지나야 한다.
 
-## 22. 1차 출처와 더 읽기
+### 문제 5: 링크의 크기 제한을 만난 패킷
+
+
+IPv4 packet 2,000 byte가 MTU 1,500 링크를 만나고 fragmentation이 허용되면 header와 8-byte fragment offset 단위를 고려해 나뉜다. IPv6 router는 transit packet을 fragment하지 않으며 ICMPv6 Packet Too Big으로 송신자에게 더 작은 packet을 만들게 한다.
+
+## 22. 공식 출처
 
 - IPv4 datagram, TTL, routing, checksum, IP의 비신뢰성: [RFC 791](https://www.rfc-editor.org/rfc/rfc791.html)
 - CIDR prefix notation과 등장 배경: [RFC 4632](https://www.rfc-editor.org/rfc/rfc4632.html)

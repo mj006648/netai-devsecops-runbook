@@ -1,82 +1,14 @@
 # 17. AI-on-RAN: edge inference와 user-plane 경로
 
-## 사용자의 AI 요청을 먼 cloud가 아니라 가까운 곳에서 처리하는 이유
-
-카메라 frame이나 음성 조각을 AI model에 넣고 결과를 받으려면 입력 byte가 무선망과 IP망을 지나 계산 장치까지 가야 한다. 왕복 지연, uplink 용량, 개인정보 위치 때문에 RAN 가까운 계산 장소를 선택할 수 있다. 이처럼 RAN 인접 edge에서 사용자·산업용 AI 추론을 제공하는 방향을 **AI-on-RAN**이라 부른다.
-
-**edge inference**는 학습 완료된 model이 새 입력에서 결과를 계산하는 작업이다. model weight는 GPU memory나 storage에 있고, 입력 tensor는 user-plane packet에서 재조립되어 inference queue에 들어간다. 결과는 다시 IP response로 UE에 돌아간다.
-
-**user plane**은 앱 packet을 실제로 운반하는 경로다. UE→gNB→UPF→edge service가 대표 흐름이다. **local breakout**은 traffic을 먼 중앙 data network까지 보내지 않고 가까운 UPF·edge 경로로 빼는 배치다. 가까운 물리 위치만으로 짧은 경로가 보장되는 것은 아니며 session routing과 UPF rule이 edge를 가리켜야 한다.
-
-```mermaid
-sequenceDiagram
-    participant U as UE 앱
-    participant G as gNB
-    participant P as UPF
-    participant E as Edge gateway
-    participant M as Model server
-    U->>G: 입력 packet
-    G->>P: user-plane tunnel
-    P->>E: local breakout
-    E->>M: tensor request
-    M-->>E: inference result
-    E-->>P: response
-    P-->>G: downlink packet
-    G-->>U: 앱 결과
-```
-
-## 한 요청의 byte와 상태 수명
-
-UE가 200 kB image를 20 Mbit/s 실제 uplink goodput으로 보낸다고 단순화하면 전송만 `200×8/20=80 ms`다. radio scheduling 8 ms, UPF·edge network 4 ms, preprocessing 6 ms, inference 20 ms, 후처리·downlink 7 ms라면 총 125 ms다.
-
-| 단계 | 시간 | 상태 위치 |
-|---|---:|---|
-| radio scheduling | 8 ms | UE·gNB queue |
-| uplink payload | 80 ms | radio bearer·UPF path |
-| edge network | 4 ms | switch·gateway |
-| preprocessing | 6 ms | CPU memory |
-| inference | 20 ms | GPU memory·queue |
-| response | 7 ms | user-plane downlink |
-
-입력을 50 kB로 줄이면 uplink는 20 ms가 되어 총 65 ms 후보가 된다. 그러나 압축으로 model 정확도가 낮아질 수 있다. latency와 accuracy를 함께 측정한다.
-
-## warm, cold, batch의 차이
-
-model weight가 GPU memory에 있고 worker가 실행 준비된 요청을 **warm request**라 한다. model download, container 시작, weight load가 필요한 첫 요청은 **cold start**를 겪는다. warm 20 ms model이라도 cold start 2초가 될 수 있어 deadline service는 pre-warm과 admission policy가 필요하다.
-
-batch는 여러 요청을 묶어 GPU 효율을 높일 수 있지만 첫 요청이 batch를 기다리는 queue latency를 만든다. 30 ms deadline인데 batch wait 15 ms, inference 20 ms면 이미 35 ms다.
-
-## 실패와 fallback
-
-edge model server가 실패했을 때 중앙 cloud로 보낼 수 있지만 경로 지연과 개인정보 정책을 다시 확인한다. 작은 local model, cached result, 사용자에게 지연 알림 같은 fallback도 있다. 오래된 model이 결과를 내는 것은 transport 성공이지만 model 품질 실패일 수 있다.
-
-AI-on service와 RIC xApp은 위치가 가까울 수 있어도 책임이 다르다. xApp은 RAN control을 만들고, AI-on service는 사용자 inference 결과를 돌려준다. 사용자 영상 model timeout을 RAN control 실패와 같은 상태로 취급하지 않는다.
-
-## 추가 문제와 완전 해설
-
-### 1. 100 kB를 10 Mbit/s로 보내는 순수 시간은?
-`100×8/10=80 ms`다.
-
-### 2. edge가 물리적으로 가까우면 local breakout인가?
-아니다. PDU session과 UPF routing이 edge 경로를 사용해야 한다.
-
-### 3. warm 15 ms, batch wait 20 ms, deadline 30 ms면?
-총 35 ms라 deadline을 넘는다.
-
-### 4. cold start를 줄이는 방법은?
-worker와 model weight를 미리 memory에 올리고 capacity를 예약한다.
-
-### 5. cloud fallback이 항상 안전한가?
-아니다. 추가 지연, data locality, privacy, 비용 조건을 확인해야 한다.
-
-[이 책 목차](README.md)
-
 [← 이전: 공유 계산](16-ai-and-ran-shared-compute.md) · [다음: 5G-Advanced와 6G](18-5g-advanced-6g-and-release-status.md)
 
-AI-on-RAN은 RAN 인프라 또는 그 가까운 edge에서 AI 응용을 실행하는 방향이다.
-목표는 사용자와 가까운 위치에서 낮은 지연, 데이터 지역성, 현장 서비스를 제공하는 것이다.
+**AI-on-RAN**은 RAN(Radio Access Network, 무선 접속망) 인프라 또는 그 가까운 edge에서 사용자·산업용 AI 응용을 실행하는 방향이다. 목표는 사용자와 가까운 위치에서 낮은 지연, 데이터 지역성, 현장 서비스를 제공하는 것이다.
 
-## 17.0 Packet이 지나는 구성요소부터 알기
+**Edge inference(에지 추론)**는 학습을 마친 model이 가까운 계산 위치에서 새 입력의 결과를 계산하는 작업이다. “Model이 edge에 있다”는 말은 weight가 그 위치의 storage 또는 accelerator memory에 배포되고, 실행 runtime과 route가 그 instance로 이어진다는 뜻이다. 서버가 물리적으로 기지국 옆에 있다는 사실만으로 packet 경로나 warm 상태가 보장되지는 않는다.
+
+**UE(User Equipment, 사용자 장비)**는 사용자 단말이고, **gNB(gNodeB, 5G 기지국)**는 UE의 무선 packet을 5G core 경로로 연결한다.
+
+## 1. Packet 경로와 model 위치의 기본 단어
 
 **User plane(사용자 평면)**은 사용자의 video, game, sensor, web packet을 운반하는 경로다. **Control plane(제어 평면)**은 접속, 인증, session 설정과 network 제어 신호를 다룬다. 두 경로가 협력하지만 application payload와 network 제어 message는 같은 것이 아니다.
 
@@ -94,7 +26,7 @@ AI-on-RAN은 RAN 인프라 또는 그 가까운 edge에서 AI 응용을 실행�
 
 **Cold start(콜드 스타트)**는 service instance가 준비되지 않은 상태에서 image load, process 시작, model weight load, GPU memory allocation 등을 처음 수행하는 시작 비용이다. 이미 준비된 instance의 **warm inference**보다 훨씬 길 수 있다.
 
-## 17.0.1 누가 packet과 model을 처리하는가
+### 1.1 누가 packet과 model을 처리하는가
 
 UE camera가 frame을 보낼 때 주체를 순서대로 적어 보자.
 
@@ -110,7 +42,24 @@ UE camera가 frame을 보낼 때 주체를 순서대로 적어 보자.
 
 이 중 RIC/E2는 RAN 최적화를 위해 별도로 radio telemetry를 읽고 제어할 수 있지만, 위 frame payload의 기본 전달 단계에는 들어가지 않는다.
 
-## 17.0.2 Warm 요청과 cold start 비교
+```mermaid
+sequenceDiagram
+    participant U as UE 앱
+    participant G as gNB
+    participant P as local UPF
+    participant E as Edge gateway
+    participant M as Model server
+    U->>G: 입력 packet
+    G->>P: user-plane tunnel
+    P->>E: local breakout
+    E->>M: tensor request
+    M-->>E: inference result
+    E-->>P: response
+    P-->>G: downlink packet
+    G-->>U: 앱 결과
+```
+
+### 1.2 Warm 요청과 cold start
 
 ```text
 Warm request
@@ -128,9 +77,11 @@ Cold request 추가 비용
   총 추가 600 ms
 ```
 
+이 표는 warm 18 ms와 cold 추가 600 ms라는 한 교육 조건이다. 다른 model·image 가정에서는 warm inference 20 ms, cold start 2초처럼 더 큰 차이가 날 수도 있다. 두 숫자를 같은 측정의 서로 다른 합계로 섞지 않는다.
+
 20 ms service 목표에서 618 ms cold request는 실패한다. 해결책은 instance를 미리 준비하고 model을 memory에 올려 두는 warm pool, traffic 예측에 따른 scale-out, 더 작은 fallback model일 수 있다. 단순히 inference kernel 6 ms라고 보고 목표를 만족했다고 결론 내리면 안 된다.
 
-## 17.1 먼저 두 경로를 구별한다
+## 2. User plane과 RIC 제어 경로
 
 UE(User Equipment)의 application packet은 user plane을 지난다.
 RAN 제어 최적화는 RIC(RAN Intelligent Controller)와 E2 같은 control 경로를 사용할 수 있다.
@@ -150,7 +101,7 @@ flowchart LR
 E2는 O-RAN node와 Near-RT RIC 사이의 제어·관측 interface다.
 AI-on-RAN 응용 traffic은 보통 user-plane routing과 UPF를 기준으로 설명한다.
 
-## 17.2 입력에서 결과까지
+## 3. 입력 byte에서 결과까지
 
 Private MEC(Multi-access Edge Computing)에서 제조 카메라 결함 탐지를 수행한다고 하자.
 
@@ -165,9 +116,23 @@ Private MEC(Multi-access Edge Computing)에서 제조 카메라 결함 탐지를
 MEC 결과가 RAN scheduler action은 아니다.
 설비 제어도 별도 safety controller가 확인해야 한다.
 
-## 17.3 작은 latency budget
+## 4. 왕복 service latency budget
 
-전체 목표가 20 ms라고 하자.
+왕복 service latency는 radio scheduling, uplink payload, transport, queue, preprocessing, inference, postprocessing과 downlink를 모두 포함한다. 먼저 큰 image의 교육 예를 보자. UE가 200 kB image를 실제 uplink goodput 20 Mbit/s로 보내면 순수 uplink는 `200×8/20=80 ms`다.
+
+| 125 ms 예의 단계 | 시간 | 주요 상태 위치 |
+|---|---:|---|
+| radio scheduling | 8 ms | UE·gNB queue |
+| uplink payload | 80 ms | radio bearer·UPF path |
+| edge network | 4 ms | switch·gateway |
+| preprocessing | 6 ms | CPU memory |
+| inference | 20 ms | GPU memory·queue |
+| postprocessing·downlink | 7 ms | user-plane return path |
+| **합계** | **125 ms** | request에서 결과까지 |
+
+입력을 50 kB로 줄이면 같은 가정에서 uplink는 20 ms, 총합은 65 ms 후보가 된다. 압축이 model 정확도를 낮출 수 있으므로 latency와 accuracy를 함께 측정한다.
+
+다음 표는 작은 입력과 warm instance를 전제로 전체 목표를 20 ms로 잡은 **별도 저지연 가정**이다.
 
 | 구간 | budget |
 |---|---:|
@@ -183,7 +148,7 @@ MEC 결과가 RAN scheduler action은 아니다.
 Inference를 6 ms에서 4 ms로 줄여도 uplink queue가 12 ms로 늘면 목표를 놓친다.
 Model-only benchmark와 end-to-end latency를 분리한다.
 
-## 17.4 local breakout
+## 5. Local breakout과 실제 packet 경로
 
 Local breakout은 특정 UE traffic을 가까운 data network 또는 edge application으로 보내는 routing이다.
 물리적으로 MEC 서버가 기지국 옆에 있어도 session route가 중앙 data center UPF로 향하면 왕복 경로가 길어진다.
@@ -196,7 +161,7 @@ Local breakout은 특정 UE traffic을 가까운 data network 또는 edge applic
 Breakout 정책은 DNN(Data Network Name), S-NSSAI, UE/session, application steering 같은 조건과 구현에 의존한다.
 “Edge에 설치했다”는 문장만으로 실제 packet path를 증명하지 않는다.
 
-## 17.5 private MEC label
+## 6. Private MEC라는 배치 label
 
 이 교재의 `private MEC`는 사업장이나 operator가 제한된 사용자·network를 위해 운영하는 edge 환경이라는 배치 label이다.
 ETSI MEC 규격 전체를 대체하는 Kubernetes label 이름이 아니다.
@@ -209,7 +174,7 @@ ETSI MEC 규격 전체를 대체하는 Kubernetes label 이름이 아니다.
 - model/data 소유자
 - 중앙 cloud fallback 경로
 
-## 17.6 model 배포 주체
+## 7. Model 배포와 route 변경의 책임
 
 ```text
 Model owner       학습 artifact와 품질 승인
@@ -222,7 +187,7 @@ Safety owner      action guard와 fallback 승인
 한 팀이 여러 역할을 맡아도 책임 항목은 분리한다.
 Model rollout과 user-plane route 변경을 같은 배포로 묶으면 원인 분석이 어려워진다.
 
-## 17.7 request의 상태 전이
+## 8. Request 상태 전이와 batch deadline
 
 ```text
 t=0 ms   UE frame 전송
@@ -238,7 +203,7 @@ t=18 ms  UE가 결과 수신
 하지만 평균 18 ms만 보고 p99를 알 수 없다.
 Radio 재전송, queue, model cold start를 별도로 측정한다.
 
-## 17.8 batch와 deadline
+### 8.1 Batch와 deadline
 
 Batch를 기다리면 GPU throughput은 올라갈 수 있다.
 요청 A가 t=0, B가 t=4 ms에 도착하고 batch wait가 5 ms라면 A는 inference 전 4~5 ms 기다린다.
@@ -247,7 +212,7 @@ Interactive deadline이 짧으면 작은 batch나 dynamic batching을 쓴다.
 Offline 분석은 큰 batch를 허용할 수 있다.
 같은 model에도 service class별 정책이 필요하다.
 
-## 17.9 데이터 지역성과 privacy
+## 9. 데이터 지역성과 privacy
 
 Edge 처리로 raw data가 중앙 cloud로 가지 않게 설계할 수 있다.
 그러나 log, embedding, model telemetry, 실패 sample이 중앙으로 복제될 수 있다.
@@ -260,7 +225,7 @@ Edge 처리로 raw data가 중앙 cloud로 가지 않게 설계할 수 있다.
 - model update가 데이터를 외부로 보내는가
 - 장애 dump에 user data가 들어가는가
 
-## 17.10 RIC 응용과의 차이
+## 10. RIC 응용과 user inference의 차이
 
 xApp은 Near-RT RIC에서 E2를 통해 RAN을 관찰·제어하는 응용이다.
 rApp은 Non-RT RIC/SMO 쪽의 비실시간 최적화와 연관된다.
@@ -268,9 +233,18 @@ rApp은 Non-RT RIC/SMO 쪽의 비실시간 최적화와 연관된다.
 Edge object detection service는 UE user traffic을 처리하므로 xApp이라고 부를 이유가 없다.
 같은 cluster에서 실행돼도 interface와 목적이 다르다.
 
-## 17.11 실패와 fallback
+## 11. Edge 위치와 지연을 오해하는 반례
 
-MEC AI가 timeout이면 다음 선택지가 있다.
+Edge inference가 낮은 지연을 “보장”하지 않는다.
+Queue와 radio 상태가 지배할 수 있다.
+
+UPF가 가까워도 model image pull과 cold start가 길 수 있다.
+
+E2 연결이 있어도 UE application payload를 E2로 보내는 구조라고 추론하지 않는다.
+
+## 12. 실패와 fallback의 운영 경계
+
+MEC AI가 timeout이면 다음 선택지가 있다. Transport가 성공했더라도 오래된 model이 품질 기준에 못 미치는 결과를 내면 model 품질 실패로 따로 기록한다.
 
 1. 명시적 실패를 UE app에 반환.
 2. 작은 local fallback model 사용.
@@ -280,36 +254,47 @@ MEC AI가 timeout이면 다음 선택지가 있다.
 중앙 fallback은 항상 안전하지 않다.
 왕복 지연이 남은 deadline보다 크면 늦은 성공보다 빠른 실패가 낫다.
 
-## 17.12 반례
+## 13. 통합 문제와 완전 해설
 
-Edge inference가 낮은 지연을 “보장”하지 않는다.
-Queue와 radio 상태가 지배할 수 있다.
-
-UPF가 가까워도 model image pull과 cold start가 길 수 있다.
-
-E2 연결이 있어도 UE application payload를 E2로 보내는 구조라고 추론하지 않는다.
-
-## 17.13 확인 문제와 해설
-
-### 문제 1
+### 13.1 User packet의 경로
 
 UE 영상이 edge detector로 가는 주 경로는 E2인가?
 
 **해설:** 아니다. User plane과 UPF routing 경로다. E2는 Near-RT RIC 제어·관측 interface다.
 
-### 문제 2
+### 13.2 Model 시간과 E2E 목표
 
 Inference 5 ms, 나머지 경로 18 ms이고 E2E 목표가 20 ms면 성공인가?
 
 **해설:** 합계 23 ms라 실패다. Model 시간만 줄였다는 사실로 E2E 목표를 만족하지 않는다.
 
-### 문제 3
+### 13.3 Private MEC와 privacy
 
 Private MEC가 개인정보 보호를 자동 보장하는가?
 
 **해설:** 아니다. Log, cache, telemetry, 중앙 복제와 접근 정책을 함께 검토해야 한다.
 
-## 17.14 공식 자료
+### 13.4 100 kB를 10 Mbit/s로 보내는 순수 전송 시간은?
+
+**해설:** `100×8/10=80 ms`다. Scheduling, header, retry와 return path는 별도다.
+
+### 13.5 서버가 물리적으로 가까우면 local breakout이 성립하는가?
+
+**해설:** 아니다. PDU session과 UPF routing·application steering이 실제 edge data network를 가리켜야 한다.
+
+### 13.6 Warm inference 15 ms와 batch wait 20 ms, deadline 30 ms라면?
+
+**해설:** 이미 35 ms이므로 다른 경로 시간을 더하기 전에도 deadline을 넘는다. Batch를 줄이거나 즉시 실행·거절 정책이 필요하다.
+
+### 13.7 Cold start를 줄이는 방법은?
+
+**해설:** Service instance를 미리 실행하고 model weight와 필요한 runtime을 memory에 올린 warm pool을 유지한다. 예상 load에 맞는 capacity와 rollout 정책도 필요하다.
+
+### 13.8 Cloud fallback은 항상 안전한가?
+
+**해설:** 아니다. 남은 deadline보다 왕복이 길 수 있고 data locality, privacy, 비용·연결 실패 조건도 달라진다. 빠른 명시적 실패나 작은 local model이 더 안전할 수 있다.
+
+## 14. 공식 자료
 
 - [AI-RAN Alliance](https://ai-ran.org/)
 - [ETSI MEC overview](https://www.etsi.org/technologies/multi-access-edge-computing)

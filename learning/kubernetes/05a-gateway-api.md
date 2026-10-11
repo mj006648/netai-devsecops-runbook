@@ -4,7 +4,7 @@
 
 웹 API를 Kubernetes에 올렸다고 가정하자. Pod에는 IP가 있고 Service에도 이름이 있다. 그런데 사용자는 `https://api.example.test/v1/books`라는 주소로 접속하고 싶다. 누가 외부 요청을 받으며, 어떤 서비스로 보내고, 누가 인증서와 경로를 관리해야 할까? Gateway API는 이 **진입점과 라우팅 설정을 여러 담당자가 나누어 선언하는 약속**이다.
 
-이 장은 “GatewayClass·Gateway·HTTPRoute가 있다”에서 멈추지 않고, 하나의 교육용 앱을 끝까지 연결한다. Kubernetes의 Pod·Deployment·Service를 처음 보는 독자는 [03장](03-pods-and-namespaces.md)과 [05장](05-networking-services.md)의 기본 연결을 먼저 읽으면 된다.
+이 장은 하나의 교육용 앱에 외부 요청이 도착하는 과정을 끝까지 연결한다. **Pod**는 같은 서버에서 함께 실행하는 컨테이너 묶음이고, **Deployment**는 같은 역할의 Pod 수와 버전 교체를 관리하는 객체다. **Service**는 바뀌는 Pod 집합에 일정한 접속 지점을 제공한다. 여기서 **backend(백엔드)**는 진입점 뒤에서 실제 업무 요청을 처리하는 Service와 앱을 뜻한다. Gateway API는 이 backend 앞에서 어떤 주소와 포트로 요청을 받고 어느 경로로 전달할지 선언한다.
 
 자료 확인 기준일은 **2026-10-10**이다. API 예제는 Gateway API **v1.6.2 Standard bundle**의 `gateway.networking.k8s.io/v1`을 기준으로 한다. 구현 예시는 Envoy Gateway의 controller 이름을 사용한다. **이번 문서 작성 때 Gateway controller를 설치하거나 manifest를 실제 클러스터에 적용하지 않았다.** 아래 응답·상태는 입력과 설정을 따라 설명한 예상 관찰이다.
 
@@ -22,7 +22,7 @@
 | 실제 처리 계층 | Envoy proxy 등 | HTTP/TLS 바이트를 받고 backend로 전달 |
 | Backend | Service가 선택하는 앱 Pod | 업무 코드를 실행하고 응답 |
 
-CRD만 설치하면 proxy가 자동으로 생기지는 않는다. GatewayClass의 controller 이름을 처리할 controller가 있어야 한다. schema가 존재하는 것과 그 schema의 업무 동작을 구현한 프로그램이 있는 것은 다르다. [공식 API 개요](https://gateway-api.sigs.k8s.io/docs/concepts/api-overview/)
+CRD만 설치하면 proxy가 자동으로 생기지는 않는다. GatewayClass의 controller 이름을 처리할 controller가 있어야 한다. schema가 존재하는 것과 그 schema의 업무 동작을 구현한 프로그램이 있는 것은 다르다. 이 장에서 **runtime(실행 환경)**은 controller와 실제 proxy가 프로세스로 실행되며 network·load balancer 자원을 만들 수 있는 환경을 뜻한다. CRD는 API 종류를 추가하고, controller runtime은 선언을 조정하며, data plane runtime은 실제 요청을 처리한다. [공식 API 개요](https://gateway-api.sigs.k8s.io/docs/concepts/api-overview/)
 
 ![Gateway API 선언을 controller가 처리하는 제어 경로와 실제 proxy가 HTTP를 전달하는 데이터 경로](assets/gateway-control-data.svg)
 
@@ -93,7 +93,15 @@ flowchart LR
 
 ## 4. 전체 YAML: 어느 이름이 어디로 연결되나
 
-같은 manifest를 [gateway-http-demo.yaml](examples/gateway-http-demo.yaml)로 제공한다. **Standard CRD와 호환 controller·runtime·진입 주소 제공 환경이 준비됐다는 전제**의 교육용 API 예제다. kind 클러스터만 만들면 그 전제가 모두 충족되는 것은 아니다.
+같은 manifest를 [gateway-http-demo.yaml](examples/gateway-http-demo.yaml)로 제공한다. 다음 준비 조건은 YAML 안에 자동으로 생기는 자원이 아니다.
+
+1. Gateway API Standard CRD가 설치되어 API server가 `GatewayClass`, `Gateway`, `HTTPRoute`, `ReferenceGrant` 종류를 받아야 한다.
+2. `gateway.envoyproxy.io/gatewayclass-controller`를 자신의 이름으로 사용하는 호환 controller가 실제로 실행 중이어야 한다.
+3. Controller가 실제 요청을 받을 proxy·load balancer runtime을 만들거나 기존 data plane을 설정할 권한과 인프라가 있어야 한다.
+4. Gateway status에 진입 주소가 할당되고, 학습자의 client에서 그 IP나 hostname의 listener port까지 network로 도달할 수 있어야 한다.
+5. Backend Deployment·Service·ready endpoint가 준비되어야 한다.
+
+따라서 kind 클러스터를 만들거나 아래 객체를 `kubectl apply`한 것만으로 외부 진입 주소까지 준비됐다고 가정하지 않는다. CRD가 없으면 kind 자체를 API server가 거부한다. CRD만 있고 controller가 없으면 객체는 저장돼도 조정되지 않는다. Controller가 있어도 runtime·주소 제공 방식은 구현과 환경에 따라 달라진다. 아래는 이 준비가 끝난 환경을 전제로 한 교육용 API 예제다.
 
 ```yaml
 apiVersion: v1
@@ -235,6 +243,8 @@ Service는 `targetPort: http`를 통해 Pod의 named port를 찾고, 그 port는
 
 ## 5. 한 요청을 끝까지 따라가기
 
+### 5.1 현재 HTTP 예제
+
 다음은 준비가 완료된 환경에서의 교육용 요청이다. `<GATEWAY_IP>`를 실제 관찰한 Gateway 주소로 바꿔 읽는다. DNS 레코드를 만들지 않고 HTTP Host 매칭을 확인하는 방법이다.
 
 ```text
@@ -250,14 +260,47 @@ curl -i -H 'Host: api.example.test' http://<GATEWAY_IP>/v1/books
 
 ```mermaid
 sequenceDiagram
+    participant K as Kubernetes API
+    participant O as Gateway controller
     participant C as Client
     participant G as 실제 Gateway proxy
     participant A as Echo app
+    K-->>O: GatewayClass·Gateway·HTTPRoute·Service 상태
+    O-->>G: listener·route·backend 설정
     C->>G: Host api.example.test, GET /v1/books
     G->>G: listener·hostname·path 규칙 확인
     G->>A: 선택한 backend로 HTTP 요청
     A-->>G: 예상 200, app-backend
     G-->>C: HTTP 응답
+```
+
+앞의 API→controller→proxy는 **제어 경로**이고 client→proxy→backend는 실제 **데이터 경로**다. HTTPRoute 객체와 API server가 요청 byte를 직접 처리하지 않는다.
+
+### 5.2 같은 예제를 HTTPS로 확장해 읽기
+
+현재 전체 YAML은 HTTP 80 listener만 만든다. 같은 `api.example.test/v1/books` 요청을 HTTPS로 처리하려면 이름이 `https`인 443 listener, hostname에 맞는 인증서 Secret 참조, 그 listener에 붙는 Route, client가 도달할 Gateway 주소가 추가로 준비되어야 한다. 그 준비가 됐다고 가정하면 같은 요청은 다음 순서로 흐른다.
+
+1. 외부 DNS가 `api.example.test`를 Gateway proxy의 진입 주소로 해석한다.
+2. Client가 그 주소의 TCP 443에 연결하고 TLS ClientHello에 SNI `api.example.test`를 보낸다.
+3. Proxy가 `https` listener가 참조한 인증서로 TLS를 종료한다.
+4. Proxy가 복호화한 HTTP Host와 `/v1/books` path를 HTTPRoute rule과 비교한다.
+5. `backendRefs`의 `echo` Service port 80을 해결하고, 예를 들어 ready endpoint `10.20.2.9:5678`을 선택한다. 이 5678은 Service `targetPort`가 가리킨 앱 listen port다.
+6. Echo 앱이 응답하고 proxy가 client의 TLS 연결을 통해 결과를 돌려준다.
+
+```mermaid
+sequenceDiagram
+    participant D as DNS
+    participant U as 외부 Client
+    participant P as Gateway proxy
+    participant B as Echo app Pod
+    U->>D: api.example.test 조회
+    D-->>U: Gateway 진입 주소
+    U->>P: TCP 443, TLS SNI api.example.test
+    P-->>U: listener 인증서, TLS 성립
+    U->>P: GET /v1/books, Host api.example.test
+    P->>B: HTTP request 10.20.2.9:5678
+    B-->>P: HTTP 200, app-backend
+    P-->>U: TLS 안의 HTTP 응답
 ```
 
 이 예제에서는 prefix를 rewrite하지 않았으므로 backend도 `/v1/books`를 받는다. 일반 앱이 이 path를 모르면 앱 자체가 404를 돌려줄 수 있다. “Gateway의 Route가 매칭되지 않아 발생한 404”와 “Route는 맞았지만 앱이 돌려준 404”는 로그와 요청 경로로 구별한다.
@@ -346,47 +389,21 @@ spec:
 
 다른 namespace의 Gateway에 attach하는 관계에는 ReferenceGrant를 대신 쓰지 않는다. allowedRoutes가 제어하는 관계다. 반대로 allowedRoutes를 넓혔다고 모든 namespace의 Service·Secret을 자유롭게 참조할 수 있는 것도 아니다. [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [Gateway API 보안 모델](https://gateway-api.sigs.k8s.io/docs/concepts/security/)
 
-## 요청 한 건의 실제 경로
+## 8. TLS termination과 passthrough
 
-1. 외부 DNS가 `api.example.test`를 Gateway proxy address로 해석한다.
-2. Client가 TCP 443과 TLS ClientHello의 SNI를 보낸다.
-3. Proxy가 이름 `https` listener의 certificate로 TLS를 종료한다.
-4. Proxy가 HTTP host와 `/v1/books` path를 HTTPRoute rule과 비교한다.
-5. `backendRefs`의 Service `books`, port 80을 해결하고 ready endpoint `10.20.2.9:8080`을 선택한다.
-6. App가 응답하고 proxy가 client TLS 연결로 돌려준다.
+**TLS termination(종단)**은 proxy가 client TLS를 끝내 인증서를 제시한 뒤 복호화된 HTTP path를 읽는 방식이다. Certificate Secret reference 권한과 hostname을 확인한다. Backend 구간 TLS는 별도 정책과 구현 지원이 필요하다.
 
-```mermaid
-sequenceDiagram
- participant A as Kubernetes API
- participant C as Gateway controller
- participant P as Gateway proxy
- participant U as 외부 client
- participant B as backend Pod
- A-->>C: GatewayClass·Gateway·HTTPRoute·Service watch
- C-->>P: listener·route·backend 설정
- U->>P: TLS SNI + GET /v1/books
- P->>B: HTTP request 10.20.2.9:8080
- B-->>P: HTTP 200
- P-->>U: TLS HTTP 200
-```
+**TLS passthrough(통과 전달)**는 proxy가 HTTP를 해독하지 않고 TLS stream을 backend에 전달하는 방식이다. HTTP path match를 할 수 없고 SNI 같은 TLS 정보로 route한다. TLSRoute의 설치 channel과 구현 지원은 HTTPRoute와 다를 수 있다.
 
-API→controller→proxy는 제어 경로이고 client→proxy→backend는 실제 data path다. HTTPRoute 객체와 API server가 요청 byte를 직접 처리하지 않는다.
-
-## TLS termination과 passthrough
-
-Termination은 proxy가 client TLS를 끝내 인증서를 제시한 뒤 HTTP path를 읽는 방식이다. Certificate Secret reference 권한과 hostname을 확인한다. Backend 구간 TLS는 별도 정책과 구현 지원이 필요하다.
-
-Passthrough는 HTTP를 해독하지 않고 TLS stream을 backend에 전달한다. HTTP path match를 할 수 없고 SNI 같은 TLS 정보로 route한다. TLSRoute의 설치 channel과 구현 지원은 HTTPRoute와 다를 수 있다.
-
-## 구현 호환성
+## 9. 구현 호환성
 
 Standard channel CRD 존재, API field의 Core/Extended 분류, 설치 controller의 실제 지원은 세 단계다. Standard channel에는 GatewayClass, Gateway, HTTPRoute, ReferenceGrant가 포함된다. Experimental 자원·field는 breaking change 가능성이 있다. Controller conformance report와 supported features를 확인한다.
 
-## 요청 규칙을 확장하고 실패 지점을 진단하기
+## 10. 요청 규칙을 확장하고 실패 지점을 진단하기
 
 앞의 요청 흐름을 이해한 다음에는 client의 재요청과 proxy의 내부 변경, backend 분배, 상태 조건을 구분해야 한다. 다음 예시는 같은 Gateway·Route 구조에서 이 차이를 끝까지 따라간다.
 
-### Redirect와 rewrite는 누가 다시 요청하는가가 다르다
+### 10.1 Redirect와 rewrite는 누가 다시 요청하는가가 다르다
 
 **Redirect, 이동 응답**은 client에게 새 주소로 요청하라고 알려 준다. proxy가 3xx 상태와 `Location`을 돌려주면 browser/client가 그 주소로 새 요청을 보낸다.
 
@@ -437,7 +454,7 @@ rules:
 
 이것들은 전체 객체가 아니라 앞의 HTTPRoute `rules`를 바꾸어 읽는 부분 예시다. Redirect와 URLRewrite를 같은 rule에 함께 사용하지 않는다. path rewrite나 307/308 redirect 등은 Extended support 조건을 확인한다. API schema에 필드가 있다는 사실만으로 설치 controller가 모든 기능을 구현했다고 가정하지 않는다. [Redirect·rewrite 공식 가이드](https://gateway-api.sigs.k8s.io/guides/user-guides/http-redirect-rewrite/)
 
-### Backend weight는 replica 수와 같은가
+### 10.2 Backend weight는 replica 수와 같은가
 
 새 버전 앱 Service `echo-canary`가 실제 준비됐다고 가정한다. 같은 요청 규칙에서 다음 backendRef를 사용할 수 있다.
 
@@ -455,7 +472,7 @@ backendRefs:
 
 새 Service가 없거나 참조가 유효하지 않으면 단순히 “10% 신버전 테스트 중”이라고 보고하지 않는다. Route의 `ResolvedRefs`와 실제 backend readiness를 먼저 확인한다. weight와 앱 정상 동작은 별도다. [HTTPRoute의 backendRef 설명](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/)
 
-### 객체가 만들어졌는데 연결이 안 되면 어디를 보나
+### 10.3 객체가 만들어졌는데 연결이 안 되면 어디를 보나
 
 `kubectl apply` 성공은 API가 객체를 받아 저장했다는 확인이다. Class가 해당 controller에 수용됐는지, Route가 listener에 attach했는지, 설정이 실제 처리 계층에 전달됐는지는 status에서 따로 읽는다.
 
@@ -527,7 +544,7 @@ flowchart TB
 
 status부터 확인해 가설을 좁힌 뒤 실제 요청과 로그로 결과를 확인한다. 404·502·503 같은 숫자만으로 한 가지 원인을 확정하지 않는다. [공식 status·진단 설명](https://gateway-api.sigs.k8s.io/docs/concepts/troubleshooting/)
 
-### HTTPRoute 밖의 Route와 지원 조건
+### 10.4 HTTPRoute 밖의 Route와 지원 조건
 
 모든 트래픽이 HTTP는 아니다. Route 종류는 proxy가 어느 계층의 정보를 보고 선택할지와 연결된다.
 
@@ -546,34 +563,34 @@ status부터 확인해 가설을 좁힌 뒤 실제 요청과 로그로 결과를
 
 예를 들어 Standard 리소스 안에도 Extended 기능이 있다. 설치 controller의 conformance·지원 기능과 GatewayClass의 `supportedFeatures` 등을 함께 확인한다. Experimental bundle에는 호환성 약속이 다른 실험 필드/종류가 더해질 수 있다. 정확한 정의는 [Gateway API versioning](https://gateway-api.sigs.k8s.io/docs/concepts/versioning/)을 따른다.
 
-## 확인 문제와 완전 해설
+## 11. 확인 문제와 완전 해설
 
-### 문제 1
+### 11.1 문제 1
 GatewayClass와 Gateway의 차이는?
 
 **해설:** GatewayClass는 cluster 범위에서 controller 구현을 연결한다. Gateway는 namespace에서 listener address·port·protocol·hostname을 요청한다.
 
-### 문제 2
+### 11.2 문제 2
 `parentRefs.sectionName: https`는 무엇을 뜻하는가?
 
 **해설:** Route가 같은 Gateway의 모든 listener가 아니라 이름이 https인 listener에 attach하려는 뜻이다. Hostname 교집합과 allowedRoutes도 함께 검사한다.
 
-### 문제 3
+### 11.3 문제 3
 다른 namespace Service를 backendRef로 쓸 때 필요한 객체는?
 
 **해설:** 참조받는 namespace 소유자가 ReferenceGrant로 허용해야 한다. 없으면 보통 `ResolvedRefs=False` reason으로 나타난다.
 
-### 문제 4
+### 11.4 문제 4
 Weight 90:10은 매 열 요청의 정확한 9:1 순서인가?
 
 **해설:** 상대 비율 의도다. Connection reuse, hash, 작은 표본과 endpoint readiness 때문에 실제 짧은 관측은 다를 수 있다.
 
-### 문제 5
+### 11.5 문제 5
 Accepted=True인데 503이면?
 
 **해설:** Attachment는 수락됐지만 ResolvedRefs, Gateway Programmed, Service port, EndpointSlice readiness, proxy log는 별도다. observedGeneration도 본다.
 
-## 공식 자료
+## 12. 공식 자료
 
 - [Gateway API Getting Started](https://gateway-api.sigs.k8s.io/guides/)
 - [Gateway API Overview](https://gateway-api.sigs.k8s.io/concepts/api-overview/)

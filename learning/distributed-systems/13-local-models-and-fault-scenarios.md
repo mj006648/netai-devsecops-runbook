@@ -1,310 +1,177 @@
 # 13. 로컬 모델과 장애 시나리오
 
-## 입력에서 결과까지 계산하는 모델
+## 모델에서 입력·상태·출력을 먼저 구분한다
 
-toy model은 제품 축소판이 아니라 한 규칙의 결과를 드러내는 실행 가능한 설명이다. 입력, 상태 전이 함수, 관측 결과, 불변식을 분리한다.
+이 장의 **모델**은 실제 제품을 축소 구현한 것이 아니라, 검토할 규칙을 Python 상태 전이로 표현한 실행 가능한 설명이다. 입력은 사건 목록·로그·함수 인자이고, 상태는 dataclass와 dict가 가진 값이다. 출력은 read history, commit index, 함수 반환값과 print이며, **불변식(invariant, 모든 허용 실행에서 지켜야 하는 조건)**은 assert가 검사한다.
 
-복제 모델 입력을 `write(index=1,value=2)`, `read(follower)`, `replicate`, `read(follower)`로 두자. 시작 상태는 leader와 follower 모두 `(value=1, applied=0)`이다.
-
-| 사건 | leader | follower | 관측 |
-|---|---|---|---|
-| write | (2,1) | (1,0) | 없음 |
-| read | (2,1) | (1,0) | 1 |
-| replicate | (2,1) | (2,1) | 없음 |
-| read | (2,1) | (2,1) | 2 |
-
-모델은 “복제 전 follower 읽기는 오래될 수 있다”를 계산한다. 실제 네트워크, 디스크 reorder, 동시 스레드는 모델에 없다. assert가 통과해도 실제 저장소 정확성을 증명하지 않는다.
-
-재시도 모델은 시작 balance=1000, executions=0, results={}를 입력으로 둔다. R42 debit 100을 실행하면 balance=900, executions=1, results[R42]=900이다. 같은 R42를 다시 넣으면 results를 읽고 실행 수는 1로 남아야 한다.
-
-## 장애 위치와 미검증 조건
-
-장애를 “중간에 발생”이라고 쓰지 않고 커밋 전, 커밋 후 응답 전처럼 정확히 둔다. 모델이 메모리 dict만 사용하면 재시작 내구성을 검증하지 않는다. 논리 tick은 실제 밀리초가 아니다.
-
-| 모델이 확인 | 모델이 확인하지 않음 |
-|---|---|
-| 고정 사건의 상태 계산 | 실제 socket 유실 |
-| 중복 ID 분기 | 디스크 fsync |
-| 현재 term 커밋 산술 | 전체 Raft 선거 |
-| assert 불변식 | 성능·보안 |
-
-## 추가 문제와 해설
-
-### 1. 출력 상수를 쓰고 같은 상수를 assert하면 왜 부족한가?
-입력 사건에서 상태를 계산하지 않아 잘못된 전이도 발견하지 못한다.
-
-### 2. seed를 고정하는 이유는?
-실패 trace를 재현해 원인과 수정 전후를 비교하기 위해서다.
-
-### 3. crash를 커밋 전과 후로 나누는 이유는?
-같은 timeout이어도 영속 업무 결과가 반대이기 때문이다.
-
-### 4. 모델에서 제외한 조건은 어디에 쓰는가?
-결론 바로 옆의 한계로 명시해 제품 보장으로 일반화하지 않게 한다.
-
-### 5. 불변식 예는?
-같은 request ID를 여러 번 넣어도 `executions==1`이고 잔액은 한 번만 감소해야 한다.
-
-## 작은 모델을 장애 주장으로 바꾸지 않는 법
-
-로컬 모델은 복제, Raft commit, retry dedup의 상태 전이를 고정 입력으로 확인한다. 실제 network, disk, process scheduler를 재현하지 않으므로 운영 성능 증거가 아니다.
-
-`replication_model.py`에서는 primary 값 10이 replica 두 개에 전달된다고 하자. 한 replica 전달 실패 뒤 retry하면 최종 `[10,10]`이 될 수 있다. 이 결과는 protocol 산술을 보일 뿐 실제 packet loss율이나 복구 시간을 측정하지 않는다.
-
-`raft_commit_model.py`에서 3 node 중 2개가 log index 7을 저장하면 다수결 2를 만족한다. 그러나 application state 적용, client response, leader 교체까지 같은 시각에 끝났다는 뜻은 아니다.
-
-`retry_dedup_model.py`에서 같은 request ID 두 번의 counter 증가가 한 번만 적용되도록 assert할 수 있다. Process memory 집합이면 재시작 내구성은 검증하지 못한다.
-
-장애 시나리오는 다음 다섯 칸으로 쓴다.
-
-1. 정상 시작 상태와 durable state.
-2. 정확한 장애 주입 시점.
-3. 각 주체가 마지막으로 본 message·term·offset.
-4. 복구 뒤 허용되는 결과와 금지되는 결과.
-5. 관측할 log·metric·assert.
-
-예: “응답 유실”은 server 업무 commit 뒤 response 전달 전에 끊는다. “요청 유실”과 결과가 다르므로 timeout 한 단어로 합치지 않는다.
-
-### 완전 해설 문제
-
-1. Assert 통과가 실제 cluster 복구를 증명하는가? **해설:** 아니다. Model에 포함한 상태 전이만 확인한다.
-2. Raft 다수 저장과 client 성공은 같은가? **해설:** Commit, state machine 적용, response 전달 경계가 남는다.
-3. 결정적 모델의 장점은? **해설:** 같은 상태와 event 순서에서 같은 결과를 만들어 regression을 찾기 쉽다.
-
-[← 이전](12-etcd-spark-iceberg-and-storage.md) · [목차](README.md) · [다음 →](14-experiments-and-research-methods.md)
-
-## 모델의 목적
-
-작은 모델은 제품 구현이 아니라 규칙의 결과를 손으로 확인하는 도구다.
-이 책의 [예제](examples/README.md)는 고정된 작은 입력만 사용한다.
-복제 지연, Raft 커밋 판정, 중복 제거 경계를 각각 분리한다.
+`dataclass`는 관련 필드를 이름 붙여 한 객체로 묶는 Python 자료 구조다. 이 예제에서 `Replica(name, value, applied_index)`와 `Entry(index, term, command)`가 실제 상태 객체이며, 객체가 살아 있는 한 필드가 모델 상태를 이룬다. `dict`는 key로 값을 찾는 사전 자료 구조로, retry 모델의 `results[request_id]`가 이미 처리한 요청의 반환값을 기억한다. `return`은 함수가 호출자에게 계산 결과를 돌려주는 제어 지점이고, 그 뒤 문장은 실행되지 않는다. `assert 조건`은 조건이 거짓이면 즉시 `AssertionError`를 내어 그 trace가 기대 불변식을 어겼음을 표시한다. assert 통과는 적어 둔 조건이 이 실행에서 참이라는 뜻이며, 적지 않은 제품 속성까지 증명하지 않는다.
 
 ```mermaid
 flowchart LR
- H[가설] --> M[작은 상태 모델]
- M --> F[장애 주입]
+ H[검토할 주장] --> M[작은 상태 모델]
+ M --> F[정확한 위치에 장애 주입]
  F --> T[시간순 trace]
  T --> A[불변식 assert]
- A --> R[해석과 한계]
+ A --> R[결과와 제외 범위]
 ```
 
-## 장애 시나리오 작성법
+같은 입력이 같은 trace를 내는 결정적 모델은 실패를 재현하고 수정 전후를 비교하기 쉽다. 난수를 쓰면 seed와 생성 규칙을 기록한다. 다만 seed는 실패 trace의 재현 주소이지 정확성 증거가 아니다. 논리 tick 5, 20, 25도 사건 순서일 뿐 실제 밀리초가 아니다.
 
-먼저 정상 상태를 적는다.
-그다음 입력과 주체를 적는다.
-중간 상태를 노드별로 적는다.
-정확한 한 지점에 메시지 유실, 지연, 재시작을 넣는다.
-마지막으로 기대 불변식을 적는다.
+세 예제는 Python 표준 라이브러리만 쓰는 교육용 모델이다. 실제 socket, 디스크, 프로세스 scheduler와 전체 Raft를 구현하지 않는다. 그러므로 결론은 “이 입력에서 이 상태 전이와 assert가 통과했다”까지로 제한한다.
 
-예: R9 요청이 서버에서 커밋됐지만 응답만 유실된다.
-클라이언트는 같은 R9로 재시도한다.
-서버의 영속 dedup table에는 R9 결과가 있다.
-잔액은 한 번만 바뀌고 같은 결과가 돌아와야 한다.
-assert balance == 900과 assert executions == 1을 둔다.
+## `replication_model.py`: 복제 전 stale read
 
-## 결정적 모델
+실제 객체 `Replica`는 `name`, `value=1`, `applied_index=0`으로 시작한다. `apply(index, value)`는 새 index가 `applied_index+1`일 때만 value와 index를 바꾼다. 입력은 leader 쓰기, follower 읽기, follower 복제, 두 번째 읽기의 네 사건이다.
 
-결정적 모델은 같은 입력에 같은 trace를 낸다.
-난수를 쓰면 seed와 생성 규칙을 기록한다.
-논리 tick 1,2,3을 쓰면 실제 ms 성능으로 해석하지 않는다.
-상태 공간을 줄이면 제외한 조건을 문서화한다.
-
-## 세 모델
-
-`replication_model.py`는 비동기 팔로워가 오래된 읽기를 내는 상황을 보인다.
-`raft_commit_model.py`는 현재 term 과반수 규칙을 검사한다.
-`retry_dedup_model.py`는 응답 유실 뒤 같은 ID 재시도를 검사한다.
-모두 Python 표준 라이브러리만 쓰는 교육용 toy다.
-실제 네트워크, 디스크, 전체 Raft를 구현하지 않는다.
-
-## 반례
-
-단위 모델 assert 통과는 실제 제품 정확성 증명이 아니다.
-모델에서 제외한 디스크 write reorder나 동시성 오류가 제품에 있을 수 있다.
-벽시계 sleep 기반 시험은 느린 머신에서 불안정해질 수 있다.
-
-## 문제와 해설
-
-### 1. 실패를 어디에 넣는가?
-불변식 의미가 달라지는 구체 경계, 예를 들어 커밋 후 응답 전에 넣는다.
-
-### 2. 고정 입력의 장점은?
-trace 재현과 원인 비교가 쉽다.
-
-### 3. 모델 한계를 왜 쓰는가?
-독자가 교육 결과를 제품 보장으로 일반화하지 않게 한다.
-
-## 공식 자료
-
-- [TLA+](https://lamport.azurewebsites.net/tla/tla.html)
-- [Jepsen](https://jepsen.io/)
-
-
-
-## 실제 Python 객체의 뜻과 수명
-
-**모델**은 실제 시스템에서 검토할 규칙만 Python 상태 전이로 줄인 실행 객체다. 파일의 dataclass, dict, event list와 함수가 실제 대상이며 한 프로세스 실행 동안 산다. **입력**은 events, logs와 debit 인자, **상태**는 value·applied_index·log·balance·executions·results, **출력**은 reads·commit_index·반환값과 print다. **불변식**은 모든 허용 실행에서 지켜야 할 조건이며 이 예제에서는 assert가 검사한다. 실제 socket이나 디스크를 재현하지 않고도 잘못된 규칙의 작은 반례를 찾기 위해 필요하다.
-
-## replication_model.py 전체 실행
-
-Replica는 name, value=1, applied_index=0으로 시작한다. apply는 새 index가 applied_index+1일 때만 value와 index를 바꾼다.
-
-| tick | 입력 | 전 상태 | 조건/분기 | 후 상태 | 관측 |
+| tick | 입력 | 전 상태 | 조건·분기 | 후 상태 | 관측 |
 |---:|---|---|---|---|---|
-| 시작 | 없음 | L=(1,0), F=(1,0) | - | 동일 | reads=[] |
-| 0 | write,L,1,2 | L=(1,0) | 1=0+1 | L=(2,1) | 없음 |
-| 5 | read,F | F=(1,0) | read | 변화 없음 | (5,1,0) |
-| 20 | replicate,F,1,2 | F=(1,0) | 1=0+1 | F=(2,1) | 없음 |
-| 25 | read,F | F=(2,1) | read | 변화 없음 | (25,2,1) |
+| 시작 | 없음 | L=(1,0), F=(1,0) | - | 동일 | `reads=[]` |
+| 0 | `write,L,1,2` | L=(1,0) | `1=0+1` | L=(2,1) | 없음 |
+| 5 | `read,F` | F=(1,0) | read | 변화 없음 | `(5,1,0)` |
+| 20 | `replicate,F,1,2` | F=(1,0) | `1=0+1` | F=(2,1) | 없음 |
+| 25 | `read,F` | F=(2,1) | read | 변화 없음 | `(25,2,1)` |
 
-첫 assert는 reads가 [(5,1,0),(25,2,1)]인지 확인한다. 둘째는 leader.value와 follower.value가 모두 2인지 확인한다. 출력은 두 reads와 converged:2다. 복제 전 follower 읽기는 낡고, replicate 뒤 수렴한다는 두 주장만 검사한다.
+첫 assert는 `reads == [(5,1,0),(25,2,1)]`, 둘째는 leader와 follower의 값이 모두 2인지 검사한다. 출력은 두 read와 `converged:2`다. 이 모델이 계산하는 주장은 복제 전 follower 읽기는 오래될 수 있고, 복제 뒤에는 이 입력에서 수렴한다는 두 가지다.
 
-생략 범위도 코드에서 읽어야 한다. index2가 먼저 오면 조용히 무시하며 buffer·재요청이 없다. term, 선거, WAL, fsync, concurrent thread와 restart가 없다. tick 5·20·25는 실제 ms가 아니라 순서다. tick20 사건을 삭제하면 두 번째 read가 (25,1,0)이 되어 두 assert가 실패한다. tick30에 같은 index1 replicate를 넣으면 다시 수렴하지만 내구성을 증명하지 않는다.
+전이를 코드 제어로 따라가면 첫 `write` 사건은 leader의 `apply(1,2)`를 호출한다. 조건 `index == applied_index + 1`은 `1 == 0+1`이라 참이므로 두 필드를 함께 `(2,1)`로 바꾼다. tick 5의 `read`는 follower 객체의 현재 필드를 tuple로 append할 뿐 상태를 바꾸지 않아 `(5,1,0)`을 남긴다. tick 20의 `replicate`가 같은 entry를 follower의 `apply`에 입력해 조건을 통과시키고, tick 25 read가 `(25,2,1)`을 반환한다. 실패 조건은 읽기 tuple 하나라도 다르거나 최종 두 value 중 하나가 2가 아닌 경우다. 따라서 중간 stale 관측과 최종 수렴을 서로 다른 assert로 잡는다.
 
-## raft_commit_model.py 전체 실행
+모델의 경계도 구체적이다. index 2가 먼저 오면 `2 == 0+1`이 거짓이라 조용히 무시하며 buffer나 gap 재요청은 없다. term, 선거, WAL(write-ahead log, 적용 전 기록하는 내구 로그), fsync, 동시 thread와 restart도 없다. tick 20 사건을 지우면 reads는 `[(5,1,0),(25,1,0)]`이 되고 수렴 assert도 실패한다. 같은 index 1을 tick 30에 다시 보내도 값은 수렴하지만 내구성을 증명하지 않는다.
 
-Entry는 immutable한 index, term, command다. A와 B log에는 (1,term2,x=1),(2,term4,y=1), C에는 index1만 있다. current_term=4, node3이므로 majority=3//2+1=2다.
+## `raft_commit_model.py`: 현재 term의 과반수
 
-함수는 후보 index 집합 {1,2}를 내림차순 [2,1]로 돈다. index2이면서 term4인 사본은 A와 B 두 개다. copies=2가 majority2 이상이므로 commit_index=2를 즉시 반환한다. A log에서 index<=2인 prefix는 x=1,y=1이다.
+`Entry`는 바뀌지 않는 `index`, `term`, `command`를 가진다. A와 B의 log에는 `(1,term2,x=1)`, `(2,term4,y=1)`이 있고 C에는 index 1만 있다. `current_term=4`, node 수가 3이므로 majority는 `3//2+1=2`다.
+
+함수는 후보 index `{1,2}`를 `[2,1]` 순서로 검사한다. index 2이면서 term 4인 사본은 A와 B에 있으므로 `copies=2`가 majority를 만족해 `commit_index=2`를 반환한다. A log에서 index 2 이하인 prefix의 command는 `x=1, y=1`이다.
 
 | 검사 | A | B | C | copies | 판정 |
 |---|---|---|---|---:|---|
-| index2,term4 | 있음 | 있음 | 없음 | 2 | commit index2 |
-| index1,term4 | 실행 안 함 | 실행 안 함 | 실행 안 함 | - | prefix로 포함 |
+| index2, term4 | 있음 | 있음 | 없음 | 2 | commit index2 |
+| index1, term4 | 검사 종료로 생략 | 생략 | 생략 | - | prefix로 간접 포함 |
 
-assert는 commit_index==2, command 목록 두 개, prefix 첫 항목 term2<current_term4를 검사한다. 과거 term2 항목은 현재 term4 index2가 commit될 때 prefix로 간접 commit된다는 모형이다.
+assert는 `commit_index==2`, command 목록 두 개, prefix 첫 항목의 term 2가 current term 4보다 작다는 사실을 검사한다. 과거 term 2 항목은 현재 term 4의 index 2가 commit될 때 prefix로 포함되는 모형이다.
 
-선거·RequestVote·AppendEntries·충돌 rollback·leader 여부·lastApplied·client 응답은 없다. A log를 권위 prefix로 쓰는 입력 가정도 있다. A와 B에 term2 index1만 있고 current_term4라면 term4 copies=0이라 결과 0이다. term2가 과반수라는 이유만으로 직접 commit하지 않는다.
+함수 입력은 세 node의 log와 `current_term=4`다. 후보 index 2를 볼 때 각 log에 `index==2 and term==4`인 entry가 있는지 세어 A와 B에서 2를 얻는다. `copies >= majority`가 참이 되는 첫 후보에서 `return 2`가 실행되므로 index 1 검사로 내려가지 않는다. 이후 caller가 A log에서 `index <= commit_index`인 prefix를 골라 command 목록을 만든다. `return 2`는 상태 기계가 두 command를 적용했거나 client가 응답을 받았다는 뜻이 아니라 이 입력에서 commit index 산술이 2라는 출력일 뿐이다. A나 B 중 term 4 entry 하나를 제거하면 copies는 1이라 첫 분기가 실패하고, term 4 과반수가 다른 index에도 없으면 최종 반환은 0이다.
 
-## retry_dedup_model.py 전체 실행
+선거, RequestVote, AppendEntries, 충돌 rollback, leader 자격, `lastApplied`, 상태 기계 적용과 client 응답은 없다. A log를 권위 prefix로 쓰는 입력 가정도 있다. A와 B에 term 2의 index 1만 있고 current term이 4이면 term 4 사본은 0개이므로 결과는 0이다. 과거 term 항목이 과반수에 있다는 이유만으로 직접 commit하지 않는다.
 
-AccountService 초기값은 balance=1000, executions=0, results={}다. 첫 debit(R42,100)은 ID 없음, 100<=1000 조건을 통과해 balance900, executions1, results={R42:900}을 만들고 900을 반환한다. 응답 유실을 가정한 같은 호출은 ID 존재 분기에서 상태를 바꾸지 않고 900을 반환한다.
+같은 index에 충돌 log를 넣으려면 `prevLogTerm` 검사와 전이를 먼저 모델링해야 한다. 현재 함수의 단순 `any` 검사에 전제 밖 입력을 넣으면 실제 Raft보다 강한 잘못된 결론을 낼 수 있다.
+
+## `retry_dedup_model.py`: 응답 유실 뒤 같은 ID 재시도
+
+`AccountService`의 초기 상태는 `balance=1000`, `executions=0`, `results={}`다. 첫 `debit(R42,100)`은 ID가 없고 잔액이 충분한 분기를 지나 balance를 900, executions를 1, results를 `{R42:900}`으로 바꾸고 900을 반환한다. 응답이 유실되었다고 가정해 같은 호출을 다시 하면 ID 존재 분기에서 상태를 바꾸지 않고 900을 반환한다.
 
 | 호출 | 전 상태 | 분기 | 후 상태 | 반환 |
 |---|---|---|---|---:|
-| 첫 R42,100 | 1000,0,{} | 새 ID·잔액 충분 | 900,1,{R42:900} | 900 |
-| 재시도 R42,100 | 900,1,{R42:900} | ID 존재 | 동일 | 900 |
+| 첫 `R42,100` | `1000,0,{}` | 새 ID·잔액 충분 | `900,1,{R42:900}` | 900 |
+| 재시도 `R42,100` | `900,1,{R42:900}` | ID 존재 | 동일 | 900 |
 
-assert 네 개는 두 반환값 900, balance900, executions1, results dict를 확인한다. print는 balance:900, executions:1이다. 같은 입력의 재시도 효과가 한 번이라는 규칙을 보인다.
+네 assert는 두 반환값이 900인지, balance가 900인지, executions가 1인지, results dict가 기대와 같은지 검사한다. print는 `balance:900`, `executions:1`이다. 최종 balance만 보면 두 번 차감한 뒤 보상하는 잘못된 경로도 통과할 수 있어 실행 횟수와 결과표를 함께 검사한다.
 
-같은 R42로 amount500을 보내도 payload 비교 없이 900을 반환한다. process restart면 dict가 사라진다. 두 thread가 동시에 ID 없음 분기를 통과하는 race, DB transaction, 외부 결제, TTL이 없다. 실제 dedup은 ID와 payload hash를 영속 transaction에 저장해야 한다.
+첫 호출의 제어 흐름은 `request_id in results`가 거짓인지 확인하고, `amount <= balance`가 참인지 검사한 뒤 balance를 한 번 줄인다. executions를 증가시키고 새 balance를 results에 저장한 다음 `return 900`을 실행한다. 두 번째 호출은 첫 조건이 참이므로 `return results[R42]`에서 곧바로 끝나고 차감 분기에는 들어가지 않는다. 따라서 반환값이 같다는 사실뿐 아니라 후 상태가 바뀌지 않았다는 사실이 중복 제거의 핵심이다. 잔액보다 큰 amount를 처음 넣었을 때 어떤 오류를 반환하는지는 해당 코드 분기를 그대로 보고해야 하며, 성공 trace에서 임의로 추론하면 안 된다.
 
-## 장애 위치를 경계로 쓴다
+이 dict는 프로세스 메모리에만 있다. 같은 R42로 amount 500을 보내도 payload 비교 없이 기존 900을 반환하며, process restart면 results가 사라진다. 두 thread가 동시에 ID 없음 분기를 통과하는 race, DB transaction, 외부 결제와 TTL도 없다. 실제 중복 제거는 request ID와 payload hash를 영속 transaction에 함께 저장해야 한다.
 
-| 이름 | 주입 위치 | 남은 상태 가정 | 기대 복구 |
-|---|---|---|---|
-| 요청 유실 | 함수 호출 전 | 변화 없음 | 같은 ID 새 실행 |
-| commit 전 crash | 원자 commit 전 | rollback | 새 실행 |
-| 응답 유실 | balance+result commit 뒤 | 효과 남음 | 기존 결과 반환 |
-| 복제 전 read | leader apply 뒤 follower 전 | follower old | 계약에 따라 stale 허용 |
-| current-term 복제 전 | index2 한 노드만 | 과반수 아님 | 성공 응답 금지 |
-| apply 뒤 응답 전 | commit·업무 효과 뒤 | 결과 남음 | 조회·dedup |
+## 세 모델을 요청 R42의 경계로 연결하기
 
-“중간 crash”라는 한 줄은 부족하다. 요청 전인지 commit 후인지에 따라 허용 결과가 반대다. 논리 tick, 마지막 durable 상태와 응답 전달 여부를 따로 적는다.
-
-## 모델 확장 원칙과 한계
-
-제품 검사기를 구현해 분량을 늘리지 않는다. 한 주장에 필요한 최소 상태를 더한다. gap 적용을 보려면 index2 먼저, index1, index2 재전송의 세 사건이면 된다. 실제 TCP는 필요 없다. random trace를 쓰면 seed와 생성 범위, 실패 trace를 기록한다. seed는 재현 주소이지 정확성 증거가 아니다.
-
-assert가 통과해도 모델 밖의 오류는 남는다. Python dict는 fsync하지 않고 process crash를 견디지 않는다. 사건 loop는 thread interleaving이 없다. 메모리 쓰기 순서와 디스크 reorder도 없다. 결과 문장은 “이 고정 입력에서 이 assert가 통과했다”로 제한한다.
-
-## 추가 완전 풀이
-
-### 문제 6. replication 모델에서 tick20을 없애면?
-
-**풀이:** reads는 [(5,1,0),(25,1,0)]이 되어 기대 assert와 다르고 leader2, follower1이라 수렴 assert도 실패한다. 복제 사건 없이는 follower가 자동 갱신되지 않는다.
-
-### 문제 7. follower에 index2를 먼저 적용하면?
-
-**풀이:** 초기 applied_index0이므로 2==1 조건이 거짓이고 변화가 없다. 실제 protocol의 gap 요청이나 buffer는 이 모델에 없다.
-
-### 문제 8. A와 B에 term2 index1만 있고 current_term4라면?
-
-**풀이:** index1의 term4 copies는 0이라 commit_index0이다. 과거 term 항목의 과반수 존재만으로 직접 commit하지 않는 규칙이다.
-
-### 문제 9. R42,500을 재호출하면?
-
-**풀이:** 기존 ID 분기에서 900을 반환해 입력 불일치를 숨긴다. 실제 시스템은 payload hash를 비교해 충돌로 거부해야 한다.
-
-### 문제 10. assert 통과가 전원 장애 안전을 뜻하는가?
-
-**풀이:** 아니다. 모델은 process memory만 쓴다. WAL, fsync, restart load를 표현하지 않는다.
-
-### 문제 11. tick25를 25ms라고 보고해도 되는가?
-
-**풀이:** 안 된다. sleep이나 clock 측정이 없으며 tick은 사건 순서다. 실제 latency는 별도 실험으로 측정한다.
-
-### 문제 12. seed42에서 실패가 없으면 안전한가?
-
-**풀이:** 한 trace에 반례가 없다는 뜻이다. 경계값과 여러 생성 범위를 탐색하고 발견한 최소 반례를 고정 회귀 사례로 남긴다.
-
-
-
-## 세 모델을 하나의 요청으로 연결하기
-
-클라이언트 R42가 100 차감을 보냈다고 가정한다. leader는 명령을 term4 index2에 넣고 A·B에 복제한다. raft 모델은 index2 commit을 계산한다. 상태 기계가 debit을 실행해 balance900과 results R42=900을 만든다. 응답이 유실되면 retry 모델은 같은 ID 결과를 반환한다. follower C가 아직 index1이면 replication 모델처럼 오래된 읽기를 줄 수 있다.
+클라이언트가 R42로 100 차감을 보낸다고 하자. leader는 명령을 term 4, index 2에 넣고 A와 B에 복제한다. Raft 모델은 현재 term 항목의 과반수를 보고 index 2 commit을 계산한다. 상태 기계가 debit을 적용해 balance 900과 `results[R42]=900`을 만든다. 응답이 유실되면 retry 모델처럼 같은 ID의 기존 결과를 반환해야 한다. follower C가 아직 index 1까지만 적용했다면 replication 모델처럼 오래된 읽기를 줄 수 있다.
 
 | 경계 | 권위 상태 | 아직 보장하지 않는 것 |
 |---|---|---|
 | A에 index2 append | leader log | quorum commit |
-| A·B에 term4 index2 | commit_index2 가능 | state apply |
+| A·B에 term4 index2 | commit_index2 가능 | state machine apply |
 | debit apply | balance900, result 저장 | client response 전달 |
 | response 유실 | 내부 성공 | client 관측 |
-| R42 retry | 기존900 반환 | 다른 ID 중복 방지 |
-| C 적용 전 read | C의 old state | 최신 읽기 |
+| R42 retry | 기존900 반환 | 다른 ID의 중복 방지 |
+| C 적용 전 read | C의 옛 상태 | 최신 읽기 |
 
-이 연결은 각 모델의 출력이 다음 모델 입력이 될 수 있음을 보여 주지만 실제 코드 세 파일이 함께 실행되는 것은 아니다. Raft 모델의 command 문자열 y=1과 retry 모델 debit 사이 변환도 구현돼 있지 않다. 따라서 “세 assert가 각각 통과했으니 전체 서비스가 원자적”이라고 결론 내리면 안 된다.
+세 Python 파일이 실제로 연결 실행되는 것은 아니다. Raft 모델의 `y=1` command를 debit으로 바꾸는 계층도 구현되어 있지 않다. 세 assert가 각각 통과했다는 사실로 전체 서비스의 원자성을 주장할 수 없다.
 
-## 상태 공간과 반례 선택
+## 장애는 위치와 내구 상태로 쓴다
 
-replication 모델의 두 replica와 네 사건은 가능한 실제 실행 중 하나만 고른다. 사건을 순열로 바꾸면 read가 replicate 뒤 올 수도 있고 두 번 모두 앞에 올 수도 있다. 모델이 허용하는 순서를 먼저 정의하고, 같은 tick의 tie-break 규칙도 정한다. 그렇지 않으면 우연한 list 순서가 protocol 규칙처럼 보인다.
+“중간에 crash”나 “timeout”만 적으면 허용 결과를 결정할 수 없다. 정상 시작 상태, 정확한 주입 위치, 각 주체가 마지막으로 본 message·term·offset, 복구 뒤 허용·금지 결과, 확인할 log·metric·assert를 기록한다.
 
-Raft 모델은 각 node가 같은 index에 하나의 entry만 가진다고 가정한다. 충돌 반례를 보려면 B index2 term3 z=9, leader A index2 term4 y=1 같은 상태와 prevLogTerm 검사를 모델에 추가해야 한다. 단순 committed_index 함수에 충돌 log를 넣으면 any 검사만 통과해 실제 Raft보다 잘못된 결론을 낼 수 있다. 모델 전제에 맞지 않는 입력은 전이를 보강한 뒤 사용한다.
+| 이름 | 주입 위치 | 남은 상태 가정 | 기대 복구 |
+|---|---|---|---|
+| 요청 유실 | 함수 호출 전 | 변화 없음 | 같은 ID로 새 실행 |
+| commit 전 crash | 원자 commit 전 | rollback | 새 실행 |
+| 응답 유실 | balance와 result commit 뒤 | 효과 남음 | 기존 결과 반환 |
+| 복제 전 read | leader apply 뒤 follower apply 전 | follower old | 읽기 계약에 따라 stale 허용 |
+| current-term 복제 전 | index2가 한 노드에만 있음 | 과반수 아님 | 성공 응답 금지 |
+| apply 뒤 응답 전 | commit·업무 효과 완료 | 결과 남음 | 조회나 dedup으로 확인 |
 
-retry 모델은 순차 호출만 있다. 동시성 반례는 두 호출이 ID 검사, balance 변경, results 기록의 어느 단계에서 교차하는지 사건으로 분해해야 한다. 고유 키와 DB transaction을 추가하지 않은 채 thread 두 개만 돌리면 스케줄에 따라 비결정적이고 원인 설명이 약해진다.
-
-## crash와 durable state를 분리한 종이 모델
-
-실제 코드를 바꾸지 않고도 durable 열을 표에 추가할 수 있다. 첫 R42 처리에서 메모리 balance를 900으로 만든 뒤 durable commit 전 crash하면 복구 balance1000, results{}다. durable transaction 뒤 response 전 crash면 복구 balance900, results{R42:900}다. 이 두 상태를 섞으면 재시도 기대를 정할 수 없다.
+Python 예제에는 durable 저장소가 없지만, 코드 결과와 구분한 사고 실험으로 다음 표를 쓸 수 있다.
 
 | 단계 | memory | durable | response | restart 후 |
 |---|---|---|---|---|
-| 시작 | 1000,{} | 1000,{} | 없음 | 1000,{} |
-| 계산 | 900,{R42:900} | 1000,{} | 없음 | crash면 1000 |
-| 원자 commit | 900,{R42:900} | 900,{R42:900} | 없음 | crash면 900 |
+| 시작 | `1000,{}` | `1000,{}` | 없음 | `1000,{}` |
+| 계산 | `900,{R42:900}` | `1000,{}` | 없음 | crash면 1000 |
+| 원자 commit | `900,{R42:900}` | `900,{R42:900}` | 없음 | crash면 900 |
 | response send | 동일 | 동일 | 유실 가능 | retry는 900 |
 
-Python 예제에는 durable 열이 실제로 없으므로 이 표는 확장 가정이다. 문서에서 코드 실행 결과와 사고 실험을 구분해 표시한다.
+commit 전 crash와 commit 뒤 응답 유실은 클라이언트에서 모두 timeout처럼 보일 수 있지만 복구 상태는 반대다. timeout을 한 종류로 합치면 재시도 규칙을 정할 수 없다.
 
-## assert 설계의 양방향 검사
+## 모델이 실제로 검증하지 않는 경계
 
-최종 balance900만 검사하면 두 번 100 차감한 뒤 100을 보상해도 통과할 수 있다. executions==1과 results dict를 함께 검사해 경로를 제한한다. replication도 최종 값2만 보면 follower가 처음부터2였던 잘못된 초기화가 통과할 수 있어 중간 reads를 검사한다. Raft도 commit_index2만 보면 잘못된 command가 들어갈 수 있어 prefix command 목록과 과거 term 조건을 확인한다.
+| 모델이 확인하는 것 | 모델이 확인하지 않는 것 |
+|---|---|
+| 고정 사건의 상태 계산 | 실제 socket 유실과 재정렬 |
+| follower 적용 전후의 두 read | 전체 복제 protocol과 장애 복구 시간 |
+| 현재 term 과반수 산술 | 선거, 상태 적용, client ack |
+| 순차 호출의 중복 ID 분기 | 재시작 내구성, 동시 race, DB transaction |
+| assert로 표현한 불변식 | 처리량, 보안과 제품 전체 정확성 |
 
-assert는 구현을 그대로 반복하는 상수 비교가 아니라 독립 불변식에 가까워야 한다. 그래도 같은 잘못된 가정을 코드와 assert가 공유할 수 있다. 표로 손 계산한 기대, 작은 반례와 코드 출력을 대조한다.
+사건 순열을 허용한다면 가능한 순서와 같은 tick의 tie-break 규칙을 정의한다. 그렇지 않으면 Python list 순서가 protocol 규칙처럼 보인다. 동시성 반례도 단순히 thread 두 개를 띄우기보다 ID 검사, balance 변경, results 기록을 사건으로 분해하고 고유 키·transaction의 역할을 모델링해야 한다.
 
-## 추가 풀이
+random trace를 쓰면 seed, 생성 범위와 실패 trace를 저장한다. 한 seed에서 반례가 없다는 것은 그 trace에서 발견하지 못했다는 뜻뿐이다. 최소 반례를 찾으면 고정 회귀 입력으로 남긴다.
 
-### 문제 13. 최종 follower 값만 2이면 stale read 모델이 검증됐는가?
+## 통합 문제와 해설
 
-**풀이:** 아니다. 중간 tick5 read가 1이었는지 확인해야 복제 전 stale 관측을 검증한다. 최종 수렴 assert와 중간 history assert는 서로 다른 주장이다.
+### 1. replication 모델에서 tick 20을 없애면?
 
-### 문제 14. commit_index2 뒤 바로 client 성공을 출력해도 되는가?
+입력 사건 목록에서 유일한 follower `apply`를 제거한 것이므로 tick 25에도 follower 상태는 `(1,0)`이다. reads는 `[(5,1,0),(25,1,0)]`이고 leader는 `(2,1)`, follower는 `(1,0)`이다. 첫 assert는 두 번째 tuple이 다르고, 수렴 assert도 value가 달라 실패한다. “시간이 25까지 지났으니 결국 복제된다”는 결론은 tick을 실제 시간과 혼동한 것이다. tick 30에 replicate 사건을 명시적으로 추가하면 그 뒤 read부터 2를 볼 수 있지만, 사건 없이 시간 숫자만 키워서는 상태가 바뀌지 않는다.
 
-**풀이:** 모델에는 state machine apply와 response 전송이 없다. commit, apply, client ack 경계를 추가하기 전에는 성공 시점을 주장할 수 없다.
+### 2. follower에 index 2를 먼저 적용하면?
 
-### 문제 15. retry 모델을 재시작해도 executions1인가?
+`apply(2,value)`의 조건은 `2 == applied_index+1`, 즉 `2==1`이어서 거짓이다. 함수는 필드를 바꾸지 않고 끝나므로 후 상태도 `(1,0)`이다. “더 최신 index니까 바로 2가 된다”는 해석은 연속 적용 조건을 무시한다. 이후 index 1을 적용하면 `(value1,1)`이 되지만, 앞서 버린 index 2는 자동 재생되지 않는다. index 2를 다시 보내는 세 번째 사건이 있어야 `(value2,2)`가 된다. 실제 protocol이 out-of-order entry를 buffer하거나 gap을 요청하는지는 이 모델에 없으므로 그 동작을 주장하려면 상태와 사건을 추가해야 한다.
 
-**풀이:** 새 AccountService는 초기값으로 돌아가 results를 잃는다. 영속 DB에서 balance와 result를 원자 복원하는 코드를 넣지 않았으므로 재시작 내구성은 검증 밖이다.
+### 3. 최종 follower 값만 2이면 stale read를 검증한 것인가?
 
-또한 예제 실행은 Python 표준 라이브러리만 사용하지만 이 문서에서는 명령 실행 결과를 새로 측정하지 않았다. 출력은 소스의 결정적 전이를 손으로 전수 계산한 값이다. 코드가 바뀌면 입력 목록, assert와 이 설명을 함께 다시 검증해야 한다. 모델 파일의 docstring처럼 세 예제는 교육용이며 실제 저장소·Raft·결제 구현이 아니다.
+아니다. 최종값만 검사하면 follower가 시작부터 2로 잘못 초기화된 구현도 통과할 수 있다. 이 모델의 첫 주장은 tick 5에서 leader는 2지만 follower read는 `(1,0)`이라는 stale 관측이고, 둘째 주장은 replicate 뒤 둘 다 2라는 수렴이다. 그래서 reads 전체와 최종 value를 따로 assert한다. stale read를 허용하지 않는 선형화 읽기 모델로 조건을 바꾸면 기대 history부터 바뀌어야 하며 단순히 최종 assert만 유지해서는 읽기 계약을 검증할 수 없다.
 
-특히 실제 클러스터의 처리량, 장애 확률과 복구 시간은 이 세 파일에서 관측하지 않았으므로 어떤 숫자도 운영 성능으로 인용하지 않는다.
+### 4. A와 B에 term2 index1만 있고 current term4라면?
 
-제외한 조건은 실패가 아니라 모델 적용 범위의 경계다.
+함수는 후보 index의 entry가 `current_term`과 같은 사본만 센다. A와 B에 index 1, term 2가 있어도 `term==4` 조건을 만족하는 사본은 0이므로 majority 2에 못 미치고 0을 반환한다. “두 노드에 있으니 commit 1”이라는 결론은 과반수와 현재 term 조건 중 앞부분만 적용한 것이다. 이후 term 4의 index 2가 A와 B에 복제되면 함수는 2를 반환하고 term 2의 index 1은 그 prefix에 포함될 수 있다.
 
-## 보고 양식
+### 5. commit_index 2 뒤 바로 client 성공을 출력해도 되는가?
 
-초기 객체, 입력 전체 순서, 각 전이 후 상태, 최종 출력, assert와 제외 범위를 함께 기록한다. 가상 숫자는 실행 규칙 설명이며 제품 성능 결과가 아니다.
+`return 2`가 알려 주는 것은 현재 term 사본을 센 결과뿐이다. log commit 뒤 상태 기계가 `x=1,y=1`을 적용하는 사건, 결과를 durable dedup 표에 기록하는 사건, response를 client에 보내는 사건은 객체와 함수에 없다. 따라서 즉시 성공을 출력하면 모델에 없는 전이를 실행한 셈이다. 이 주장을 검증하려면 `commit_index`, `last_applied`, `response_sent`처럼 상태를 분리하고 crash를 각 경계에 넣어야 한다. 적용 뒤 응답 전 crash라면 재시도는 기존 결과를 찾아야 한다.
 
+### 6. R42를 amount 500으로 다시 호출하면?
+
+첫 호출 뒤 dict의 key는 R42이고 value는 900뿐이며 원래 amount 100은 저장하지 않는다. 두 번째 `debit(R42,500)`은 ID 존재 조건에서 곧바로 900을 반환하므로 500 요청을 실행하지도, 불일치로 알리지도 않는다. “잔액이 안전하니 올바르다”는 결론은 중복 ID 재사용 오류를 놓친다. 실제 경계를 모델링하려면 results 값에 payload hash와 반환값을 함께 저장하고, 같은 ID·같은 payload는 기존 결과를, 같은 ID·다른 payload는 충돌 오류를 반환하도록 해야 한다.
+
+### 7. retry 모델을 재시작해도 `executions==1`인가?
+
+프로세스를 새로 만들면 constructor 입력에 따라 `balance=1000`, `executions=0`, `results={}`로 돌아간다. 첫 실행의 900과 R42가 파일이나 DB에 쓰인 적이 없으므로 재시도는 새 요청 분기로 들어가 executions가 다시 1이 된다. 실제 세계에서 잔액만 별도 저장되고 results만 사라지면 900에서 다시 100을 빼 800이 되는 더 위험한 상태도 가능하다. balance와 request 결과를 같은 영속 transaction으로 commit하고 restart 때 함께 load하는 전이를 추가해야 재시작 후 exactly-once 성질을 시험할 수 있다.
+
+### 8. tick 25를 25ms라고 보고하거나 assert 통과를 전원 장애 안전이라고 말해도 되는가?
+
+tick 25는 event tuple의 정렬용 숫자이며 clock 읽기나 sleep이 없으므로 25ms 지연을 측정하지 않는다. dict 변경도 Python 프로세스 메모리 안에서만 일어나 WAL 기록이나 fsync 성공을 기다리지 않는다. 따라서 빠르다는 결론과 전원 장애 뒤 남는다는 결론 모두 모델 출력 범위를 벗어난다. 실제 latency는 clock과 반복 실험으로, 내구성은 durable commit과 restart load를 넣은 장애 시험으로 따로 검증한다.
+
+### 9. seed 42에서 실패가 없으면 안전한가?
+
+seed 42는 난수 생성기가 만든 한 사건 순서를 다시 얻는 입력이다. 그 순서에 race가 없었다고 다른 순서에도 없다고 일반화할 수 없다. seed 범위, 사건 수와 장애 생성 규칙을 기록하고 여러 경계 timing을 탐색한다. 실패가 나오면 긴 trace를 줄여 최소 반례로 만들고 고정 회귀 입력으로 남긴다. 생성 규칙 자체가 commit 뒤 응답 전 crash를 만들지 않는다면 seed를 아무리 늘려도 그 경계는 검사되지 않는다.
+
+### 10. 출력 상수를 그대로 assert하면 충분한가?
+
+예를 들어 코드가 결과를 계산하지 않고 항상 900을 반환하며 assert도 반환값 900만 검사하면 오류가 통과한다. 독립 기대는 첫 차감 뒤 balance 900, executions 1, results의 정확한 key·value, 재시도 뒤 무변화처럼 여러 관측으로 구성한다. replication에서도 최종 2뿐 아니라 중간 read를, Raft에서도 commit index뿐 아니라 prefix command와 term 조건을 검사한다. 그래도 코드와 assert가 같은 가정을 공유할 수 있으므로 표로 손 계산한 각 전이와 작은 실패 입력을 함께 대조하고, 모델에서 제외한 범위를 결론 바로 옆에 적는다.
+
+## 보고 양식과 자료
+
+보고서에는 초기 객체, 입력 전체 순서, 각 전이 뒤 상태, 실제 반환값과 print, assert, 제외 범위를 함께 적는다. 이 문서의 출력은 소스의 결정적 전이를 손으로 계산한 값이며 새 실행 측정치가 아니다. 코드가 바뀌면 입력, assert와 설명도 함께 다시 검증한다.
+
+- [예제 안내](examples/README.md)
+- [TLA+](https://lamport.azurewebsites.net/tla/tla.html)
+- [Jepsen](https://jepsen.io/)
 
 [← 이전](12-etcd-spark-iceberg-and-storage.md) · [목차](README.md) · [다음 →](14-experiments-and-research-methods.md)
