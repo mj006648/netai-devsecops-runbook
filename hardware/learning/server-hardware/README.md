@@ -10,7 +10,9 @@
 
 *그림 1. 서버는 부품 목록이 아니라 여러 데이터 경로의 결합이다. 실선은 주 데이터 경로, 점선은 관리·관측 경로를 뜻한다.*
 
-[다섯 교재 통합 학습 순서](../../../learning/README.md) · [하드웨어 실물 사진 길잡이](../../../learning/HARDWARE-GALLERY.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
+[전체 교재 통합 학습 순서](../../../learning/README.md) · [하드웨어 실물 사진 길잡이](../../../learning/HARDWARE-GALLERY.md) · [운영체제·커널](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF](../../../kubernetes/networking/networking-foundations/README.md) · [파일·데이터 시스템](../../../kubernetes/storage/data-systems-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
+
+명령이 CPU 내부에서 겹쳐 실행되고 캐시·메모리 순서를 만나는 과정을 더 자세히 배우려면 [컴퓨터 구조 심화](../../../learning/computer-architecture/README.md)로 이어간다. GPU의 스레드별 주소·공유 메모리·동기화·행렬 타일 계산은 [GPU 병렬 프로그래밍](../../../learning/gpu-programming/README.md)에서 다룬다.
 
 처음에는 정확한 이름을 외우기보다 **왜 필요한가 → 실제로 무엇이 움직이는가 → 숫자로 계산할 수 있는가 → 어느 조건에서 설명이 달라지는가** 순서로 읽는다. 고급 제품 사양과 A7 사례는 기본 원리를 배운 뒤 확인한다.
 

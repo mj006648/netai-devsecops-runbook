@@ -2,25 +2,31 @@
 
 처음에는 컴퓨터 한 대에서 **누가 계산하고, 어디에 저장하고, 어떻게 다른 컴퓨터로 보내는지**부터 배운다. 그 뒤에 여러 프로그램과 서버가 자원을 나누고, 고장이 났을 때 복구하고, AI를 실행하는 과정을 연결한다. 컴퓨터 용어를 이미 알고 있다고 가정해서 이름만 나열하지 않는다. 자주 사용하는 전문용어는 한국어 뜻과 영어·약어를 함께 배우고, 그 용어가 가리키는 실제 대상과 동작을 설명한다.
 
-**처음 읽는다면 [00. 교재를 읽기 위한 첫 지도](START-HERE.md)에서 시작한다.** 서버·프로그램·CPU·RAM·운영체제 같은 기본 단어와 단위, 그림을 읽는 방법을 먼저 배운다. 이후 다음 열세 교재 중 한 권으로 이동한다. 모르는 이름을 빠르게 다시 확인할 때는 [공통 용어사전](GLOSSARY.md)을 사용한다. 본문에서도 첫 등장한 전문용어의 의미를 설명한다.
+**처음 읽는다면 [00. 교재를 읽기 위한 첫 지도](START-HERE.md)에서 시작한다.** 서버·프로그램·CPU·RAM·운영체제 같은 기본 단어와 단위, 그림을 읽는 방법을 먼저 배운다. 이후 다음 열아홉 교재 중 한 권으로 이동한다. 모르는 이름을 빠르게 다시 확인할 때는 [공통 용어사전](GLOSSARY.md)을 사용한다. 본문에서도 첫 등장한 전문용어의 의미를 설명한다.
 
 부품의 생김새가 먼저 궁금하다면 [사진으로 시작하는 하드웨어](HARDWARE-GALLERY.md)를 연다. DIMM·M.2·U.2·RJ45·QSFP·HDD의 실물 사진에서 무엇을 볼지 안내하고, 해당 장의 장착 예시·연결 구조·내부 동작으로 이어 준다.
 
 읽기만으로 특정 학위 수준이나 운영 숙련을 보장할 수는 없다. 여기서 목표로 삼는 실력은 **원리를 자기 말로 설명하고, 작은 예제를 손으로 계산하고, 안전한 실습으로 확인하고, 관측하지 않은 것은 구별해서 말하는 능력**이다. 대학원 단계에서는 여기에 기존 연구 비교, 반례 구성, 재현 가능한 실험이 더해진다.
 
-## 열세 권의 교재와 맡은 질문
+## 열아홉 권의 교재와 맡은 질문
 
 | 교재 | 가장 아래에서 시작하는 질문 | 연결되는 심화 주제 |
 | --- | --- | --- |
 | [서버 하드웨어](../hardware/learning/server-hardware/README.md) | 전기 신호가 어떻게 0·1, 계산과 저장이 되는가? | CPU의 계산, 메모리 조직, 장치 연결, 가속기, 저장장치, 전력·냉각 |
+| [컴퓨터 구조 심화](computer-architecture/README.md) | 명령 하나가 CPU 내부에서 어떻게 실행되고 메모리를 만나는가? | ISA·파이프라인·분기·비순차 실행·캐시·일관성·메모리 순서·TLB·SIMD·DMA·성능 분석 |
 | [운영체제](operating-systems/README.md) | 실행 중인 프로그램에 CPU·메모리·파일을 어떻게 나누어 줄까? | 프로세스·스레드·스케줄링·동시성·교착·가상메모리·입출력·파일시스템·복구·보호 |
 | [알고리즘](algorithms/README.md) | 원하는 답을 정확하게, 적은 계산으로 찾는 방법은 무엇일까? | 정확성·복잡도·자료구조·탐색·정렬·트리·그래프·최단경로·탐욕·동적 계획법·계산 한계 |
 | [Linux·운영체제·커널](../linux/learning/linux-kernel/README.md) | 여러 프로그램이 한 컴퓨터를 어떻게 나누어 쓰는가? | 프로그램 실행, 자원 배정, 주소 변환, 파일 읽기·쓰기, 프로그램 격리 |
 | [Ubuntu·Linux 내부 심화](ubuntu-linux-internals/README.md) | CPU·메모리·I/O 제한과 비동기 완료가 실제로 어떻게 동작할까? | systemd·cgroup v2·quota·reclaim·OOM·PSI·io_uring·버퍼 수명·최신 기능·진단 |
 | [네트워크](../kubernetes/networking/networking-foundations/README.md) | 데이터가 다른 컴퓨터에 어떻게 도착하는가? | 주소, 전송 단위, 경로 선택, 재전송, 이름 찾기, 암호화, 패킷 처리 |
+| [보안·암호 기초](security-cryptography/README.md) | 누가 무엇을 할 수 있고, 데이터와 통신 상대를 어떻게 신뢰할까? | 위협 모델·인증·인가·해시·MAC·서명·AEAD·nonce·비밀번호·TLS·인증서·RBAC·공급망·복구 |
 | [무선통신·AI-RAN](wireless-communications/README.md) | 선 없이 보낸 비트가 어떻게 기지국과 AI 서비스까지 이어질까? | 전파·dB·변조·OFDM·MIMO·Wi-Fi·5G/NR·RAN·O-RAN·AI-for/and/on-RAN·6G 상태 |
 | [데이터 시스템](../kubernetes/storage/data-systems-foundations/README.md) | 파일을 읽고 쓴다는 것은 어떤 작업이며 언제 저장 완료인가? | 파일과 장치, 복제, 객체 저장, 데이터베이스, 분석 포맷, 측정 |
+| [분산 시스템](distributed-systems/README.md) | 서버 여러 대가 지연·중복·장애를 겪으면서 어떻게 같은 약속을 지킬까? | RPC·시간·복제·일관성·quorum·Raft·2PC·샤딩·재시도·멱등성·체크포인트·lease |
+| [데이터베이스·쿼리 엔진](databases-query-engines/README.md) | SQL 한 문장이 어떤 페이지와 행을 읽고, 변경을 어떻게 복구할까? | 관계·NULL·인덱스·join·실행 계획·비용·트랜잭션·MVCC·격리·WAL·컬럼 처리·Spark·Iceberg |
+| [머신러닝·딥러닝](machine-learning/README.md) | 데이터로 예측을 만들고 오차를 줄인다는 것은 어떤 계산일까? | 벡터·확률·회귀·손실·미분·최적화·평가·일반화·역전파·신경망·attention·Transformer·AI-RAN |
 | [AI 인프라](../ai/learning/ai-infrastructure/README.md) | 모델의 숫자 계산이 어떻게 GPU 작업과 사용자 응답이 되는가? | 숫자 배열, 학습, 메모리 예산, 여러 장치의 협력, 추론, 응답 서비스 |
+| [GPU 병렬 프로그래밍](gpu-programming/README.md) | GPU 스레드에 계산과 메모리를 어떻게 나누어 정확하고 빠르게 실행할까? | thread·block·warp·동기화·메모리 순서·coalescing·bank·reduction·행렬 타일·Tensor Core·stream·collective |
 | [Apache Iceberg](apache-iceberg/README.md) | 파일 몇 개가 어떻게 신뢰할 수 있는 분석 테이블이 되는가? | 메타데이터·커밋·시간 여행·v1/v2/v3·최신 v4 명세 상태·그림·로컬 실습·운영 |
 | [Apache Spark](apache-spark/README.md) | 여러 파일·서버의 데이터를 누가 어떻게 계산하는가? | DataFrame·SQL·driver/executor·DAG·shuffle·join·AQE·메모리·streaming·Iceberg·연구 |
 | [Kubernetes](kubernetes/README.md) | 여러 서버에서 프로그램의 원하는 상태를 어떻게 유지하는가? | 컨테이너·제어 루프·Pod·workload·Service·저장소·자원·보안·배포·진단·Spark 실행 |
@@ -33,6 +39,7 @@
 ```mermaid
 flowchart TD
     Start["첫 지도: 용어·단위·그림 읽기"] --> Hardware["하드웨어: 계산·저장·물리 연결"]
+    Hardware --> Arch["컴퓨터 구조: 명령·파이프라인·캐시·메모리 순서"]
     Hardware --> Theory["운영체제: 실행·동시성·메모리의 공통 원리"]
     Theory --> OS["Linux·커널: 원리의 실제 구현"]
     Start --> Algo["알고리즘: 정확성·자료구조·계산 비용"]
@@ -40,6 +47,15 @@ flowchart TD
     OS --> Internals["Ubuntu·Linux: cgroup v2·io_uring·관측"]
     Network --> Wireless["무선통신: 전파·Wi-Fi·5G·RAN"]
     OS --> Data["데이터 시스템: 저장·복구·검색"]
+    Network --> Distributed["분산 시스템: 복제·합의·재시도·장애"]
+    Data --> DB["데이터베이스: 질의 계획·트랜잭션·복구"]
+    Distributed --> DB
+    Algo --> ML["머신러닝: 손실·학습·평가·신경망"]
+    ML --> AI
+    Arch --> GPUCode["GPU 프로그래밍: 병렬 실행·메모리·동기화"]
+    AI --> GPUCode
+    Network --> Security["보안·암호: 신원·권한·통신·데이터 보호"]
+    Security --> K8s
     Network --> AI["AI 인프라: 모델 계산을 서비스로 연결"]
     Data --> AI
     Data --> Iceberg["Apache Iceberg: 분석 테이블의 구조·버전·운영"]
@@ -56,6 +72,19 @@ flowchart TD
 ```
 
 화살표는 다음 교재를 이해할 때 도움이 되는 관계다. 전부 완독해야 다음 것을 열 수 있다는 뜻은 아니다. 아래 상세 경로는 이미 첫 지도에서 기본 단어를 익힌 뒤 필요한 부분을 찾는 데 사용한다.
+
+새로 추가한 여섯 교재는 각각 16개 장으로 원리를 더 깊게 연결한다. **[분산 시스템](distributed-systems/README.md)**에서는 응답이 유실된 뒤의 재시도부터 복제와 합의까지, **[컴퓨터 구조](computer-architecture/README.md)**에서는 명령 실행부터 캐시·메모리 순서까지 따라간다. **[데이터베이스·쿼리 엔진](databases-query-engines/README.md)**은 SQL·페이지·인덱스·동시 실행·복구를 연결한다.
+
+**[머신러닝·딥러닝](machine-learning/README.md)**은 필요한 수학 기호를 풀고 작은 예측과 가중치 갱신을 직접 계산한다. **[GPU 병렬 프로그래밍](gpu-programming/README.md)**은 각 스레드가 읽는 주소와 동기화 과정을 설명하며, **[보안·암호](security-cryptography/README.md)**는 신원 확인·권한 판단·암호화·서명·TLS를 요청 흐름으로 구별한다. 각 권의 그림, 로컬 계산 모형, 문제와 해설로 설명을 확인한다.
+
+현재 연구를 중심으로 읽으려면 다음 경로에서 막히는 장을 찾아가면 된다.
+
+| 연구에서 만나게 되는 질문 | 이어 읽을 교재 | 손으로 먼저 확인할 과제 |
+| --- | --- | --- |
+| Spark·Iceberg에서 중복 처리와 테이블 게시를 어떻게 구별할까? | 분산 시스템 → 데이터베이스·쿼리 엔진 → Spark·Iceberg | 응답 유실·재시도 시간표와 읽을 수 있는 행 버전을 작성 |
+| 같은 계산인데 CPU·GPU·메모리 배치에 따라 왜 속도가 달라질까? | 컴퓨터 구조 → GPU 병렬 프로그래밍 → AI 인프라 | 캐시 주소, GPU 스레드 주소, 계산량과 전송량을 구분해 계산 |
+| AI-RAN의 예측 개선이 실제 망 개선으로 이어질까? | 머신러닝·딥러닝 → 무선통신·AI-RAN → AI 인프라 | 시간 순서대로 데이터셋을 나누고 품질·지연·전력·비교 기준을 적기 |
+| Kubernetes가 허용한 요청의 신원·권한·비밀정보는 어떻게 연결될까? | 보안·암호 → Kubernetes → GPU Operator·DRA | 인증·인가·배치·장치 준비를 서로 다른 단계로 표시 |
 
 **[무선통신·AI-RAN 교재](wireless-communications/README.md)**는 전파·주파수·전력부터 Wi-Fi, 4G·5G, 기지국 RU/DU/CU, O-RAN과 AI-RAN까지 21개 장으로 연결한다. AI가 무선망을 개선하는 경우, RAN과 계산 자원을 공유하는 경우, 가까운 곳에서 사용자 AI 서비스를 제공하는 경우를 구분한다. 그림 9개, 계산 모형 3개, 문제·해설을 포함하며 5G-Advanced와 6G의 표준화 상태를 공식 자료에 연결한다.
 

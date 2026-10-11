@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+<title id="title">Raft 현재 term entry 커밋</title><desc id="desc">이전 term 항목 뒤에 현재 term 항목이 과반수 복제되어 prefix도 커밋되는 로그</desc>
+<rect width="1200" height="700" fill="#fff"/><g font-family="sans-serif" font-size="24">
+<text x="70" y="170">리더</text><text x="70" y="320">팔로워 1</text><text x="70" y="470">팔로워 2</text>
+<g stroke="#334155" stroke-width="3"><rect x="230" y="110" width="180" height="90" fill="#e2e8f0"/><rect x="410" y="110" width="180" height="90" fill="#bbf7d0"/><rect x="230" y="260" width="180" height="90" fill="#e2e8f0"/><rect x="410" y="260" width="180" height="90" fill="#bbf7d0"/><rect x="230" y="410" width="180" height="90" fill="#e2e8f0"/><rect x="410" y="410" width="180" height="90" fill="#fff"/></g>
+<text x="280" y="165">term 2, X</text><text x="460" y="165">term 4, Y</text><text x="280" y="315">term 2, X</text><text x="460" y="315">term 4, Y</text><text x="280" y="465">term 2, X</text><text x="460" y="465">미수신</text>
+<path d="M620 230 H1070" stroke="#16a34a" stroke-width="6"/><text x="820" y="210">현재 term Y가 과반수 → X도 prefix로 커밋</text></g>
+</svg>

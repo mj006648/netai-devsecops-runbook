@@ -6,7 +6,9 @@
 
 목표는 제품 이름을 외우는 것이 아니다. **어떤 바이트가 어디에 있고, 누가 언제 성공을 응답하며, 장애 후 무엇을 복구할 수 있는지** 설명하는 것이다. 박사과정 수준의 연구를 위한 기반 학습용이며, 이 자료만으로 연구 역량이나 학위 수준이 완성된다는 뜻은 아니다.
 
-[다섯 교재 통합 학습 순서](../../../learning/README.md) · [Linux·커널 독립 교재](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF 독립 교재](../../networking/networking-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
+[전체 교재 통합 학습 순서](../../../learning/README.md) · [Linux·커널 독립 교재](../../../linux/learning/linux-kernel/README.md) · [네트워크·eBPF 독립 교재](../../networking/networking-foundations/README.md) · [AI 인프라](../../../ai/learning/ai-infrastructure/README.md)
+
+복제·합의·응답 유실·재시도는 [분산 시스템](../../../learning/distributed-systems/README.md)에서, SQL의 실제 실행·MVCC·격리 수준·WAL 복구는 [데이터베이스·쿼리 엔진](../../../learning/databases-query-engines/README.md)에서 각각 16개 장으로 더 깊게 배운다. 먼저 이 교재에서 바이트와 저장 경로를 익히고, 궁금한 메커니즘의 장으로 이동해도 된다.
 
 파일 디스크립터·프로세스·커널이라는 단어가 처음이어도 괜찮다. [00b장](00b-linux-processes-and-memory.md)은 프로그램이 프로세스가 되고 메모리·fd·시스템 호출을 거쳐 I/O를 요청하는 과정을 이 교재 안에서 처음부터 설명한다. [00c장](00c-linux-observation-and-troubleshooting.md)은 `ps`, `/proc`, `strace` 출력이 무엇을 보여 주고 무엇은 보여 주지 않는지 설명한다. 본문에는 한글 한 글자 쓰기, 작은 파일시스템 이미지, DB 페이지·인덱스·복구 로그를 숫자와 시간표로 따라가는 예제를 넣었다. 단어를 찾을 때는 [10장 사전](10-glossary.md)을 이용하되, 사전만 외우지 말고 해당 장의 경로 예제로 돌아온다.
 

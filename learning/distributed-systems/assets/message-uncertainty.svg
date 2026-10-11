@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+<title id="title">timeout 뒤 결과 미상</title><desc id="desc">요청은 커밋됐지만 응답이 유실되어 클라이언트가 결과를 모르는 시간 흐름</desc>
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker></defs>
+<rect width="1200" height="700" fill="#fff"/><g stroke="#64748b" stroke-width="4"><line x1="250" y1="100" x2="250" y2="620"/><line x1="950" y1="100" x2="950" y2="620"/></g>
+<g font-family="sans-serif" font-size="27" text-anchor="middle"><text x="250" y="70">클라이언트</text><text x="950" y="70">서버</text></g>
+<g stroke="#334155" stroke-width="5" marker-end="url(#a)"><line x1="260" y1="180" x2="940" y2="230"/><line x1="940" y1="390" x2="560" y2="430" stroke="#dc2626" stroke-dasharray="15 12"/></g>
+<g font-family="sans-serif" font-size="24"><text x="470" y="180">R42 요청</text><text x="790" y="310">업무+ID 커밋</text><text x="590" y="400" fill="#dc2626">성공 응답 유실</text><text x="120" y="540">timeout: 실패가 아니라 결과 미상</text></g>
+</svg>

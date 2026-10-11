@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+<title id="title">5노드 과반수 쿼럼</title><desc id="desc">다섯 노드 중 세 노드가 겹치는 쿼럼을 만들어 결정을 보존하는 그림</desc>
+<rect width="1200" height="700" fill="#f8fafc"/><ellipse cx="470" cy="350" rx="360" ry="250" fill="#dbeafe" fill-opacity=".75" stroke="#2563eb" stroke-width="5"/><ellipse cx="730" cy="350" rx="360" ry="250" fill="#dcfce7" fill-opacity=".65" stroke="#16a34a" stroke-width="5"/>
+<g font-family="sans-serif" font-size="38" text-anchor="middle"><text x="220" y="170">쿼럼 Q1</text><text x="980" y="170">쿼럼 Q2</text><circle cx="260" cy="350" r="55" fill="#fff"/><text x="260" y="363">A</text><circle cx="430" cy="250" r="55" fill="#fff"/><text x="430" y="263">B</text><circle cx="600" cy="350" r="60" fill="#fde68a"/><text x="600" y="363">C</text><circle cx="770" cy="250" r="55" fill="#fff"/><text x="770" y="263">D</text><circle cx="940" cy="350" r="55" fill="#fff"/><text x="940" y="363">E</text><text x="600" y="560" font-size="25">교집합 노드가 과거 결정을 전달</text></g>
+</svg>

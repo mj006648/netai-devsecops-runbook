@@ -67,5 +67,7 @@ YAML 예제는 Kubernetes API에 원하는 상태를 전달하는 manifest다. �
 - [데이터 시스템 교재](../../kubernetes/storage/data-systems-foundations/README.md): 파일·장치·객체 저장·복구.
 - [Linux 커널 교재](../../linux/learning/linux-kernel/README.md): 프로세스·namespace·cgroup·권한의 아래 계층.
 - [Spark 교재](../apache-spark/README.md): 분산 계산의 계획과 실행.
+- [분산 시스템 교재](../distributed-systems/README.md): etcd의 복제·합의, 응답 유실과 재시도, leader와 quorum의 원리.
+- [보안·암호 기초](../security-cryptography/README.md): 인증·인가·TLS·인증서·비밀정보·공급망을 요청 단계별로 연결.
 
 [통합 learning 목차](../README.md) · [첫 장 시작](00-why-kubernetes.md)
